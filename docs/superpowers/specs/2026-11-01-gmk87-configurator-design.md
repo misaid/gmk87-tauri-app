@@ -132,7 +132,8 @@ Pure, no I/O, fully unit-testable.
   fields, guaranteeing byte-preserving round-trips.
 - Image preparation: decode, crop/zoom, resize, RGB565 conversion, slot padding.
 - `FramePlan`: validates and lays out frames across slots against the device
-  budget before any USB traffic occurs.
+  budget (36 frames total, 60 ms minimum delay, 65,536 bytes per slot) before any
+  USB traffic occurs.
 
 ### 4.2 `crates/gmk87-device`
 
