@@ -4,6 +4,12 @@ Date: 2026-11-01
 Status: Approved design, pending spec review
 Hardware: ZUOYA GMK87 (wired `320f:5055`, 2.4 GHz dongle `320f:5088`)
 
+> Revised 2026-11-01 for Plan 2 (Tauri app and UI, milestones M3–M6): the
+> application-orchestration layer is a new `gmk87-app` crate rather than logic
+> inside `src-tauri`; the frontend stack changes from "custom styling" to
+> Tailwind + shadcn/ui; a live 3D keyboard preview (React Three Fiber) and a
+> `preview_display` command are added. See §4.3–§4.5.
+
 ## 1. Summary
 
 A Linux desktop application to customize the ZUOYA GMK87 mechanical keyboard:
@@ -152,15 +158,23 @@ transport, so the future background service can reuse it unchanged.
 ```
 ┌──────────────── ui/ (React + TS + Vite) ────────────────┐
 │ Device · Display (crop editor) · Lighting · Clock       │
+│ + keyboard preview (React Three Fiber)                  │
 └───────────────▲─────────────────────────┬───────────────┘
         events  │ (progress, disconnect)  │ invoke
 ┌───────────────┴─────────────────────────▼───────────────┐
-│ src-tauri: commands, device state, op serialization     │
+│ src-tauri: commands and event adapter                   │
 └───────────────▲─────────────────────────┬───────────────┘
                 │                         │
+┌───────────────┴──────────┐             │
+│ gmk87-app                │             │
+│ DeviceManager: serialized│             │
+│ ops, upload, snapshot,   │             │
+│ preview (no Tauri)       │             │
+└───────────────▲──────────┘             │
+                │                         │
 ┌───────────────┴──────────┐   ┌──────────▼───────────────┐
-│ gmk87-device             │   │ gmk87-protocol           │
-│ discovery, Transport     │──▶│ packets, config buffer,  │
+│ gmk87-device             │──▶│ gmk87-protocol           │
+│ discovery, Transport     │   │ packets, config buffer,  │
 │ trait, hidapi impl,      │   │ RGB565, frame planning   │
 │ session state machine    │   │ (pure, no I/O)           │
 └──────────────────────────┘   └──────────────────────────┘
@@ -191,34 +205,67 @@ Pure, no I/O, fully unit-testable.
   returns two devices. The UI lists both and the user selects one; the app never
   switches transports on its own, and only one session is open at a time.
 
-### 4.3 `src-tauri`
+### 4.3 `crates/gmk87-app`
 
-Thin command surface over `gmk87-device`:
+Application orchestration, independent of Tauri so it is testable against
+`MockTransport`. It owns the device session and serializes every operation
+against it; the "one state machine, one mutex" rule lives here, not in the UI
+layer.
 
-`list_devices`, `connect`, `read_state`, `set_lighting`, `sync_clock`,
-`upload_display`, `cancel_upload`.
+- `DeviceManager`: one owned `Session<HidTransport>`, guarded so all device
+  operations run one at a time. `connect(path)`, `disconnect()`,
+  `list_devices()` (wrapping `discovery::discover`).
+- `set_lighting(edit)` and `sync_clock()` — delegate to `Session`.
+- `upload(job, cancel)` — builds a `FramePlan` with `gmk87-protocol`, runs
+  `Session::upload`, and forwards `UploadProgress` to a caller-supplied callback
+  (the Tauri adapter turns it into `upload://progress`).
+- `preview(job) -> RGBA` — composes the 240×135 preview with
+  `image::prepare_static`. The UI sends crop/zoom/fit parameters and receives
+  pixels; it never manipulates them (§4.5).
+- Snapshot persistence: the last 48-byte block is stored under
+  `~/.local/share/gmk87/` and seeded into `Session::with_config` at connect, so
+  settings survive restarts (§3.3).
+- Error mapping: `DeviceError` becomes a serializable `{kind, message}` so the
+  UI can special-case `PermissionDenied` (offer the udev rule) and
+  `DeviceDesynced` (prompt reconnect).
 
-Emits `upload://progress` and `device://disconnected`. A single mutex serializes
-all device operations, because the keyboard has one state machine and concurrent
-writes desynchronize it.
+### 4.4 `src-tauri`
 
-### 4.4 `ui/`
+A thin command and event adapter over `gmk87-app`:
 
-React + TypeScript + Vite, custom styling, four screens: Device, Display,
-Lighting, Clock. The UI never manipulates pixels; it derives crop/zoom
-parameters and sends them to Rust.
+`list_devices`, `connect`, `disconnect`, `read_state`, `set_lighting`,
+`sync_clock`, `upload_display`, `cancel_upload`, `preview_display`,
+`copy_diagnostics`.
 
-- **Device:** transport list, connect/disconnect, firmware-reported state
-  (VIA interface present, current `show_image`), diagnostics.
-- **Display:** slot tabs (0/1), file picker, crop/zoom/pan canvas with a
-  240×135 preview, GIF frame strip and delay control, frame-budget meter,
+Emits `upload://progress` and `device://disconnected`. A single mutex in
+`gmk87-app` serializes all device operations, because the keyboard has one
+state machine and concurrent writes desynchronize it. A 2 s poll while the
+window is open reconnects after a vanished hidraw node.
+
+### 4.5 `ui/`
+
+React + TypeScript + Vite with Tailwind and shadcn/ui, plus React Three Fiber
+for the keyboard preview. Four screens — Device, Display, Lighting, Clock —
+and a persistent keyboard-preview panel. The UI never manipulates pixels; it
+derives crop/zoom parameters and sends them to Rust, which returns the
+composed 240×135 preview.
+
+- **Device:** transport list (wired and 2.4 GHz, with the VIA interface shown
+  as "remapping available in a future version"), connect/disconnect, and
+  diagnostics.
+- **Display:** slot tabs (0/1), file picker, crop/zoom/pan editor over the
+  Rust-rendered preview, GIF frame strip and delay control, frame-budget meter,
   upload progress with cancel, "show this slot" toggle.
+- **Keyboard preview (3D):** a procedurally-built GMK87 rendered with React
+  Three Fiber, with the 240×135 panel as a live texture fed by
+  `preview_display` and the underglow reflecting the Lighting settings. Built
+  in code — no bundled model asset.
 - **Lighting:** underglow effect picker with brightness, speed, orientation,
   rainbow and color; side LED mode/color/saturation; win-lock.
 - **Clock:** preview of the current time as the keyboard will show it, and a
   "Sync now" action.
 
-### 4.5 `crates/gmk87-cli`
+### 4.6 `crates/gmk87-cli`
 
 Debug and recovery tool: `probe`, `dump-config`, `upload`, `lights`, `clock`.
 Used to validate protocol work against real hardware before the UI exists, and
@@ -322,9 +369,14 @@ diagnostics" action (app version, kernel, device paths, recent log lines).
 2. **Device tests** — `MockTransport` replaying a recorded session and injecting
    dropped responses, wrong-command responses, checksum corruption and
    mid-upload disconnects; asserts the retry rules in §7.
-3. **Frontend tests** — Vitest for crop-parameter derivation, job
-   serialization and state transitions.
-4. **Hardware tests** — documented manual checklist plus the `gmk87-cli`,
+3. **App tests** — `gmk87-app` against `MockTransport`: operation serialization,
+   connect/disconnect, lighting and clock patching, upload progress and
+   cancellation, snapshot round-trip, and `DeviceError` → `{kind, message}`
+   mapping.
+4. **Frontend tests** — Vitest and React Testing Library for crop-parameter
+   derivation, job serialization, frame-budget display, store transitions, and
+   the preview-texture input passed to the React Three Fiber panel.
+5. **Hardware tests** — documented manual checklist plus the `gmk87-cli`,
    opt-in via `GMK87_HW=1`; never run in CI.
 
 The first implementation step is a hardware validation spike: write a known
