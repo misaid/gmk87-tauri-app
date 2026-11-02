@@ -1,17 +1,21 @@
 //! Owns the device session and serializes every operation against it.
 
 use crate::error::AppError;
+use crate::job::{decode_frames, DisplayJob};
 use crate::lighting::LightingPatch;
+use crate::slots::SlotStore;
 use crate::snapshot;
 use crate::state::DeviceStateDto;
-use gmk87_device::session::Session;
+use gmk87_device::session::{CancelToken, Session, UploadProgress};
 use gmk87_device::transport::Transport;
 use gmk87_protocol::config::DeviceConfig;
+use gmk87_protocol::frames::FramePlan;
 use std::path::PathBuf;
 
 pub struct DeviceManager<T: Transport> {
     session: Session<T>,
     snapshot_path: Option<PathBuf>,
+    slots: SlotStore,
 }
 
 impl<T: Transport> DeviceManager<T> {
@@ -25,6 +29,7 @@ impl<T: Transport> DeviceManager<T> {
         Self {
             session: Session::with_config(transport, config),
             snapshot_path,
+            slots: SlotStore::default(),
         }
     }
 
@@ -55,6 +60,40 @@ impl<T: Transport> DeviceManager<T> {
     pub fn sync_clock(&mut self, now: &chrono::DateTime<chrono::Local>) -> Result<(), AppError> {
         self.session.sync_clock(now)?;
         self.persist()
+    }
+
+    pub fn slots(&self) -> &SlotStore {
+        &self.slots
+    }
+
+    /// Streams a prepared plan, then persists the block the session committed.
+    pub fn upload_plan(
+        &mut self,
+        plan: &FramePlan,
+        cancel: &CancelToken,
+        on_progress: &mut dyn FnMut(UploadProgress),
+    ) -> Result<(), AppError> {
+        self.session.upload(plan, cancel, on_progress)?;
+        self.persist()
+    }
+
+    /// Decodes a job into the target slot, then streams both slots.
+    pub fn upload(
+        &mut self,
+        job: &DisplayJob,
+        cancel: &CancelToken,
+        on_progress: &mut dyn FnMut(UploadProgress),
+    ) -> Result<(), AppError> {
+        let crop = job.crop.to_spec();
+        let (frames, delay) = decode_frames(&job.bytes, &crop, job.delay_ms)?;
+        self.slots.set(job.slot, frames)?;
+        let show = if job.show_after {
+            job.slot.as_show()
+        } else {
+            self.session.config().show_image()
+        };
+        let plan = self.slots.build_plan(delay, show);
+        self.upload_plan(&plan, cancel, on_progress)
     }
 
     fn persist(&self) -> Result<(), AppError> {
