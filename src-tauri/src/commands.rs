@@ -1,0 +1,172 @@
+//! Tauri commands. Every device operation runs on a blocking thread so the
+//! webview never stalls, and all of them share one `DeviceManager` mutex so
+//! device operations are serialized (the keyboard has one state machine).
+
+use crate::app_state::{AppState, Manager};
+use crate::dto::{preview_bytes, DeviceInfoDto, PresetDto, PreviewJob};
+use gmk87_app::error::{AppError, ErrorKind};
+use gmk87_app::lighting::LightingPatch;
+use gmk87_app::state::DeviceStateDto;
+use tauri::State;
+
+fn not_connected() -> AppError {
+    AppError {
+        kind: ErrorKind::DeviceNotFound,
+        message: "no keyboard is connected; connect from the Device screen".into(),
+    }
+}
+
+fn join_error(error: tauri::Error) -> AppError {
+    AppError {
+        kind: ErrorKind::Io,
+        message: error.to_string(),
+    }
+}
+
+#[tauri::command]
+pub async fn list_devices() -> Result<Vec<DeviceInfoDto>, AppError> {
+    tauri::async_runtime::spawn_blocking(|| {
+        gmk87_device::discovery::discover()
+            .map(|devices| devices.into_iter().map(DeviceInfoDto::from).collect())
+            .map_err(AppError::from)
+    })
+    .await
+    .map_err(join_error)?
+}
+
+#[tauri::command]
+pub async fn connect(state: State<'_, AppState>, path: String) -> Result<DeviceStateDto, AppError> {
+    let runtime = state.runtime.clone();
+    let snapshot_path = gmk87_app::snapshot::default_path();
+    tauri::async_runtime::spawn_blocking(move || {
+        let transport = gmk87_device::transport::HidTransport::open(&path)?;
+        let manager = Manager::new(transport, snapshot_path);
+        let state_dto = manager.read_state();
+        let mut rt = runtime.lock().expect("runtime lock");
+        rt.manager = Some(manager);
+        rt.path = Some(path);
+        Ok(state_dto)
+    })
+    .await
+    .map_err(join_error)?
+}
+
+#[tauri::command]
+pub async fn disconnect(state: State<'_, AppState>) -> Result<(), AppError> {
+    let runtime = state.runtime.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut rt = runtime.lock().expect("runtime lock");
+        rt.manager = None;
+        rt.path = None;
+        Ok(())
+    })
+    .await
+    .map_err(join_error)?
+}
+
+#[tauri::command]
+pub fn read_state(state: State<'_, AppState>) -> DeviceStateDto {
+    let rt = state.runtime.lock().expect("runtime lock");
+    match rt.manager.as_ref() {
+        Some(manager) => manager.read_state(),
+        None => DeviceStateDto::from_config(
+            &gmk87_protocol::config::DeviceConfig::default_config(),
+            false,
+            false,
+        ),
+    }
+}
+
+#[tauri::command]
+pub async fn set_lighting(
+    state: State<'_, AppState>,
+    patch: LightingPatch,
+) -> Result<DeviceStateDto, AppError> {
+    run_on_manager(state, move |manager| {
+        manager.apply_lighting_patch(&patch)?;
+        Ok(manager.read_state())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn sync_clock(state: State<'_, AppState>) -> Result<DeviceStateDto, AppError> {
+    run_on_manager(state, move |manager| {
+        manager.sync_clock(&chrono::Local::now())?;
+        Ok(manager.read_state())
+    })
+    .await
+}
+
+#[tauri::command]
+pub fn list_presets() -> Vec<PresetDto> {
+    gmk87_app::presets::list()
+        .into_iter()
+        .map(|preset| PresetDto {
+            name: preset.name.to_string(),
+            description: preset.description.to_string(),
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub async fn apply_preset(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<DeviceStateDto, AppError> {
+    run_on_manager(state, move |manager| {
+        // Apply to a clone first so an unknown preset is rejected before any
+        // block is written (Ruling: no silent no-op writes).
+        let mut next = manager.config().clone();
+        gmk87_app::presets::apply(&name, &mut next)?;
+        manager.set_lighting(&move |cfg| *cfg = next.clone())?;
+        Ok(manager.read_state())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn preview_display(job: PreviewJob) -> Result<Vec<u8>, AppError> {
+    tauri::async_runtime::spawn_blocking(move || preview_bytes(&job))
+        .await
+        .map_err(join_error)?
+}
+
+/// Runs `body` against the connected manager; `not_connected` when there is none.
+async fn run_on_manager<T, F>(state: State<'_, AppState>, body: F) -> Result<T, AppError>
+where
+    T: Send + 'static,
+    F: FnOnce(&mut Manager) -> Result<T, AppError> + Send + 'static,
+{
+    let runtime = state.runtime.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut rt = runtime.lock().expect("runtime lock");
+        let manager = rt.manager.as_mut().ok_or_else(not_connected)?;
+        body(manager)
+    })
+    .await
+    .map_err(join_error)?
+}
+
+#[tauri::command]
+pub async fn copy_diagnostics(state: State<'_, AppState>) -> Result<String, AppError> {
+    let path = state.runtime.lock().expect("runtime lock").path.clone();
+    let mut report = String::new();
+    report.push_str(&format!(
+        "gmk87-configurator {}\n",
+        env!("CARGO_PKG_VERSION")
+    ));
+    report.push_str(&format!(
+        "device: {}\n",
+        path.as_deref().unwrap_or("(none)")
+    ));
+    if let Ok(uname) = std::fs::read_to_string("/proc/sys/kernel/osrelease") {
+        report.push_str(&format!("kernel: {}\n", uname.trim()));
+    }
+    let log_dir =
+        gmk87_app::snapshot::default_path().and_then(|p| p.parent().map(|d| d.join("logs")));
+    if let Some(dir) = log_dir {
+        report.push_str(&format!("logs: {}\n", dir.display()));
+    }
+    Ok(report)
+}
