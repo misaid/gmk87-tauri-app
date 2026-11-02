@@ -234,9 +234,13 @@ kept afterwards as a scripting and recovery path.
    violation, fail with a specific message.
 4. Take the session's in-memory config, set frame counts, frame delay and
    `show_image`, and write the complete 48-byte block (no device read).
-5. `INIT ×2 → CONFIG → COMMIT (100 ms) → wait READY(0x23) → FRAME_DATA ×N →
-   COMMIT`, waiting for a matching response per packet with a timeout, emitting
-   progress roughly every 1%.
+5. `INIT ×2 → CONFIG → COMMIT (100 ms) → wait for READY(0x23), which is
+   optional → FRAME_DATA ×N → COMMIT`. Frames are **not** acknowledged
+   individually: the 2.4 GHz dongle acknowledges roughly one packet per second,
+   and waiting per packet made a 1,171-packet slot take about twenty minutes.
+   The stream is bounded by a total-time ceiling, paced when acknowledgements
+   stop arriving, and confirmed by the final `COMMIT`. Progress is emitted
+   roughly every 1%.
 6. On cancel or transport failure mid-upload, send `COMMIT` and rewrite the
    previous `show_image` so a torn frame is never displayed.
 
@@ -252,7 +256,8 @@ truth and the app keeps a snapshot of the last block it wrote.
 
 **Errors** (one `thiserror` enum): `DeviceNotFound`, `PermissionDenied`,
 `Transport(io)`, `ProtocolTimeout{cmd}`, `ChecksumMismatch`, `DeviceDesynced`,
-`InvalidJob(reason)`, `Unsupported(transport)`.
+`InvalidJob(reason)`, `Unsupported(transport)`, `UploadTimeout{sent, total}`,
+`UploadFailed{source}`.
 
 **State machine:** `Disconnected → Connected(Idle) → Busy(op) → Connected(Idle)`.
 Operations are serialized; the UI disables controls during an upload. A transport
