@@ -9,6 +9,7 @@ interface AppStore {
   state: ipc.DeviceState | null;
   connected: boolean;
   error: string | null;
+  presets: ipc.Preset[];
   crop: CropParams;
   slot: Slot;
   source: { bytes: Uint8Array; name: string } | null;
@@ -30,6 +31,7 @@ interface AppStore {
   upload: (delayMs: number, showAfter: boolean) => Promise<void>;
   cancel: () => Promise<void>;
   applyLighting: (patch: ipc.LightingPatch) => Promise<void>;
+  loadPresets: () => Promise<void>;
   applyPreset: (name: string) => Promise<void>;
   syncClock: () => Promise<void>;
   dismissError: () => void;
@@ -48,6 +50,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   state: null,
   connected: false,
   error: null,
+  presets: [],
   crop: { ...DEFAULT_CROP },
   slot: "slot0",
   source: null,
@@ -150,6 +153,13 @@ export const useAppStore = create<AppStore>((set, get) => ({
   applyPreset: async (name) => {
     try {
       set({ state: await ipc.applyPreset(name), error: null });
+    } catch (error) {
+      set({ error: message(error) });
+    }
+  },
+  loadPresets: async () => {
+    try {
+      set({ presets: await ipc.listPresets() });
     } catch (error) {
       set({ error: message(error) });
     }
