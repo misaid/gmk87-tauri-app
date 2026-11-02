@@ -1,0 +1,50 @@
+{
+  "name": "gmk87-ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@radix-ui/react-label": "^2",
+    "@radix-ui/react-progress": "^1",
+    "@radix-ui/react-separator": "^1",
+    "@radix-ui/react-slider": "^1",
+    "@radix-ui/react-switch": "^1",
+    "@radix-ui/react-tabs": "^1",
+    "@radix-ui/react-tooltip": "^1",
+    "@react-three/drei": "^9",
+    "@react-three/fiber": "^8",
+    "@tauri-apps/api": "^2",
+    "class-variance-authority": "^0.7",
+    "clsx": "^2",
+    "lucide-react": "^0.400",
+    "react": "^18",
+    "react-dom": "^18",
+    "tailwind-merge": "^2",
+    "three": "^0.169",
+    "zustand": "^5"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4",
+    "@testing-library/dom": "^10",
+    "@testing-library/jest-dom": "^6",
+    "@testing-library/react": "^16",
+    "@testing-library/user-event": "^14",
+    "@types/node": "^22",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "@types/three": "^0.169",
+    "@vitejs/plugin-react": "^4",
+    "jsdom": "^25",
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "vite": "^5",
+    "vitest": "^2"
+  }
+}

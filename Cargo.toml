@@ -6,6 +6,7 @@ members = [
     "crates/gmk87-app",
     "crates/gmk87-cli",
 ]
+exclude = ["src-tauri"]
 
 [workspace.package]
 version = "0.1.0"

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "GMK87 Configurator",
+  "version": "0.1.0",
+  "identifier": "dev.gmk87.configurator",
+  "build": {
+    "beforeDevCommand": "bun run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "bun run build",
+    "frontendDist": "../ui/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "GMK87 Configurator",
+        "width": 1180,
+        "height": 760,
+        "minWidth": 940,
+        "minHeight": 620
+      }
+    ],
+    "security": { "csp": null }
+  },
+  "bundle": { "active": false }
+}
