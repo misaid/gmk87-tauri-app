@@ -67,10 +67,12 @@ fn timeout_millis(timeout: Duration) -> i32 {
 
 /// Rejects a partial HID write.
 ///
-/// The handle is opened non-blocking, so `hid_write` may return fewer bytes
-/// than the report without an error. Treating that as success would leave the
-/// stream desynchronised while the final `COMMIT` still "confirms" the write,
-/// so a short write is a transport failure naming the byte counts.
+/// In hidapi's Linux hidraw backend `set_blocking_mode` only affects reads;
+/// `hid_write` is a plain blocking `write(2)` that normally writes the whole
+/// report. A short count can still occur (for example on a signal-interrupted
+/// write), and treating it as success would leave the stream desynchronised
+/// while the final `COMMIT` still "confirms" the write — so a short write is a
+/// transport failure naming the byte counts.
 fn check_write_len(report: &[u8], written: usize) -> Result<()> {
     if written != report.len() {
         return Err(DeviceError::Transport(std::io::Error::new(

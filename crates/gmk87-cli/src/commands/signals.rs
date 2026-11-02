@@ -9,7 +9,9 @@
 //!
 //! `SIGKILL` cannot be caught. Killing the process outright leaves the display
 //! mid-transaction, and the recovery procedure in `docs/hardware-testing.md`
-//! must be run.
+//! must be run. The first `SIGINT`/`SIGTERM` is therefore cooperative, and
+//! dropping the guard restores the default disposition so a second one
+//! terminates the process immediately instead of being swallowed.
 //!
 //! Implemented with a raw `extern "C"` declaration of the C library's
 //! `signal(2)` so no new crate dependency is needed.
@@ -26,6 +28,9 @@ static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 /// `SIGINT` and `SIGTERM` on Linux, the only platform this CLI targets.
 const SIGINT: i32 = 2;
 const SIGTERM: i32 = 15;
+
+/// `SIG_DFL`: the handler value that restores a signal's default action.
+const SIG_DFL: usize = 0;
 
 /// How often the watcher thread checks the flag.
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
@@ -46,7 +51,8 @@ extern "C" fn note_signal(_signum: i32) {
 /// Installs the handlers and starts a watcher that cancels `cancel`.
 ///
 /// Keep the returned guard alive for as long as the upload runs; dropping it
-/// stops the watcher thread.
+/// stops the watcher thread and restores the default `SIGINT`/`SIGTERM`
+/// disposition.
 pub fn watch(cancel: CancelToken) -> InterruptGuard {
     INTERRUPTED.store(false, Ordering::SeqCst);
     // SAFETY: `signal` is a standard C library function. The handler has the
@@ -76,6 +82,12 @@ pub fn watch(cancel: CancelToken) -> InterruptGuard {
 }
 
 /// Stops the watcher when the command returns.
+///
+/// Binding it matters: an unbound guard would be dropped immediately, which
+/// both stops the watcher and restores the default handlers, leaving the
+/// upload uninterruptible. `#[must_use]` keeps `signals::watch(cancel);` from
+/// compiling silently.
+#[must_use = "the guard must outlive the upload, or interrupts will not cancel it"]
 pub struct InterruptGuard {
     stop: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
@@ -86,6 +98,16 @@ impl Drop for InterruptGuard {
         self.stop.store(true, Ordering::SeqCst);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
+        }
+        // Restore the default disposition now that nothing watches the flag.
+        // Otherwise a second Ctrl-C would only set `INTERRUPTED` again and be
+        // swallowed, leaving `SIGKILL` as the only escape — the path that tears
+        // a frame.
+        // SAFETY: `signal` is a standard C library function and `SIG_DFL` is
+        // the portable default-handler constant.
+        unsafe {
+            let _ = signal(SIGINT, SIG_DFL);
+            let _ = signal(SIGTERM, SIG_DFL);
         }
     }
 }

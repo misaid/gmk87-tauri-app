@@ -1,14 +1,15 @@
 use gmk87_device::error::{DeviceError, Result as DeviceResult};
 use gmk87_device::mock::MockTransport;
 use gmk87_device::session::{
-    CancelToken, Session, UploadProgress, FRAME_ACK_MISS_LIMIT, FRAME_ACK_PACING_THRESHOLD,
+    CancelToken, Session, UploadProgress, CANCEL_POLL_SLICE, FRAME_ACK_MISS_LIMIT,
+    FRAME_ACK_PACING_THRESHOLD,
 };
 use gmk87_device::transport::Transport;
 use gmk87_protocol::config::{DeviceConfig, ShowSlot};
 use gmk87_protocol::frames::FramePlan;
 use gmk87_protocol::packet::{Command, Packet};
 use std::collections::VecDeque;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 fn one_frame_plan() -> FramePlan {
     FramePlan {
@@ -848,6 +849,110 @@ fn an_upload_past_its_deadline_times_out_and_repairs() {
     assert_eq!(
         payload_of(reports(writes, Command::Config).last().unwrap()),
         restored(&previous, ShowSlot::Slot1).as_slice()
+    );
+    assert!(!session.is_synced());
+}
+
+/// Wraps a scripted device and cancels the token on the first read that could
+/// only have come from the pacing wait (a read offered the full cancel slice,
+/// which is longer than both the per-packet acknowledgement window and the
+/// 100 ms command reads), recording the largest read timeout it was given.
+///
+/// This is the "acknowledged once, then went silent" dongle: the only way to
+/// leave the wait is the cancel check between reads, not an acknowledgement.
+struct CancelDuringPacingWait {
+    inner: ScriptedDevice,
+    cancel: CancelToken,
+    max_read_timeout: Duration,
+    cancelled_in_wait: bool,
+}
+
+impl CancelDuringPacingWait {
+    fn new(inner: ScriptedDevice, cancel: CancelToken) -> Self {
+        Self {
+            inner,
+            cancel,
+            max_read_timeout: Duration::ZERO,
+            cancelled_in_wait: false,
+        }
+    }
+
+    fn inner(&self) -> &ScriptedDevice {
+        &self.inner
+    }
+}
+
+impl Transport for CancelDuringPacingWait {
+    fn write_report(&mut self, report: &[u8]) -> DeviceResult<()> {
+        self.inner.write_report(report)
+    }
+
+    fn read_report(&mut self, timeout: Duration) -> DeviceResult<Option<Vec<u8>>> {
+        self.max_read_timeout = self.max_read_timeout.max(timeout);
+        if !self.cancelled_in_wait && timeout >= CANCEL_POLL_SLICE {
+            self.cancelled_in_wait = true;
+            self.cancel.cancel();
+        }
+        self.inner.read_report(timeout)
+    }
+}
+
+#[test]
+fn cancellation_during_the_pacing_wait_returns_and_repairs_promptly() {
+    let previous = previous_config(ShowSlot::Slot1);
+    let plan = one_frame_plan();
+
+    // First packet acknowledged, then the device stays silent. The stream
+    // reaches the pacing threshold and waits with the full 300 s budget.
+    let device = ScriptedDevice::new(Some(1)).stop_acking_after(1);
+    let cancel = CancelToken::new();
+    let mut session = Session::with_config(
+        CancelDuringPacingWait::new(device, cancel.clone()),
+        previous.clone(),
+    );
+
+    let started = Instant::now();
+    let err = session
+        .upload(&plan, &cancel, &mut |_| {})
+        .expect_err("the pacing wait must observe cancellation");
+    let elapsed = started.elapsed();
+
+    assert_cancelled(&err);
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "the wait must observe cancellation, not run out the upload budget: {elapsed:?}"
+    );
+
+    let transport = session.transport();
+    assert!(
+        transport.cancelled_in_wait,
+        "the test must cancel inside the pacing wait"
+    );
+    assert!(
+        transport.max_read_timeout <= CANCEL_POLL_SLICE,
+        "no single read may block for the whole budget: {:?}",
+        transport.max_read_timeout
+    );
+    assert_eq!(
+        transport.max_read_timeout, CANCEL_POLL_SLICE,
+        "the wait should offer the clamped slice"
+    );
+
+    let writes = transport.inner().writes();
+    assert_eq!(
+        reports(writes, Command::FrameData).len(),
+        FRAME_ACK_PACING_THRESHOLD as usize + 1,
+        "pacing stopped instead of queueing the whole slot"
+    );
+    assert_eq!(
+        writes.last().map(|w| w[3]),
+        Some(Command::Commit.as_u8()),
+        "repair COMMIT was sent"
+    );
+    assert_eq!(
+        payload_of(reports(writes, Command::Config).last().unwrap()),
+        restored(&previous, ShowSlot::Slot1).as_slice(),
+        "the display was put back on the untouched slot"
     );
     assert!(!session.is_synced());
 }

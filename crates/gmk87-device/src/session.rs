@@ -26,6 +26,14 @@ pub const FRAME_ACK_WINDOW: Duration = Duration::from_millis(25);
 /// Consecutive packets without a `FrameData` acknowledgement after which the
 /// device is considered to be not responding at all.
 pub const FRAME_ACK_MISS_LIMIT: u32 = 64;
+/// The longest single `read_report` inside the pacing wait.
+///
+/// The wait can run against the whole remaining upload budget (up to
+/// [`UPLOAD_TOTAL_TIMEOUT`]). A single read for all of it would leave a
+/// cancellation — Ctrl-C against a dongle that acknowledged once and then went
+/// silent — unobserved for minutes, so each read is clamped to this slice and
+/// the token is checked between them.
+pub const CANCEL_POLL_SLICE: Duration = Duration::from_millis(200);
 /// Consecutive unacknowledged packets after which the stream waits for the
 /// device instead of queueing more writes.
 ///
@@ -359,7 +367,7 @@ impl<T: Transport> Session<T> {
             // above rather than by burning the whole upload budget on a wait.
             if seen_ack && misses >= FRAME_ACK_PACING_THRESHOLD {
                 let budget = total_timeout.saturating_sub(started.elapsed());
-                match self.wait_for_frame_ack(budget) {
+                match self.wait_for_frame_ack(cancel, budget) {
                     Ok(true) => misses = 0,
                     Ok(false) => {
                         return Err(UploadFailure::Fatal(DeviceError::UploadTimeout {
@@ -367,7 +375,7 @@ impl<T: Transport> Session<T> {
                             total: total_bytes,
                         }))
                     }
-                    Err(error) => return Err(UploadFailure::Transport(error)),
+                    Err(failure) => return Err(failure),
                 }
             }
         }
@@ -404,20 +412,38 @@ impl<T: Transport> Session<T> {
     /// Used to pace a host that is outrunning the device. Returns `Ok(false)`
     /// only when the whole budget is spent without an acknowledgement; reports
     /// for other commands cannot confirm the frames, so they are discarded.
-    fn wait_for_frame_ack(&mut self, budget: Duration) -> Result<bool> {
+    ///
+    /// The budget can be the whole remaining upload ceiling, so no single read
+    /// is allowed to run for it: each read is clamped to [`CANCEL_POLL_SLICE`]
+    /// and `cancel` is re-checked between reads. A dongle that acknowledged once
+    /// and then went silent is the documented stuck case, and Ctrl-C must not
+    /// wait minutes for that budget to expire. Cancellation is reported as
+    /// [`UploadFailure::Cancelled`] — the same failure the packet loop returns —
+    /// so the caller's display repair runs.
+    fn wait_for_frame_ack(
+        &mut self,
+        cancel: &CancelToken,
+        budget: Duration,
+    ) -> std::result::Result<bool, UploadFailure> {
         let deadline = Instant::now() + budget;
         loop {
+            if cancel.is_cancelled() || !self.synced {
+                return Err(UploadFailure::Cancelled);
+            }
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
                 return Ok(false);
             }
-            match self.transport.read_report(remaining)? {
-                Some(report) if report.len() >= 4 && report[3] == Command::FrameData.as_u8() => {
+            match self.transport.read_report(remaining.min(CANCEL_POLL_SLICE)) {
+                Ok(Some(report))
+                    if report.len() >= 4 && report[3] == Command::FrameData.as_u8() =>
+                {
                     return Ok(true)
                 }
                 // A read timeout or an unrelated report: keep waiting while
                 // there is budget left.
-                _ => continue,
+                Ok(_) => continue,
+                Err(error) => return Err(UploadFailure::Transport(error)),
             }
         }
     }
