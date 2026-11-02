@@ -11,7 +11,6 @@ pub struct MockTransport {
     responses: VecDeque<Vec<u8>>,
     writes: Vec<Vec<u8>>,
     fail_writes: usize,
-    unsolicited: VecDeque<Vec<u8>>,
 }
 
 impl MockTransport {
@@ -28,8 +27,16 @@ impl MockTransport {
         self
     }
 
+    /// Queues a report the device sends on its own, such as `READY` or noise
+    /// for another command.
+    ///
+    /// Reports are delivered strictly in arrival order: this appends to the
+    /// same queue `expect` fills, so an unsolicited report lands behind
+    /// everything already scripted and ahead of everything scripted later. A
+    /// jump-the-line queue would let a `READY` that belongs to a later phase be
+    /// consumed and discarded by an earlier command's acknowledgement read.
     pub fn push_unsolicited(&mut self, report: Vec<u8>) -> &mut Self {
-        self.unsolicited.push_back(report);
+        self.responses.push_back(report);
         self
     }
 
@@ -58,9 +65,6 @@ impl Transport for MockTransport {
     }
 
     fn read_report(&mut self, timeout: Duration) -> Result<Option<Vec<u8>>> {
-        if let Some(report) = self.unsolicited.pop_front() {
-            return Ok(Some(report));
-        }
         if let Some(report) = self.responses.pop_front() {
             return Ok(Some(report));
         }
