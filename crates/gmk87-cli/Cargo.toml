@@ -10,5 +10,5 @@ gmk87-protocol = { path = "../gmk87-protocol" }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 tracing.workspace = true
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = "0.4"
