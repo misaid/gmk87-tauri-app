@@ -2,5 +2,6 @@
 
 pub mod config;
 pub mod error;
+pub mod image;
 pub mod packet;
 pub mod pixel;
