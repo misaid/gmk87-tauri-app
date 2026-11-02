@@ -3,5 +3,7 @@
 //! Tauri-independent so it can be tested against `MockTransport`.
 
 pub mod error;
+pub mod lighting;
+pub mod manager;
 pub mod snapshot;
 pub mod state;
