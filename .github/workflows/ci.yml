@@ -5,7 +5,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
+      - run: >
+          sudo apt-get update && sudo apt-get install -y
+          libudev-dev pkg-config
+          libwebkit2gtk-4.1-dev build-essential curl wget file
+          libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - uses: oven-sh/setup-bun@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --all
+      - run: cd ui && bun install --frozen-lockfile && bun run test && bun run build
+      - run: cd src-tauri && cargo test && cargo clippy --all-targets -- -D warnings

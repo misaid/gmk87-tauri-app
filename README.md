@@ -5,9 +5,8 @@ GIFs to its 240×135 TFT display, control the RGB lighting, and sync the
 keyboard's real-time clock — directly over USB `hidraw`, with no vendor software
 and no root once the udev rule is installed.
 
-This repository currently contains the **Rust core and a command-line tool**.
-The Tauri desktop application is a follow-on plan; the protocol, device layer and
-CLI are complete enough to build on.
+This repository contains the **Rust core, a command-line tool, and the Tauri
+desktop application** (`src-tauri` + `ui/`).
 
 > **The wired write path is verified end to end.** On 2026-11-01 the wired
 > keyboard accepted a clock write (the panel shows it), a lighting write, and a
@@ -170,8 +169,27 @@ a future run.
 ## Desktop application
 
 The Tauri + React application — device picker, crop/zoom display editor, upload
-progress and cancel, lighting and clock screens — is a follow-on plan and is not
-in this workspace. It will sit on the same `gmk87-device` API.
+progress and cancel, lighting (named effects and presets) and clock screens, plus
+a 3D keyboard preview — sits on the same `gmk87-device` API.
+
+Prerequisites on Linux: `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libsoup-3.0`,
+`librsvg2-dev`, and [bun](https://bun.sh). Then:
+
+```bash
+cd ui && bun install
+bun run tauri dev      # development window
+```
+
+Tests and build:
+
+```bash
+cargo test --all                                   # protocol, device, app
+cd src-tauri && cargo test && cargo clippy --all-targets -- -D warnings
+cd ui && bun run test && bun run build
+```
+
+Packaging (`.deb` / AppImage, icons, bundled udev rule) is a later plan; the
+placeholder icons in `src-tauri/icons` are replaced then.
 
 ## License and attribution
 

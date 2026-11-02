@@ -1,9 +1,12 @@
+import { PermissionCard } from "@/components/PermissionCard";
 import { useAppStore } from "@/store";
 
 export function ErrorBanner() {
   const error = useAppStore((s) => s.error);
+  const errorKind = useAppStore((s) => s.errorKind);
   const dismiss = useAppStore((s) => s.dismissError);
   if (!error) return null;
+  if (errorKind === "permission_denied") return <PermissionCard />;
   return (
     <div
       role="alert"

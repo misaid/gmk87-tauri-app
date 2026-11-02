@@ -9,6 +9,7 @@ interface AppStore {
   state: ipc.DeviceState | null;
   connected: boolean;
   error: string | null;
+  errorKind: string | null;
   presets: ipc.Preset[];
   crop: CropParams;
   slot: Slot;
@@ -37,6 +38,13 @@ interface AppStore {
   dismissError: () => void;
 }
 
+function kindOf(error: unknown): string | null {
+  if (error && typeof error === "object" && "kind" in error) {
+    return String((error as { kind: unknown }).kind);
+  }
+  return null;
+}
+
 function message(error: unknown): string {
   if (typeof error === "string") return error;
   if (error && typeof error === "object" && "message" in error) {
@@ -50,6 +58,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   state: null,
   connected: false,
   error: null,
+  errorKind: null,
   presets: [],
   crop: { ...DEFAULT_CROP },
   slot: "slot0",
@@ -65,17 +74,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
     try {
       set({ devices: await ipc.listDevices() });
     } catch (error) {
-      set({ error: message(error) });
+      set({ error: message(error), errorKind: kindOf(error) });
     }
   },
 
   connectTo: async (path) => {
     try {
       const state = await ipc.connect(path);
-      set({ state, connected: state.connected, error: null });
+      set({ state, connected: state.connected, error: null, errorKind: null });
       await get().refreshPreview();
     } catch (error) {
-      set({ error: message(error) });
+      set({ error: message(error), errorKind: kindOf(error) });
     }
   },
 
@@ -96,7 +105,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const info = await ipc.inspectSource(bytes, get().crop);
       set({ sourceInfo: info, delayMs: info.delayMs, totalFrames: info.frames + 1 });
     } catch (error) {
-      set({ error: message(error) });
+      set({ error: message(error), errorKind: kindOf(error) });
     }
   },
   setDelayMs: (delayMs) => set({ delayMs }),
@@ -110,9 +119,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
     try {
       const png = await ipc.previewDisplay(source.bytes, crop);
       const blob = new Blob([new Uint8Array(png)], { type: "image/png" });
-      set({ previewUrl: URL.createObjectURL(blob), error: null });
+      set({ previewUrl: URL.createObjectURL(blob), error: null, errorKind: null });
     } catch (error) {
-      set({ error: message(error) });
+      set({ error: message(error), errorKind: kindOf(error) });
     }
   },
 
@@ -131,9 +140,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
         delayMs,
         showAfter,
       });
-      set({ state: await ipc.readState(), error: null });
+      set({ state: await ipc.readState(), error: null, errorKind: null });
     } catch (error) {
-      set({ error: message(error) });
+      set({ error: message(error), errorKind: kindOf(error) });
     } finally {
       set({ uploads: Math.max(0, get().uploads - 1), progress: null });
     }
@@ -145,31 +154,31 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   applyLighting: async (patch) => {
     try {
-      set({ state: await ipc.setLighting(patch), error: null });
+      set({ state: await ipc.setLighting(patch), error: null, errorKind: null });
     } catch (error) {
-      set({ error: message(error) });
+      set({ error: message(error), errorKind: kindOf(error) });
     }
   },
   applyPreset: async (name) => {
     try {
-      set({ state: await ipc.applyPreset(name), error: null });
+      set({ state: await ipc.applyPreset(name), error: null, errorKind: null });
     } catch (error) {
-      set({ error: message(error) });
+      set({ error: message(error), errorKind: kindOf(error) });
     }
   },
   loadPresets: async () => {
     try {
       set({ presets: await ipc.listPresets() });
     } catch (error) {
-      set({ error: message(error) });
+      set({ error: message(error), errorKind: kindOf(error) });
     }
   },
   syncClock: async () => {
     try {
-      set({ state: await ipc.syncClock(), error: null });
+      set({ state: await ipc.syncClock(), error: null, errorKind: null });
     } catch (error) {
-      set({ error: message(error) });
+      set({ error: message(error), errorKind: kindOf(error) });
     }
   },
-  dismissError: () => set({ error: null }),
+  dismissError: () => set({ error: null, errorKind: null }),
 }));

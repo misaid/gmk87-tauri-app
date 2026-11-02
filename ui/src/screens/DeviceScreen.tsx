@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import * as ipc from "@/lib/ipc";
 import { useAppStore } from "@/store";
 
 export default function DeviceScreen() {
@@ -62,6 +63,18 @@ export default function DeviceScreen() {
           {state.synced ? "Settings written and acknowledged." : "Connected; nothing written yet."}
         </p>
       )}
+
+      <Button
+        variant="ghost"
+        size="sm"
+        className="self-start"
+        onClick={async () => {
+          const text = await ipc.copyDiagnostics();
+          await navigator.clipboard.writeText(text);
+        }}
+      >
+        Copy diagnostics
+      </Button>
     </div>
   );
 }

@@ -284,3 +284,24 @@ single-frame display upload that displayed its image. The 2.4 GHz upload,
 multi-frame and GIF animation, the wired acknowledgement's payload shape, and
 power-cycle persistence remain unverified; no lighting change has been confirmed
 by eye.**
+
+## 6. GUI checklist (Tauri app)
+
+The desktop app drives the same `gmk87-device` API as the CLI, so it inherits the
+safety rules in §2. Run these with a person watching the device, one action at a
+time. Nothing here has been executed yet; record what is observed.
+
+| Step | Expected | Observed | Date | Transport |
+|---|---|---|---|---|
+| Launch `bun run tauri dev`, pick the wired keyboard, Connect | status shows Connected; device state appears | | | wired |
+| Choose a static image, upload to slot 0, show it | slot 0 shows the image and slot 1 is unchanged | | | wired |
+| Load a GIF of more than 36 frames | the budget meter refuses it before upload, naming the count | | | — |
+| Start an upload, press Cancel mid-stream | upload stops; the error says "display repair attempted"; the panel is usable | | | wired |
+| Apply a lighting preset (e.g. matrix) | underglow changes to green (confirm by eye) | | | wired |
+| Change the underglow effect by name | the effect changes on the keyboard | | | wired |
+| Press Sync now | the keyboard clock matches the system time | | | wired |
+| Remove the udev rule, reconnect | the app shows the permission card with the rule and copy button | | | wired |
+| Same static upload over the 2.4 GHz dongle | completes within the 300 s ceiling or reports the timeout | | | 2.4 GHz |
+
+`show_image` persistence across a power cycle (§5) applies to the app too: after
+an unplug, note whether the displayed slot survives.
