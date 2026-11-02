@@ -132,3 +132,42 @@ fn encode_frames(frames: &[Vec<u8>]) -> Result<Vec<u8>, ProtocolError> {
     }
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frame() -> Vec<u8> {
+        vec![0u8; (crate::pixel::DISPLAY_WIDTH * crate::pixel::DISPLAY_HEIGHT * 3) as usize]
+    }
+
+    fn plan(frames: usize, delay_ms: u16) -> FramePlan {
+        FramePlan {
+            slot0_frames: vec![frame(); frames],
+            slot1_frames: Vec::new(),
+            delay_ms,
+            show: ShowSlot::Clock,
+        }
+    }
+
+    #[test]
+    fn exactly_the_maximum_frame_count_is_accepted() {
+        assert_eq!(MAX_TOTAL_FRAMES, 36);
+        // The frame budget is inclusive: exactly 36 frames is valid.
+        assert!(plan(36, MIN_FRAME_DELAY_MS).validate().is_ok());
+    }
+
+    #[test]
+    fn exactly_the_minimum_frame_delay_is_accepted() {
+        assert_eq!(MIN_FRAME_DELAY_MS, 60);
+        // The delay floor is inclusive: exactly 60 ms is valid, 59 ms is not.
+        assert!(plan(1, 60).validate().is_ok());
+        assert!(matches!(
+            plan(1, 59).validate(),
+            Err(ProtocolError::FrameDelayTooShort {
+                delay_ms: 59,
+                min_ms: 60
+            })
+        ));
+    }
+}

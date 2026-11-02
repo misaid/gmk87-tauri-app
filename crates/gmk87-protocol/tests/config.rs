@@ -196,9 +196,9 @@ fn from_hex_rejects_wrong_length_and_non_hex() {
 }
 
 proptest! {
-    /// Any read-then-write round trip must preserve every byte not explicitly changed.
+    /// Any edit must preserve every byte not explicitly changed.
     #[test]
-    fn untouched_bytes_survive_a_read_modify_write(raw in prop::collection::vec(any::<u8>(), 48..=48)) {
+    fn untouched_bytes_survive_an_edit(raw in prop::collection::vec(any::<u8>(), 48..=48)) {
         let original = DeviceConfig::from_bytes(&raw).unwrap();
         let mut edited = DeviceConfig::from_bytes(&raw).unwrap();
         edited.set_underglow_brightness(9);
