@@ -177,7 +177,7 @@ equally tolerant where it must be (the dongle's framing).
 | `READ_CFG` | `0x05` | — | — | **never send**: it echoes the request payload and never returns device memory (§6) |
 | `CONFIG` | `0x06` | host → device | 48 bytes | the complete configuration block (§7) |
 | `FRAME_DATA` | `0x21` | host → device | ≤ 56 bytes | frame memory at a 24-bit position; acknowledged per packet when the transport is prompt, otherwise paced adaptively (§11) |
-| `READY` | `0x23` | device → host | none | sent by the wired interface, **not** by the dongle; optional |
+| `READY` / `UPLOAD_START` | `0x23` | host → device | none | the host sends it once, between `COMMIT` and the first `FRAME_DATA`, to open the upload session; its acknowledgement is optional (§11) |
 
 `PREP_READ` and `READ_CFG` remain in the codec only so that the full command set
 can be decoded; no production path constructs them, and tests assert that
@@ -408,26 +408,32 @@ Then:
 ```text
 INIT
 INIT
-CONFIG      48-byte block
-            100 ms settle
+CONFIG          48-byte block
+                100 ms settle
 COMMIT
-READY       optional — wired only; the dongle never sends it
-FRAME_DATA  position 0 … (slot 0 frames, then slot 1 frames)
+UPLOAD_START    0x23, empty payload, position 0 — host → device
+FRAME_DATA      position 0 … (slot 0 frames, then slot 1 frames)
 COMMIT
 ```
 
+UPLOAD_START (`0x23`) is a **host** command, not a device notification. The
+official application's captured traffic (`gmk87sniffed.pcapng`, 2,347 reports
+with valid checksums) contains exactly one occurrence: length 0, position 0,
+immediately after the configuration `COMMIT` and immediately before the first
+frame packet. Both community references send it the same way. Without it the
+device accepts frame writes for about sixteen seconds and then resets — the
+wired hardware run that exposed this had the kernel log a USB disconnect.
+
+Its acknowledgement is optional: the wired interface answers within the command
+deadline, while the 2.4 GHz dongle acknowledges sparsely, so a missing
+acknowledgement is logged and the stream proceeds. UPLOAD_START is sent exactly
+once per upload; it is not retried.
+
 **Verified** up to and including individual `FRAME_DATA` acknowledgements on
 the dongle, and the wired handshake plus the start of a frame stream. A first
-wired one-slot upload failed after about 17 s with
-`hidapi error: Connection timed out`: the host had written frames without
-reading their acknowledgements, the device's buffer filled, and its OUT
-endpoint stopped accepting writes. That is the defect the adaptive pacing below
-fixes; the retry is pending (see `hardware-testing.md`).
-
-`READY (0x23)` is awaited for up to 1.5 s but is not required. The wired
-interface sends it; the dongle does not, yet accepts `FRAME_DATA` immediately
-after the `COMMIT` acknowledgement. **Verified** on the dongle (10 s of reads
-produced no `0x23`).
+wired one-slot upload reset the device after about 16 s because UPLOAD_START was
+never sent; the retry with the corrected handshake is pending (see
+`hardware-testing.md`).
 
 ### Frame acknowledgement pacing adapts to the transport
 
@@ -442,7 +448,7 @@ when acknowledgements are sparse.
 
 | Constant | Value | Role |
 |---|---|---|
-| `COMMAND_TIMEOUT` | 1.5 s | deadline for a handshake acknowledgement |
+| `COMMAND_TIMEOUT` | 1.5 s | deadline for a handshake acknowledgement, `UPLOAD_START` included |
 | `WRITE_SETTLE` | 100 ms | pause between `CONFIG` and `COMMIT` |
 | `FRAME_PACED_ACK_WINDOW` | 200 ms | how long paced mode waits for one packet's acknowledgement |
 | `FRAME_PACED_MISS_LIMIT` | 3 | consecutive paced misses before falling back to the tolerant mode |

@@ -52,13 +52,13 @@ impl MockTransport {
         self
     }
 
-    /// Queues a report the device sends on its own, such as `READY` or noise
-    /// for another command.
+    /// Queues a report the device sends on its own, such as noise for another
+    /// command.
     ///
     /// Reports are delivered strictly in arrival order: this appends to the
     /// same queue `expect` fills, so an unsolicited report lands behind
     /// everything already scripted and ahead of everything scripted later. A
-    /// jump-the-line queue would let a `READY` that belongs to a later phase be
+    /// jump-the-line queue would let a report that belongs to a later phase be
     /// consumed and discarded by an earlier command's acknowledgement read.
     pub fn push_unsolicited(&mut self, report: Vec<u8>) -> &mut Self {
         self.responses.push_back(report);

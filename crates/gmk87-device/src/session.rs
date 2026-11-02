@@ -326,14 +326,28 @@ impl<T: Transport> Session<T> {
 
         let memory = plan.to_memory()?;
 
-        // INIT ×2 → CONFIG → COMMIT → READY
+        // INIT ×2 → CONFIG → COMMIT → UPLOAD_START(0x23)
         self.send_and_wait(Command::Init, 0, &[])?;
         self.send_and_wait(Command::Init, 0, &[])?;
         self.send_and_wait(Command::Config, 0, patched.as_bytes())?;
         std::thread::sleep(WRITE_SETTLE);
         self.send_and_wait(Command::Commit, 0, &[])?;
-        if !self.wait_for_ready(COMMAND_TIMEOUT)? {
-            tracing::debug!("device sent no READY; continuing after the COMMIT acknowledgement");
+        // 0x23 opens the frame upload session. The host sends it, once, with an
+        // empty payload at position 0, between the configuration COMMIT and the
+        // first FRAME_DATA — the official application's captured traffic shows
+        // exactly one occurrence there. Without it the device accepts writes
+        // for about sixteen seconds and then resets.
+        //
+        // Its acknowledgement is optional: the 2.4 GHz dongle acknowledges
+        // sparsely, so a missing ack must not fail an otherwise valid upload.
+        match self.send_and_wait(Command::Ready, 0, &[]) {
+            Ok(_) => {}
+            Err(DeviceError::ProtocolTimeout { .. }) => {
+                tracing::debug!(
+                    "no UPLOAD_START (0x23) acknowledgement; continuing before the frame stream"
+                );
+            }
+            Err(error) => return Err(error),
         }
         // The handshake completed, so streaming may begin and the device now
         // holds the patched block; publish it only at this point.
@@ -359,7 +373,8 @@ impl<T: Transport> Session<T> {
         Ok(())
     }
 
-    /// Streams every frame packet, then commits. Runs only after READY.
+    /// Streams every frame packet, then commits. Runs only after the host has
+    /// sent UPLOAD_START (`0x23`).
     ///
     /// The stream has two acknowledgement modes and picks between them from
     /// what the transport actually does:
@@ -367,9 +382,8 @@ impl<T: Transport> Session<T> {
     /// * **Paced** (the starting mode). After each packet, wait up to
     ///   `timing.paced_ack_window` for that packet's acknowledgement. The wired
     ///   interface answers each packet in milliseconds, so the cost is the real
-    ///   round-trip, and no backlog of unread acknowledgements can fill the
-    ///   device's buffer. That backlog is what stopped accepting writes on a
-    ///   wired upload (`hidapi error: Connection timed out`).
+    ///   round-trip and the device is never left with a backlog of unread
+    ///   acknowledgements.
     /// * **Tolerant** (fallback). A transport that misses
     ///   [`FRAME_PACED_MISS_LIMIT`] paced acknowledgements in a row cannot be
     ///   paced — the 2.4 GHz dongle acknowledges roughly once per second — so
@@ -549,30 +563,6 @@ impl<T: Transport> Session<T> {
                 Err(error) => return Err(UploadFailure::Transport(error)),
             }
         }
-    }
-
-    /// Waits for READY for at most `timeout`.
-    ///
-    /// The 2.4 GHz dongle never sends READY: no `0x23` report arrives within
-    /// 10 s of COMMIT, while FRAME_DATA is accepted immediately afterwards.
-    /// The wired interface does send it. Returns whether READY was seen; the
-    /// caller proceeds either way because the COMMIT acknowledgement already
-    /// confirmed the configuration. Public so tests can use a short timeout.
-    pub fn wait_for_ready(&mut self, timeout: Duration) -> Result<bool> {
-        let deadline = Instant::now() + timeout;
-        while Instant::now() < deadline {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            match self
-                .transport
-                .read_report(remaining.min(Duration::from_millis(100)))?
-            {
-                Some(report) if report.len() >= 4 && report[3] == Command::Ready.as_u8() => {
-                    return Ok(true);
-                }
-                _ => continue,
-            }
-        }
-        Ok(false)
     }
 
     /// Puts the display back after an aborted upload.

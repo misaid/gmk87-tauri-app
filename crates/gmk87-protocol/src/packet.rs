@@ -12,6 +12,11 @@ pub enum Command {
     ReadConfig,
     Config,
     FrameData,
+    /// `0x23`, sent by the **host** once, with an empty payload at position 0,
+    /// between the configuration `COMMIT` and the first frame packet. It opens
+    /// the frame upload session (the official application sends it exactly
+    /// once there). The name is historical: it was once mistaken for a device
+    /// "ready" notification.
     Ready,
 }
 

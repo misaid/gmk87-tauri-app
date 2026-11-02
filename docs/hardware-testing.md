@@ -24,10 +24,11 @@ except where a later wired test is named explicitly. Discovery and the read/echo
 diagnosis exercised both transports (the wired acknowledgement was observed as 8
 bytes, during those read probes). The original configuration and frame writes
 were over the 2.4 GHz dongle. A later wired test on `/dev/hidraw12` (interface 3,
-usage page `0xFF1C`) confirmed configuration writes and exposed a frame-stream
-defect: one 65,536-byte slot failed after about 17 s with `hidapi error:
-Connection timed out`. That cause and the awaiting-retry fix are recorded below.
-The automated suite uses mock transports only and never opens `/dev/hidraw*`.
+usage page `0xFF1C`) confirmed configuration writes and exposed a protocol
+defect: one 65,536-byte slot reset the keyboard after about 16 s because the
+host never sent `UPLOAD_START (0x23)`. That cause and the awaiting-retry fix are
+recorded below. The automated suite uses mock transports only and never opens
+`/dev/hidraw*`.
 
 | Area | Status | Evidence |
 |---|---|---|
@@ -35,10 +36,10 @@ The automated suite uses mock transports only and never opens `/dev/hidraw*`.
 | Wired acknowledgement shape | verified | 8-byte acknowledgement seen during read/echo probes and again on configuration and frame writes |
 | `show-config` | works | prints the snapshot; performs no device I/O by design |
 | Configuration write (`clock`, `lights`) | acknowledged, **not visually confirmed** | dongle: `COMMIT` acks at ~1.02 s; wired: both commands complete in ~0.1 s; snapshots hold the intended bytes |
-| Upload handshake | acknowledged | `INIT ×2 → CONFIG → COMMIT` acked on both transports; `READY` absent on the dongle, as expected |
+| Upload handshake | **defective, fixed** | `INIT ×2 → CONFIG → COMMIT` acked on both transports, but the host never sent the required `UPLOAD_START (0x23)`; wired streaming then reset the device after ~16 s |
 | `FRAME_DATA` packets | accepted individually | one packet acked after ~1.018 s on the dongle |
-| Full slot upload | **did not complete** | dongle: ~1.02 s per ack, ~20 min per frame; wired: failed after ~17 s with `hidapi error: Connection timed out` |
-| Wired frame stream | **failed on a backlog** | frames were written without reading their acknowledgements, the device buffer filled, and its OUT endpoint stopped accepting writes; adaptive pacing is the fix, retry pending |
+| Full slot upload | **did not complete** | dongle: ~1.02 s per ack, ~20 min per frame; wired: the device reset after ~16 s of streaming |
+| Wired frame stream | **failed — missing UPLOAD_START** | the official application's capture shows `0x23` sent by the host between `COMMIT` and the frames; without it the wired keyboard accepted writes for ~16 s and reset (kernel USB disconnect). The fix awaits a retry |
 | Display showing an image | **unverified** | no upload has finished; the panel state was never observed |
 | Wired transport write | **partly verified** | configuration writes succeed in ~0.1 s; a frame stream has not yet completed |
 | Animated GIF | **never attempted** | — |
@@ -140,16 +141,16 @@ effect was seen.
 | ~19:00 | `show-config` | none (no device I/O) | reference defaults printed: brightness 9, RGB `f8ff00`, delay 65535, slot 1 frames 255 |
 | 19:01 | `clock` | dongle | `COMMIT` acked (~1.02 s); snapshot bytes 35–41 = `00 01 19 00 01 11 26` = 19:01:00, Sunday 2026-11-01; panel not observed |
 | 19:01 | `lights --brightness 5` | dongle | `COMMIT` acked; snapshot byte 2 changed 9 → 5; underglow not observed |
-| 19:01 | `upload test.png --slot 1 --show` | dongle | failed waiting for `READY (0x23)` after ~6 s; a raw read showed `CONFIG`/`COMMIT` acks but no `0x23` |
-| ~19:02 | one `FRAME_DATA` after `COMMIT` | dongle | acked after 1,018 ms, so the dongle is ready without `READY` |
+| 19:01 | `upload test.png --slot 1 --show` | dongle | failed waiting for `READY (0x23)` after ~6 s; a raw read showed `CONFIG`/`COMMIT` acks but no `0x23`. The code then waited for a device-sent `0x23`; the host should have sent it (corrected later) |
+| ~19:02 | one `FRAME_DATA` after `COMMIT` | dongle | acked after 1,018 ms, so the dongle accepts frames after `COMMIT` without any `0x23` exchange |
 | 19:06 | `upload test.png --slot 1 --show` | dongle | handshake ok, streaming began, no exit line: the process was killed externally before any progress quarter was reached |
 | 19:08 | `upload` (repeat) | dongle | killed externally (`status=9/KILL`) after ~54 s |
 | 19:09 | `probe` | dongle | path had changed `/dev/hidraw10` → `/dev/hidraw6`; the interrupted upload re-enumerated the dongle |
 | 19:09 | bare `COMMIT`, then `INIT → CONFIG(default) → COMMIT` | dongle | all acks ~1.026 s; display recovered to the default clock, per the rewritten block |
 | 19:10 | `clock` | dongle | acked; snapshot left `… 00 51 10 19 00 01 11 26 00 ff ff 00 ff 00` |
 | later | `clock`, `lights` | wired `/dev/hidraw12` | both complete in ~0.1 s; the `INIT → CONFIG → COMMIT` handshake is confirmed working on real wired hardware |
-| later | `upload static.png --slot 0` | wired `/dev/hidraw12` | failed after ~17 s with `hidapi error: Connection timed out`; the handshake succeeded, then the device's OUT endpoint stopped accepting writes |
-| later | diagnosis | — | fire-and-forget frames left a backlog of unread acknowledgements, the device buffer filled and the OUT transfer timed out. Adaptive pacing (per-packet on wired, tolerant fallback on the dongle) is implemented; the hardware retry is pending |
+| later | `upload static.png --slot 0` | wired `/dev/hidraw12` | streamed for ~16 s and then the keyboard reset; the kernel logged a USB disconnect. The host had never sent `UPLOAD_START (0x23)`, so the upload session was never opened |
+| later | diagnosis from the official capture | — | `gmk87sniffed.pcapng` (2,347 reports with valid checksums) shows `INIT → INIT → CONFIG → COMMIT → UPLOAD_START(0x23) → FRAME_DATA ×2341 → COMMIT`: `0x23` is a **host** command, one occurrence, len 0, pos 0, directly before the frames. Both community references send it. The host now sends it once and tolerates a missing ack; the hardware retry is pending |
 
 The measured dongle cadence, repeated across commands:
 
@@ -164,11 +165,10 @@ final COMMIT ack after 1016.0 ms
 
 A 65,536-byte frame is 1,171 packets of 56 bytes. At one acknowledged packet per
 second that is about **twenty minutes per frame** if each packet is waited for,
-which is why the stream falls back to the tolerant mode there. On the wired
-interface each packet is answered in milliseconds, and the earlier fire-and-forget
-stream filled the device's buffer and timed out after ~17 s. The adaptive stream
-now waits per packet when acknowledgements are prompt and switches once to the
-tolerant mode when they are sparse, always inside the 300 s ceiling. That fix has
+which is why the stream falls back to the tolerant mode on the dongle. On the
+wired interface each packet is answered in milliseconds, so the stream stays
+paced. The wired run that exposed the missing `UPLOAD_START (0x23)` streamed for
+about sixteen seconds and then reset the keyboard; the corrected handshake has
 not yet been retried on hardware.
 
 The incident itself, for the record: detached uploads launched with
@@ -231,9 +231,12 @@ here so a future run can replace it with a finding and a date.
   write has been attempted. Record whether a wired write's acknowledgement has
   the same shape and whether it ever carries a payload; if one does, the
   short-ack assumption needs revisiting.
-- **READY is optional.** The dongle never sends `0x23`, the wired interface
-  does. Record the wired behaviour, including whether `READY` arrives before or
-  after the `COMMIT` acknowledgement.
+- **UPLOAD_START (0x23) is a host command.** The official application's capture
+  shows one `0x23` packet (len 0, pos 0) between `COMMIT` and the first frame
+  packet, and both community references send it. Our earlier builds waited for
+  the device to send `0x23` instead and never sent it, which made the wired
+  keyboard reset after ~16 s of streaming. Record whether the corrected
+  handshake completes the upload and whether the `0x23` acknowledgement arrives.
 - **HID report ID offset.** Acknowledgement matching reads `report[3]`, which
   assumes hidapi preserves the HID report ID at offset 0 of every input report.
   That has never been confirmed on this hardware. If it is wrong, every
@@ -242,10 +245,10 @@ here so a future run can replace it with a finding and a date.
   path runs. Record the raw bytes of the first acknowledgement on each transport.
 - **Slot-1-only uploads.** Record whether writing slot 1 at position 0 leaves
   slot 0's image intact, or whether the frame-count split assumption is wrong.
-- **Wired frame backlog.** The first wired one-slot upload failed after ~17 s
-  with an OUT-transfer timeout caused by unread frame acknowledgements. The
-  stream now waits per packet when acknowledgements are prompt. Record whether
-  the retry completes, the wall time, and whether the display shows the image.
+- **Wired `UPLOAD_START` retry.** The first wired one-slot upload reset after
+  ~16 s because `0x23` was never sent. The host now sends it once; record
+  whether the retry completes, the wall time, and whether the display shows the
+  image.
 - **GIF compositing.** Frames are decoded independently, without disposal or
   offset compositing. Record how badly a partial-update GIF renders.
 - **The power-key hazard.** The keyboard is watched as a system-button device.
@@ -265,5 +268,5 @@ Hardware verification resumes only on an explicit human decision, with:
 Until then, the honest summary is: **the protocol is understood, the write path
 is implemented and unit-tested, configuration writes are acknowledged on both
 transports (wired in ~0.1 s), and a first wired frame stream exposed and then
-fixed a buffer-backlog defect — but no upload has ever been seen to finish, and
-no display or lighting change has been confirmed by eye.**
+fixed a missing `UPLOAD_START (0x23)` — but no upload has ever been seen to
+finish, and no display or lighting change has been confirmed by eye.**

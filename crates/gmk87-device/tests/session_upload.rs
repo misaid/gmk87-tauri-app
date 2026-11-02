@@ -7,7 +7,7 @@ use gmk87_device::session::{
 use gmk87_device::transport::Transport;
 use gmk87_protocol::config::{DeviceConfig, ShowSlot};
 use gmk87_protocol::frames::FramePlan;
-use gmk87_protocol::packet::{Command, Packet};
+use gmk87_protocol::packet::Command;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
@@ -47,16 +47,13 @@ fn restored(previous: &DeviceConfig, show: ShowSlot) -> Vec<u8> {
     expected
 }
 
+/// `INIT ×2 → CONFIG → COMMIT`, then the host's `UPLOAD_START (0x23)`, which
+/// this mock acknowledges. The device never sends `0x23`; the host does.
 fn expect_upload_handshake(mock: &mut MockTransport) {
     mock.expect(Command::Init, vec![vec![]; 2]);
     mock.expect(Command::Config, vec![vec![]]);
     mock.expect(Command::Commit, vec![vec![]]);
-    mock.push_unsolicited(
-        Packet::new(Command::Ready, 0, &[])
-            .unwrap()
-            .encode()
-            .to_vec(),
-    );
+    mock.expect(Command::Ready, vec![vec![]]);
 }
 
 /// A repair always closes the frame transaction with a bare COMMIT, then
@@ -129,6 +126,19 @@ fn uploads_one_slot_with_config_from_memory() {
     assert_eq!(commands.last(), Some(&0x02), "ends with COMMIT");
     assert_no_read_commands(&commands);
 
+    // UPLOAD_START (0x23) is a host command, sent once between the
+    // configuration COMMIT and the first FRAME_DATA.
+    assert_eq!(
+        &commands[3..6],
+        &[0x02, 0x23, 0x21],
+        "COMMIT → UPLOAD_START → first frame packet"
+    );
+    assert_eq!(
+        commands.iter().filter(|command| **command == 0x23).count(),
+        1,
+        "UPLOAD_START is sent exactly once per upload"
+    );
+
     // Frame streaming: exactly one packet per 56 bytes, positions contiguous
     // and advancing by each packet's own payload length.
     let writes = session.transport().writes();
@@ -195,6 +205,47 @@ fn upload_writes_the_default_config_when_the_session_is_fresh() {
     let config_writes = reports(writes, Command::Config);
     assert_eq!(payload_of(config_writes[0]), expected.as_slice());
     assert_no_read_commands(&session.transport().commands_sent());
+}
+
+#[test]
+fn a_missing_upload_start_acknowledgement_does_not_fail_the_upload() {
+    // On the 2.4 GHz dongle acknowledgements are sparse, so UPLOAD_START (0x23)
+    // may go unanswered. The handshake must proceed and stream anyway, while
+    // still sending 0x23 exactly once.
+    let previous = previous_config(ShowSlot::Slot1);
+    let plan = one_frame_plan();
+
+    let device = ScriptedDevice::new(Some(1))
+        .ignoring(Command::Ready)
+        .block_empty_reads();
+    let mut session = Session::with_config(device, previous.clone());
+    session
+        .upload(&plan, &CancelToken::new(), &mut |_| {})
+        .expect("a missing UPLOAD_START ack must not fail the upload");
+
+    let writes = session.transport().writes();
+    let commands: Vec<u8> = writes.iter().map(|w| w[3]).collect();
+    assert_eq!(
+        commands.iter().filter(|command| **command == 0x23).count(),
+        1,
+        "UPLOAD_START is sent once and not retried"
+    );
+    assert_eq!(
+        &commands[3..6],
+        &[0x02, 0x23, 0x21],
+        "COMMIT → UPLOAD_START → first frame packet"
+    );
+    assert_eq!(
+        reports(writes, Command::FrameData).len(),
+        1171,
+        "the whole slot was streamed"
+    );
+    assert_eq!(
+        writes.last().map(|w| w[3]),
+        Some(Command::Commit.as_u8()),
+        "the transaction ends with COMMIT"
+    );
+    assert_no_read_commands(&commands);
 }
 
 #[test]
@@ -396,8 +447,9 @@ fn a_mid_upload_transport_failure_repairs_the_display() {
     mock.expect(Command::FrameData, vec![vec![]; 3]);
     expect_repair(&mut mock);
 
-    // The upload handshake writes 4 reports, then three frame reports.
-    let fail_on_write = 4 + 3 + 1;
+    // The upload handshake writes 5 reports (INIT ×2, CONFIG, COMMIT,
+    // UPLOAD_START), then three frame reports.
+    let fail_on_write = 5 + 3 + 1;
     let mut session = Session::new(FlakyTransport::new(mock, fail_on_write));
     session.set_config(previous.clone());
     let err = session
@@ -584,6 +636,7 @@ struct ScriptedDevice {
     frame_write_delay: Duration,
     empty_read_sleep: Duration,
     frame_ack_reads: Vec<Duration>,
+    ignore: Option<Command>,
 }
 
 impl ScriptedDevice {
@@ -598,6 +651,7 @@ impl ScriptedDevice {
             frame_write_delay: Duration::ZERO,
             empty_read_sleep: Duration::ZERO,
             frame_ack_reads: Vec::new(),
+            ignore: None,
         }
     }
 
@@ -619,6 +673,12 @@ impl ScriptedDevice {
     /// for an acknowledgement spends wall time instead of spinning.
     fn block_empty_reads(mut self) -> Self {
         self.empty_read_sleep = Duration::from_millis(1);
+        self
+    }
+
+    /// Never acknowledges `command`, as a sparsely answering dongle does.
+    fn ignoring(mut self, command: Command) -> Self {
+        self.ignore = Some(command);
         self
     }
 
@@ -665,18 +725,14 @@ impl Transport for ScriptedDevice {
                     self.ack(Command::FrameData);
                 }
             }
-            // The wired interface sends READY after a configuration COMMIT;
-            // the 2.4 GHz dongle does not, and neither path requires it.
-            Command::Commit => {
-                self.ack(Command::Commit);
-                self.responses.push_back(
-                    Packet::new(Command::Ready, 0, &[])
-                        .unwrap()
-                        .encode()
-                        .to_vec(),
-                );
+            // Every other command, including the host's UPLOAD_START (0x23),
+            // is acknowledged immediately — unless the test made it one the
+            // device ignores.
+            other => {
+                if self.ignore != Some(other) {
+                    self.ack(other);
+                }
             }
-            other => self.ack(other),
         }
         Ok(())
     }

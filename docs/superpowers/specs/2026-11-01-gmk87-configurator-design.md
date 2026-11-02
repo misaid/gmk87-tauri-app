@@ -68,7 +68,7 @@ Every transfer is a 64-byte HID report on report ID `0x04`:
 | 8 | 56 | Payload |
 
 Commands: `INIT 0x01`, `COMMIT 0x02`, `PREP_READ 0x03`, `READ_CFG 0x05`,
-`CONFIG 0x06`, `READY 0x23`, `FRAME_DATA 0x21`. A response is matched by
+`CONFIG 0x06`, `UPLOAD_START 0x23`, `FRAME_DATA 0x21`. A response is matched by
 comparing byte 3 (the command) with the command sent; non-matching reports are
 discarded until the timeout expires.
 
@@ -234,13 +234,19 @@ kept afterwards as a scripting and recovery path.
    violation, fail with a specific message.
 4. Take the session's in-memory config, set frame counts, frame delay and
    `show_image`, and write the complete 48-byte block (no device read).
-5. `INIT ×2 → CONFIG → COMMIT (100 ms) → wait for READY(0x23), which is
-   optional → FRAME_DATA ×N → COMMIT`. Frames are **not** acknowledged
-   individually: the 2.4 GHz dongle acknowledges roughly one packet per second,
-   and waiting per packet made a 1,171-packet slot take about twenty minutes.
-   The stream is bounded by a total-time ceiling, paced when acknowledgements
-   stop arriving, and confirmed by the final `COMMIT`. Progress is emitted
-   roughly every 1%.
+5. `INIT ×2 → CONFIG → COMMIT (100 ms settle) → UPLOAD_START(0x23) → FRAME_DATA ×N
+   → COMMIT`. `0x23` is a **host** command that opens the frame upload session:
+   one empty packet at position 0, immediately after the configuration `COMMIT`
+   and before the first frame packet (the official application's capture
+   contains exactly one occurrence there; both community references send it).
+   Its acknowledgement is optional — the 2.4 GHz dongle answers sparsely — so a
+   missing ack is logged and the stream proceeds, and it is never retried.
+   Frame packets **are** acknowledged individually when the transport is prompt
+   (the wired interface answers in milliseconds), so the stream starts paced and
+   waits per packet; after three consecutive misses it falls back once to the
+   tolerant mode used by the dongle (probe, pace after eight misses, fail after
+   64, always inside the total-time ceiling) so a 1,171-packet slot does not
+   take the dongle's ~twenty minutes. Progress is emitted roughly every 1%.
 6. On cancel or transport failure mid-upload, send `COMMIT` and rewrite the
    previous `show_image` so a torn frame is repaired in-process. The repair is
    best-effort; `SIGINT`/`SIGTERM` reach it, `SIGKILL` cannot be caught.
@@ -279,8 +285,11 @@ and a 2 s poll reconnects while the window is open.
   minimum, is discarded and the reader keeps waiting until the deadline.
 - An app-framed `0x04` report of at least 12 bytes with a checksum mismatch is
   discarded and reading continues; `ChecksumMismatch` is never returned.
-- `READY (0x23)` is **tolerant/optional**: it is awaited for `COMMAND_TIMEOUT`
-  but its absence is not an error, because the 2.4 GHz dongle never sends it.
+- `UPLOAD_START (0x23)` is sent **by the host** once between the configuration
+  `COMMIT` and the first frame packet; its acknowledgement is waited for up to
+  `COMMAND_TIMEOUT` but is tolerant/optional, because the 2.4 GHz dongle
+  acknowledges sparsely. It is never retried and its absence is not an error.
+  (No `READY` is expected from the device; `0x23` is not a device notification.)
 - The upload stream is bounded and paced: after eight consecutive missed frame
   acknowledgements the host waits instead of queueing more, and 64 consecutive
   misses fail the upload with `ProtocolTimeout`.
