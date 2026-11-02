@@ -40,6 +40,18 @@ impl MockTransport {
         self
     }
 
+    /// Queues the 2.4 GHz dongle's full acknowledgement shape: report ID
+    /// `0x01`, the command echoed at offsets 1 and 3, and no app checksum.
+    pub fn ack_dongle(&mut self, command: Command) -> &mut Self {
+        let mut report = vec![0u8; 64];
+        report[0] = 0x01;
+        report[1] = command.as_u8();
+        report[2] = 0x09;
+        report[3] = command.as_u8();
+        self.responses.push_back(report);
+        self
+    }
+
     /// Queues a report the device sends on its own, such as `READY` or noise
     /// for another command.
     ///

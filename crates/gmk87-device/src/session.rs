@@ -99,10 +99,15 @@ impl<T: Transport> Session<T> {
                 .read_report(remaining.min(Duration::from_millis(100)))?
             {
                 Some(report) if report.len() >= 8 && report[3] == command.as_u8() => {
-                    // The wired interface has a 7-byte input report, so its
-                    // acknowledgements arrive as 8 bytes with no payload.
-                    // Accept those on the command byte alone.
-                    if report.len() < 12 {
+                    // Two acknowledgement shapes exist. The wired interface
+                    // answers with 8 bytes (`04 cs cs cmd …`), while the
+                    // 2.4 GHz dongle answers with a full 64 bytes framed as
+                    // report ID 0x01 (`01 cmd 09 cmd …`). Only app-framed
+                    // reports carry the checksum the codec defines; the dongle
+                    // echoes the command without one and the working community
+                    // tool likewise checks only the command byte. Either way an
+                    // acknowledgement has no payload to protect.
+                    if report.len() < 12 || report[0] != gmk87_protocol::packet::REPORT_ID {
                         return Ok(Vec::new());
                     }
                     // A report can arrive intact-looking but with a damaged

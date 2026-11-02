@@ -81,6 +81,23 @@ fn writes_config_over_eight_byte_acknowledgements() {
 }
 
 #[test]
+fn accepts_the_dongle_acknowledgement_shape() {
+    // On 2.4 GHz the dongle answers with report ID 0x01 and no app checksum:
+    // `01 cmd 09 cmd` followed by zeros. The command byte is what matters.
+    let mut mock = MockTransport::new();
+    mock.ack_dongle(Command::Init);
+    mock.ack_dongle(Command::Config);
+    mock.ack_dongle(Command::Commit);
+
+    let config = DeviceConfig::default_config();
+    let mut session = Session::new(mock);
+    session.write_config(&config).unwrap();
+
+    assert_eq!(session.transport().commands_sent(), vec![0x01, 0x06, 0x02]);
+    assert_no_read_commands(&session.transport().commands_sent());
+}
+
+#[test]
 fn a_commit_timeout_leaves_the_device_desynced() {
     let mut mock = MockTransport::new();
     mock.expect(Command::Init, vec![vec![]]);
