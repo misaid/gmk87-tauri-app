@@ -1,0 +1,8 @@
+This project implements the ZUOYA GMK87 USB protocol, documented by the
+community. The packet format and command sequence were ported from the
+following MIT-licensed work:
+
+  - codedgar/gmk87-node (MIT)
+  - ikkentim/gmk87-usb-reverse (MIT)
+
+Their copyright notices are reproduced here in accordance with the MIT License.

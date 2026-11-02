@@ -1,0 +1,17 @@
+[workspace]
+resolver = "2"
+members = ["crates/gmk87-protocol", "crates/gmk87-device", "crates/gmk87-cli"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+repository = "https://example.invalid/gmk87-configurator"
+
+[workspace.dependencies]
+thiserror = "1"
+tracing = "0.1"
+
+[profile.release]
+lto = true
+codegen-units = 1
