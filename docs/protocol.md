@@ -59,12 +59,13 @@ The wired keyboard presents four interfaces:
 | 2 | Keyboard + consumer + vendor | `0xFFEF` | report ID 5, 63-byte in/out | no |
 | 3 | Vendor channel: display, lighting, clock | `0xFF1C` / `0x92` | report ID 4, 63-byte **output**, 7-byte **input** | yes |
 
-**Verified** for the usage pages, report IDs, and the asymmetric 7-byte input
-report on interface 3. That asymmetry is the single most surprising fact about
-this device: the input report is declared seven bytes long, so every
-acknowledgement read from the wired keyboard is truncated to **8 bytes** and the
-payload at offset 8 is lost. The write path is unaffected; there is no read path
-anyway (§6).
+**Verified** for the usage pages and report IDs. The 7-byte input report and the
+resulting 8-byte acknowledgements were established with read/echo probes on the
+wired interface; **no wired configuration or frame write has been attempted**.
+That asymmetry is the single most surprising fact about this device: the input
+report is declared seven bytes long, so every acknowledgement read from the
+wired keyboard is truncated to **8 bytes** and the payload at offset 8 is lost.
+The write path is unaffected; there is no read path anyway (§6).
 
 The 2.4 GHz dongle exposes a vendor collection on usage page `0xFF1C` with a
 63-byte input *and* a 63-byte output report. It therefore returns full 64-byte
@@ -85,7 +86,8 @@ application and the working community Linux tool use.
 ## 3. Report format
 
 Every write is a **64-byte HID report on report ID `0x04`**, on either
-transport. **Verified.**
+transport. **Verified** on the 2.4 GHz dongle; **Reference** for the wired
+interface, because no wired configuration or frame write has been attempted.
 
 | Offset | Size | Meaning |
 |---|---|---|
@@ -135,8 +137,10 @@ The two transports answer with different shapes:
 | Wired | 8 bytes | `04 cs cs cmd 00 00 00 00` | not validated — the report is truncated |
 | 2.4 GHz dongle | 64 bytes | `01 cmd 09 cmd 00 … 00` | no — report ID `0x01`, bytes 1–2 are not a checksum |
 
-**Verified** on both transports. The dongle literally echoes the command at
-offsets 1 and 3, with `0x09` between them and zeros after.
+The wired 8-byte shape was observed during read/echo probes; the dongle's
+64-byte shape was observed on configuration and frame writes. No wired
+configuration or frame write has been attempted. The dongle literally echoes the
+command at offsets 1 and 3, with `0x09` between them and zeros after.
 
 The read path therefore:
 
@@ -171,8 +175,8 @@ can be decoded; no production path constructs them, and tests assert that
 
 ## 6. The device is write-only
 
-This is the correction that matters most, and it is **verified on both
-transports**:
+This is the correction that matters most, and it is **verified with read/echo
+probes on both transports** (no wired write was involved):
 
 - `READ_CFG (0x05)` echoes the request payload. `deadbeef` in, `deadbeef` out.
   It never returns device memory.
@@ -287,14 +291,19 @@ CONFIG (the 48 bytes)
 COMMIT (empty)
 ```
 
-A 100 ms settle follows `CONFIG` before `COMMIT`. `COMMIT`'s acknowledgement is
-what confirms the write; a `COMMIT` timeout leaves the device in an unknown
-state (`DeviceDesynced`) and must not be blind-retried. On success the session
-stores the block it wrote and marks itself synchronised.
+A plain configuration write sends the three packets back to back: there is **no
+settle** between `CONFIG` and `COMMIT`. `COMMIT`'s acknowledgement is what
+confirms the write; a `COMMIT` timeout leaves the device in an unknown state
+(`DeviceDesynced`) and must not be blind-retried. On success the session stores
+the block it wrote and marks itself synchronised.
 
-Lighting and clock changes use exactly this sequence — there is no frame
-streaming and no read beforehand. **Verified** on hardware: the clock and
-brightness writes were acknowledged.
+Lighting and clock changes use exactly this sequence — no settle, no frame
+streaming, no read beforehand. The upload handshake writes the same block but
+does add a 100 ms settle between `CONFIG` and `COMMIT` (see §11); that pause is
+specific to the upload path. **Acknowledged on the dongle**: the clock and
+brightness writes were confirmed at the protocol level, but the effect was never
+seen, and no wired configuration write has been attempted (see
+`hardware-testing.md`).
 
 ## 8. Display
 
@@ -477,9 +486,10 @@ slot 0 intact has not been observed.
 
 All of these are written by patching the in-memory block and sending the whole
 48-byte block with `INIT → CONFIG → COMMIT`. Nothing is read first, and no frame
-streaming is involved. **Reference** for the ranges; the write path is
-**verified** only to the level of an acknowledged `COMMIT` (the underglow was
-never seen to change — see `hardware-testing.md`).
+streaming is involved. **Reference** for the ranges; on the dongle the write path
+is confirmed only to the level of an acknowledged `COMMIT` (the underglow was
+never seen to change — see `hardware-testing.md`), and no wired write has been
+tried.
 
 ## 13. Open questions
 

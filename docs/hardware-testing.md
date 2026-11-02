@@ -19,14 +19,18 @@
 
 ## 1. Status at the time of writing
 
-Everything in this document comes from the M0 investigation on 2026-11-01, over
-the 2.4 GHz dongle (except `probe`, which also saw the wired keyboard). No
-hardware run has happened since. The automated suite uses mock transports only
-and never opens `/dev/hidraw*`.
+Everything in this document comes from the M0 investigation on 2026-11-01.
+Discovery and the read/echo diagnosis exercised both transports (the wired
+acknowledgement was observed as 8 bytes, during those read probes). Every
+configuration and frame write was over the 2.4 GHz dongle; **no wired
+configuration or frame write was attempted**. No hardware run has happened
+since. The automated suite uses mock transports only and never opens
+`/dev/hidraw*`.
 
 | Area | Status | Evidence |
 |---|---|---|
 | Discovery (`probe`) | works | wired `320f:5055` and dongle `320f:5088`, `via=true` on both |
+| Wired acknowledgement shape | observed, read/echo probes only | 8-byte acknowledgement seen; not observed from a configuration or frame write |
 | `show-config` | works | prints the snapshot; performs no device I/O by design |
 | Configuration write (`clock`, `lights`) | acknowledged, **not visually confirmed** | `COMMIT` acks arrived at ~1.02 s; snapshot holds the intended bytes |
 | Upload handshake | acknowledged | `INIT ×2 → CONFIG → COMMIT` acked; `READY` absent on the dongle, as expected |
@@ -70,9 +74,11 @@ input and system poweroffs.
 7. **Do not send `PREP_READ (0x03)` or `READ_CFG (0x05)`.** They are not a read
    path; the reference read preamble reset and re-enumerated this keyboard
    twice. No current command sends them — keep it that way.
-8. **Keep the snapshot.** Copy
-   `~/.local/share/gmk87/config.snapshot` before a run. It is the only record of
-   what the app believes the device holds, and the device cannot be read back.
+8. **Keep the snapshot.** Copy the snapshot —
+   `$XDG_DATA_HOME/gmk87/config.snapshot` when `XDG_DATA_HOME` is set, otherwise
+   `~/.local/share/gmk87/config.snapshot` — before a run. It is the only record
+   of what the app believes the device holds, and the device cannot be read
+   back.
 
 ### Recovery after a bad run
 
@@ -207,9 +213,11 @@ here so a future run can replace it with a finding and a date.
   LEDs, clock, display selection).
 - **AppImage and permissions.** Not hardware, but record it with the packaging
   run: a user without the udev rule must get a usable error and the rule text.
-- **Wired vendor input report is 7 bytes.** Acknowledgements arrive truncated to
-  8 bytes. Record whether any wired acknowledgement ever carries a payload; if
-  one does, the short-ack assumption needs revisiting.
+- **Wired vendor input report is 7 bytes.** During read/echo probes,
+  acknowledgements arrived truncated to 8 bytes; no wired configuration or frame
+  write has been attempted. Record whether a wired write's acknowledgement has
+  the same shape and whether it ever carries a payload; if one does, the
+  short-ack assumption needs revisiting.
 - **READY is optional.** The dongle never sends `0x23`, the wired interface
   does. Record the wired behaviour, including whether `READY` arrives before or
   after the `COMMIT` acknowledgement.
