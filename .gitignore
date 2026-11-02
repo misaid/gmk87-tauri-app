@@ -5,3 +5,9 @@ node_modules/
 /src-tauri/target
 /src-tauri/gen
 *.log
+
+# Planning/skill artifacts: kept locally, never published.
+/docs/superpowers/
+/.superpowers/
+/.opencode/
+/.claude/
