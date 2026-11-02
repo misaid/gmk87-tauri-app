@@ -1,13 +1,13 @@
-use anyhow::Context;
+use gmk87_protocol::config::DeviceConfig;
 
-use super::open_session;
+use super::snapshot;
 
+/// Prints the app's default configuration. Performs no device I/O: the
+/// keyboard cannot be read, so there is nothing to query.
 pub fn run() -> anyhow::Result<()> {
-    let mut session = open_session()?;
-    let config = session
-        .read_config()
-        .context("reading device configuration")?;
+    let config = DeviceConfig::default_config();
     let bytes = config.as_bytes();
+    println!("device     write-only: cannot be read; showing the app's config");
     println!(
         "raw: {}",
         bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
@@ -33,5 +33,6 @@ pub fn run() -> anyhow::Result<()> {
         config.frame_delay_ms()
     );
     println!("clock      {:?}", config.time());
+    println!("snapshot   {}", snapshot::path().display());
     Ok(())
 }

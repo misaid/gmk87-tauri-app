@@ -2,7 +2,7 @@
 
 use crate::error::{DeviceError, Result};
 use crate::transport::Transport;
-use gmk87_protocol::packet::{Command, Packet};
+use gmk87_protocol::packet::{checksum, Command, Packet};
 use std::collections::VecDeque;
 use std::time::Duration;
 
@@ -24,6 +24,19 @@ impl MockTransport {
             let packet = Packet::new(command, 0, &payload).expect("mock payload fits");
             self.responses.push_back(packet.encode().to_vec());
         }
+        self
+    }
+
+    /// Queues one 8-byte acknowledgement, the shape the wired vendor
+    /// interface's 7-byte input report produces.
+    pub fn ack_short(&mut self, command: Command) -> &mut Self {
+        let mut report = vec![0u8; 8];
+        report[0] = gmk87_protocol::packet::REPORT_ID;
+        report[3] = command.as_u8();
+        let sum = checksum(&report);
+        report[1] = (sum & 0xff) as u8;
+        report[2] = (sum >> 8) as u8;
+        self.responses.push_back(report);
         self
     }
 

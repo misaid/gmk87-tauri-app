@@ -33,15 +33,16 @@ fn previous_config(show: ShowSlot) -> DeviceConfig {
     DeviceConfig::from_bytes(&raw).unwrap()
 }
 
-fn config_chunks(config: &DeviceConfig) -> Vec<Vec<u8>> {
-    config.as_bytes().chunks(4).map(<[u8]>::to_vec).collect()
-}
-
-fn expect_read_config(mock: &mut MockTransport, config: &DeviceConfig) {
-    mock.expect(Command::Init, vec![vec![]]);
-    mock.expect(Command::PrepRead, vec![vec![]; 10]);
-    mock.expect(Command::Commit, vec![vec![]]);
-    mock.expect(Command::ReadConfig, config_chunks(config));
+/// The upload's CONFIG is written before streaming starts, so a repair rewrites
+/// the in-memory block with the frame counts and delay already patched, changing
+/// only `show_image`.
+fn patched(previous: &DeviceConfig, plan: &FramePlan, show: ShowSlot) -> Vec<u8> {
+    let mut expected = previous.as_bytes().to_vec();
+    expected[33] = show.as_u8();
+    expected[34] = plan.slot0_frames.len() as u8;
+    expected[43..45].copy_from_slice(&plan.delay_ms.to_le_bytes());
+    expected[46] = plan.slot1_frames.len() as u8;
+    expected
 }
 
 fn expect_upload_handshake(mock: &mut MockTransport) {
@@ -89,18 +90,30 @@ fn assert_cancelled(error: &DeviceError) {
     }
 }
 
+/// The device cannot be read, so no code path may ever emit these.
+fn assert_no_read_commands(commands: &[u8]) {
+    assert!(
+        !commands.contains(&Command::PrepRead.as_u8()),
+        "PREP_READ (0x03) was sent: {commands:?}"
+    );
+    assert!(
+        !commands.contains(&Command::ReadConfig.as_u8()),
+        "READ_CFG (0x05) was sent: {commands:?}"
+    );
+}
+
 #[test]
-fn uploads_one_slot_with_read_modify_write_config() {
+fn uploads_one_slot_with_config_from_memory() {
     let previous = previous_config(ShowSlot::Slot1);
     let plan = one_frame_plan();
 
     let mut mock = MockTransport::new();
-    expect_read_config(&mut mock, &previous);
     expect_upload_handshake(&mut mock);
     mock.expect(Command::FrameData, frame_data_responses());
     mock.expect(Command::Commit, vec![vec![]]);
 
     let mut session = Session::new(mock);
+    session.set_config(previous.clone());
     let cancel = CancelToken::new();
     let mut last = UploadProgress {
         bytes_sent: 0,
@@ -112,6 +125,7 @@ fn uploads_one_slot_with_read_modify_write_config() {
     assert_eq!(last.bytes_sent, 65536);
     let commands = session.transport().commands_sent();
     assert_eq!(commands.last(), Some(&0x02), "ends with COMMIT");
+    assert_no_read_commands(&commands);
 
     // Frame streaming: exactly one packet per 56 bytes, positions contiguous
     // and advancing by each packet's own payload length.
@@ -134,8 +148,8 @@ fn uploads_one_slot_with_read_modify_write_config() {
         "only the last packet is short"
     );
 
-    // CONFIG: only the upload's own fields change; every other byte is the one
-    // that was read back.
+    // CONFIG: the session's in-memory block with only the upload's own fields
+    // changed; every other byte is preserved.
     let config_writes = reports(writes, Command::Config);
     assert_eq!(config_writes.len(), 1, "one config write per upload");
     let mut expected = previous.as_bytes().to_vec();
@@ -156,16 +170,42 @@ fn uploads_one_slot_with_read_modify_write_config() {
 }
 
 #[test]
+fn upload_writes_the_default_config_when_the_session_is_fresh() {
+    let plan = one_frame_plan();
+    let default = DeviceConfig::default_config();
+
+    let mut mock = MockTransport::new();
+    expect_upload_handshake(&mut mock);
+    mock.expect(Command::FrameData, frame_data_responses());
+    mock.expect(Command::Commit, vec![vec![]]);
+
+    let mut session = Session::new(mock);
+    session
+        .upload(&plan, &CancelToken::new(), &mut |_| {})
+        .unwrap();
+
+    let mut expected = default.as_bytes().to_vec();
+    expected[33] = plan.show.as_u8();
+    expected[34] = 1;
+    expected[43..45].copy_from_slice(&plan.delay_ms.to_le_bytes());
+    expected[46] = 0;
+    let writes = session.transport().writes();
+    let config_writes = reports(writes, Command::Config);
+    assert_eq!(payload_of(config_writes[0]), expected.as_slice());
+    assert_no_read_commands(&session.transport().commands_sent());
+}
+
+#[test]
 fn cancellation_stops_streaming_and_repairs_the_display() {
     let previous = previous_config(ShowSlot::Clock);
     let plan = one_frame_plan();
 
     let mut mock = MockTransport::new();
-    expect_read_config(&mut mock, &previous);
     expect_upload_handshake(&mut mock);
     expect_repair(&mut mock);
 
     let mut session = Session::new(mock);
+    session.set_config(previous.clone());
     let cancel = CancelToken::new();
     cancel.cancel();
     let result = session.upload(&plan, &cancel, &mut |_| {});
@@ -189,11 +229,11 @@ fn cancellation_restores_the_previous_slot_instead_of_the_clock() {
     let plan = one_frame_plan();
 
     let mut mock = MockTransport::new();
-    expect_read_config(&mut mock, &previous);
     expect_upload_handshake(&mut mock);
     expect_repair(&mut mock);
 
     let mut session = Session::new(mock);
+    session.set_config(previous.clone());
     let cancel = CancelToken::new();
     cancel.cancel();
     let err = session.upload(&plan, &cancel, &mut |_| {}).unwrap_err();
@@ -209,8 +249,8 @@ fn cancellation_restores_the_previous_slot_instead_of_the_clock() {
     );
     assert_eq!(
         repair,
-        previous.as_bytes(),
-        "previous config restored verbatim"
+        patched(&previous, &plan, ShowSlot::Slot1).as_slice(),
+        "the patched config is rewritten with the untouched slot shown"
     );
     assert!(!session.is_synced());
 }
@@ -223,11 +263,11 @@ fn cancellation_falls_back_to_the_clock_when_the_target_slot_is_on_screen() {
     let plan = one_frame_plan();
 
     let mut mock = MockTransport::new();
-    expect_read_config(&mut mock, &previous);
     expect_upload_handshake(&mut mock);
     expect_repair(&mut mock);
 
     let mut session = Session::new(mock);
+    session.set_config(previous.clone());
     let cancel = CancelToken::new();
     cancel.cancel();
     session.upload(&plan, &cancel, &mut |_| {}).unwrap_err();
@@ -236,8 +276,7 @@ fn cancellation_falls_back_to_the_clock_when_the_target_slot_is_on_screen() {
     let config_writes = reports(writes, Command::Config);
     let repair = payload_of(config_writes.last().unwrap());
 
-    let mut expected = previous.as_bytes().to_vec();
-    expected[33] = ShowSlot::Clock.as_u8();
+    let expected = patched(&previous, &plan, ShowSlot::Clock);
     assert_eq!(repair, expected.as_slice());
     assert_eq!(repair[33], ShowSlot::Clock.as_u8());
 }
@@ -255,11 +294,11 @@ fn a_plan_that_writes_both_slots_never_repairs_onto_a_torn_slot() {
     };
 
     let mut mock = MockTransport::new();
-    expect_read_config(&mut mock, &previous);
     expect_upload_handshake(&mut mock);
     expect_repair(&mut mock);
 
     let mut session = Session::new(mock);
+    session.set_config(previous.clone());
     let cancel = CancelToken::new();
     cancel.cancel();
     let err = session.upload(&plan, &cancel, &mut |_| {}).unwrap_err();
@@ -279,8 +318,7 @@ fn a_plan_that_writes_both_slots_never_repairs_onto_a_torn_slot() {
         ShowSlot::Clock.as_u8(),
         "the repair falls back to the clock"
     );
-    let mut expected = previous.as_bytes().to_vec();
-    expected[33] = ShowSlot::Clock.as_u8();
+    let expected = patched(&previous, &plan, ShowSlot::Clock);
     assert_eq!(repair, expected.as_slice());
     assert!(!session.is_synced());
 }
@@ -327,15 +365,15 @@ fn a_mid_upload_transport_failure_repairs_the_display() {
     let plan = one_frame_plan();
 
     let mut mock = MockTransport::new();
-    expect_read_config(&mut mock, &previous);
     expect_upload_handshake(&mut mock);
     // Only three frame acks are queued: the fourth FRAME_DATA write fails.
     mock.expect(Command::FrameData, vec![vec![]; 3]);
     expect_repair(&mut mock);
 
-    // read_config writes 24 reports, the upload handshake 4, then three frames.
-    let fail_on_write = 24 + 4 + 3 + 1;
+    // The upload handshake writes 4 reports, then three frame reports.
+    let fail_on_write = 4 + 3 + 1;
     let mut session = Session::new(FlakyTransport::new(mock, fail_on_write));
+    session.set_config(previous.clone());
     let err = session
         .upload(&plan, &CancelToken::new(), &mut |_| {})
         .unwrap_err();
@@ -378,8 +416,8 @@ fn a_mid_upload_transport_failure_repairs_the_display() {
     let repair = payload_of(config_writes.last().unwrap());
     assert_eq!(
         repair,
-        previous.as_bytes(),
-        "the previous display target was restored"
+        patched(&previous, &plan, ShowSlot::Slot1).as_slice(),
+        "the patched config is rewritten with the untouched slot shown"
     );
 }
 

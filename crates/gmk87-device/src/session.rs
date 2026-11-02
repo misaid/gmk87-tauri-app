@@ -1,22 +1,26 @@
 //! The device state machine: handshake, configuration and upload streaming.
+//!
+//! The device is write-only: commands are acknowledged but never read back, so
+//! the session owns the authoritative 48-byte configuration in memory and
+//! writes the whole block each time. Nothing here issues `PREP_READ (0x03)` or
+//! `READ_CFG (0x05)`.
 
 use crate::error::{DeviceError, Result};
 use crate::transport::Transport;
 use gmk87_protocol::config::{DeviceConfig, ShowSlot, CONFIG_LEN};
 use gmk87_protocol::frames::FramePlan;
-use gmk87_protocol::packet::{checksum, Command, Packet};
+use gmk87_protocol::packet::{checksum, Command, Packet, MAX_PAYLOAD};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub const COMMAND_TIMEOUT: Duration = Duration::from_millis(1500);
 pub const WRITE_SETTLE: Duration = Duration::from_millis(100);
-const PREP_READ_COUNT: usize = 10;
-const READ_CONFIG_COUNT: usize = 13;
 
 pub struct Session<T: Transport> {
     transport: T,
     synced: bool,
+    config: DeviceConfig,
 }
 
 impl<T: Transport> Session<T> {
@@ -24,6 +28,7 @@ impl<T: Transport> Session<T> {
         Self {
             transport,
             synced: false,
+            config: DeviceConfig::default_config(),
         }
     }
 
@@ -35,28 +40,22 @@ impl<T: Transport> Session<T> {
         self.synced
     }
 
-    /// INIT → PREP_READ ×10 → COMMIT → READ_CFG until 48 bytes arrive.
-    pub fn read_config(&mut self) -> Result<DeviceConfig> {
-        self.send_and_wait(Command::Init, 0, &[])?;
-        for _ in 0..PREP_READ_COUNT {
-            self.send_and_wait(Command::PrepRead, 0, &[])?;
-        }
-        self.send_and_wait(Command::Commit, 0, &[])?;
-
-        let mut raw = Vec::with_capacity(CONFIG_LEN);
-        for _ in 0..READ_CONFIG_COUNT {
-            if raw.len() >= CONFIG_LEN {
-                break;
-            }
-            let payload = self.send_and_wait(Command::ReadConfig, 0, &[])?;
-            raw.extend_from_slice(&payload);
-        }
-        let config = DeviceConfig::from_bytes(&raw)?;
-        self.synced = true;
-        Ok(config)
+    /// The configuration this session believes the device holds.
+    pub fn config(&self) -> &DeviceConfig {
+        &self.config
     }
 
-    /// INIT → CONFIG → COMMIT.
+    /// Seeds the session from a known configuration (for example a snapshot).
+    pub fn set_config(&mut self, config: DeviceConfig) {
+        self.config = config;
+    }
+
+    /// Hex of the configuration the session last wrote, for a snapshot file.
+    pub fn snapshot_hex(&self) -> String {
+        self.config.to_hex()
+    }
+
+    /// INIT → CONFIG → COMMIT. Write-only: never preceded by a read.
     pub fn write_config(&mut self, config: &DeviceConfig) -> Result<()> {
         let bytes = config.as_bytes();
         if bytes.len() != CONFIG_LEN {
@@ -77,6 +76,7 @@ impl<T: Transport> Session<T> {
                 }
             })?;
         self.synced = true;
+        self.config = config.clone();
         Ok(())
     }
 
@@ -99,6 +99,12 @@ impl<T: Transport> Session<T> {
                 .read_report(remaining.min(Duration::from_millis(100)))?
             {
                 Some(report) if report.len() >= 8 && report[3] == command.as_u8() => {
+                    // The wired interface has a 7-byte input report, so its
+                    // acknowledgements arrive as 8 bytes with no payload.
+                    // Accept those on the command byte alone.
+                    if report.len() < 12 {
+                        return Ok(Vec::new());
+                    }
                     // A report can arrive intact-looking but with a damaged
                     // checksum. Discard it and keep reading: the device may
                     // resend, and a stale corrupt report must never be
@@ -107,8 +113,8 @@ impl<T: Transport> Session<T> {
                     if checksum(&report) != expected {
                         continue;
                     }
-                    let decoded = Packet::decode(&report)?;
-                    return Ok(decoded.payload);
+                    let len = usize::from(report[4]).min(MAX_PAYLOAD);
+                    return Ok(report[8..(8 + len).min(report.len())].to_vec());
                 }
                 // Wrong command or short report: discard and keep reading.
                 _ => continue,
@@ -153,25 +159,26 @@ enum UploadFailure {
 }
 
 impl<T: Transport> Session<T> {
-    /// Reads, applies `edit`, and writes back — never touching unknown bytes.
+    /// Applies `edit` to the in-memory configuration and writes the result.
     pub fn set_lighting(&mut self, edit: &dyn Fn(&mut DeviceConfig)) -> Result<()> {
-        let mut config = self.read_config()?;
-        edit(&mut config);
+        edit(&mut self.config);
+        let config = self.config.clone();
         self.write_config(&config)
     }
 
-    /// Sets the keyboard clock, preserving every other setting.
+    /// Sets the keyboard clock, preserving every other in-memory setting.
     pub fn sync_clock(&mut self, now: &chrono::DateTime<chrono::Local>) -> Result<()> {
         use chrono::{Datelike, Timelike};
         let weekday = now.weekday().num_days_from_sunday() as u8;
         let (year, month, day) = (now.year(), now.month() as u8, now.day() as u8);
         let (hour, minute, second) = (now.hour() as u8, now.minute() as u8, now.second() as u8);
-        self.set_lighting(&|config: &mut DeviceConfig| {
-            let _ = config.set_time(year as u16, month, day, weekday, hour, minute, second);
-        })
+        self.config
+            .set_time(year as u16, month, day, weekday, hour, minute, second)?;
+        let config = self.config.clone();
+        self.write_config(&config)
     }
 
-    /// Full upload: validate, patch config, stream frames, commit.
+    /// Full upload: validate, patch the in-memory config, stream frames, commit.
     ///
     /// Any failure below the handshake — cancellation, a transport error while
     /// streaming, or a failed final COMMIT — first closes the frame transaction
@@ -184,15 +191,16 @@ impl<T: Transport> Session<T> {
     ) -> Result<()> {
         plan.validate()?;
 
-        let previous = self.read_config()?;
-
-        let mut config = previous.clone();
-        config.set_slot0_frames(plan.slot0_frames.len().min(u8::MAX as usize) as u8);
-        config.set_slot1_frames(plan.slot1_frames.len().min(u8::MAX as usize) as u8);
-        config.set_frame_delay_ms(plan.delay_ms);
-        config.set_show_image(plan.show);
+        let previous_show = self.config.show_image();
+        self.config
+            .set_slot0_frames(plan.slot0_frames.len().min(u8::MAX as usize) as u8);
+        self.config
+            .set_slot1_frames(plan.slot1_frames.len().min(u8::MAX as usize) as u8);
+        self.config.set_frame_delay_ms(plan.delay_ms);
+        self.config.set_show_image(plan.show);
 
         let memory = plan.to_memory()?;
+        let config = self.config.clone();
 
         // INIT ×2 → CONFIG → COMMIT → READY
         self.send_and_wait(Command::Init, 0, &[])?;
@@ -201,12 +209,14 @@ impl<T: Transport> Session<T> {
         std::thread::sleep(WRITE_SETTLE);
         self.send_and_wait(Command::Commit, 0, &[])?;
         self.wait_for_ready()?;
+        // The handshake completed, so streaming may begin.
+        self.synced = true;
 
         // The device now holds a partially written slot, so every exit below
         // must leave the display somewhere safe.
         if let Err(failure) = self.stream_frames(&memory, cancel, progress) {
             // Best-effort: a failed repair must never mask the real cause.
-            let _ = self.repair_display(&previous, plan);
+            let _ = self.repair_display(previous_show, plan);
             self.synced = false;
             return Err(match failure {
                 UploadFailure::Cancelled => {
@@ -266,11 +276,11 @@ impl<T: Transport> Session<T> {
     /// Puts the display back after an aborted upload.
     ///
     /// A bare COMMIT closes the interrupted frame transaction first; only then
-    /// is a config write accepted. The previous `show_image` is restored unless
-    /// its slot is one the plan wrote, whose memory is the torn one — that falls
-    /// back to the clock. Both steps are attempted independently so a failed
-    /// commit still gets a rewrite attempt; the commit error is reported first.
-    fn repair_display(&mut self, previous: &DeviceConfig, plan: &FramePlan) -> Result<()> {
+    /// is a config write accepted. `previous_show` is restored unless its slot
+    /// is one the plan wrote, whose memory is the torn one — that falls back to
+    /// the clock. Both steps are attempted independently so a failed commit
+    /// still gets a rewrite attempt; the commit error is reported first.
+    fn repair_display(&mut self, previous_show: ShowSlot, plan: &FramePlan) -> Result<()> {
         let commit = self.send_and_wait(Command::Commit, 0, &[]);
 
         // `to_memory` streams slot 0 and then slot 1, so either slot can be
@@ -280,12 +290,15 @@ impl<T: Transport> Session<T> {
             ShowSlot::Slot1 => !plan.slot1_frames.is_empty(),
             ShowSlot::Clock => false,
         };
-        let shown = previous.show_image();
-        let target = if torn(shown) { ShowSlot::Clock } else { shown };
+        let target = if torn(previous_show) {
+            ShowSlot::Clock
+        } else {
+            previous_show
+        };
 
-        let mut safe = previous.clone();
-        safe.set_show_image(target);
-        let rewrite = self.write_config(&safe);
+        self.config.set_show_image(target);
+        let config = self.config.clone();
+        let rewrite = self.write_config(&config);
 
         commit?;
         rewrite

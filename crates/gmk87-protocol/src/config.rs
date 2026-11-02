@@ -1,7 +1,9 @@
 //! The 48-byte device configuration block.
 //!
-//! Every write is read-modify-write against the raw bytes so that fields this
-//! crate does not understand are preserved exactly.
+//! The device cannot be read, so the configuration lives in the application:
+//! [`DeviceConfig::default_config`] seeds a session and every write sends the
+//! complete block. Fields this crate does not understand are preserved exactly
+//! because the whole block is carried around verbatim.
 
 use crate::error::ProtocolError;
 
@@ -68,6 +70,23 @@ pub struct DeviceConfig {
 }
 
 impl DeviceConfig {
+    /// The reference block written by the official application (spec §3.3).
+    ///
+    /// All bytes are zero except underglow brightness 9, underglow colour
+    /// `f8 ff 00`, and the frame-interval / slot-1 sentinels at offsets
+    /// 43, 44 and 46. The clock is left at zero and is set by `clock`.
+    pub fn default_config() -> Self {
+        let mut raw = [0u8; CONFIG_LEN];
+        raw[U_BRIGHTNESS] = 9;
+        raw[U_COLOR] = 0xf8;
+        raw[U_COLOR + 1] = 0xff;
+        raw[U_COLOR + 2] = 0x00;
+        raw[FRAME_DELAY] = 0xff;
+        raw[FRAME_DELAY + 1] = 0xff;
+        raw[SLOT1_FRAMES] = 0xff;
+        Self { raw }
+    }
+
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, ProtocolError> {
         if bytes.len() < CONFIG_LEN {
             return Err(ProtocolError::ShortConfig {
@@ -82,6 +101,11 @@ impl DeviceConfig {
 
     pub fn as_bytes(&self) -> &[u8] {
         &self.raw
+    }
+
+    /// Lowercase hex of all 48 bytes, with no separators.
+    pub fn to_hex(&self) -> String {
+        self.raw.iter().map(|byte| format!("{byte:02x}")).collect()
     }
 
     pub fn underglow_effect(&self) -> u8 {
@@ -236,4 +260,49 @@ fn check(field: &'static str, value: u32, max: u32) -> Result<(), ProtocolError>
         return Err(ProtocolError::OutOfRange { field, value, max });
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_config_matches_the_reference_block() {
+        let mut expected = [0u8; CONFIG_LEN];
+        expected[2] = 9;
+        expected[6..9].copy_from_slice(&[0xf8, 0xff, 0x00]);
+        expected[43] = 0xff;
+        expected[44] = 0xff;
+        expected[46] = 0xff;
+
+        assert_eq!(
+            DeviceConfig::default_config().as_bytes(),
+            &expected,
+            "every other byte must stay zero"
+        );
+    }
+
+    #[test]
+    fn to_hex_is_lowercase_and_unseparated() {
+        let mut raw = [0u8; CONFIG_LEN];
+        raw[0] = 0x0a;
+        raw[1] = 0xbc;
+        raw[47] = 0xde;
+        let hex = DeviceConfig::from_bytes(&raw).unwrap().to_hex();
+
+        assert_eq!(hex.len(), CONFIG_LEN * 2);
+        assert!(hex.starts_with("0abc"));
+        assert!(hex.ends_with("de"));
+        assert_eq!(hex, hex.to_lowercase());
+    }
+
+    #[test]
+    fn default_config_hex_is_the_reference_byte_string() {
+        let expected = concat!(
+            "000009000000f8ff00",
+            "00000000000000000000000000000000000000000000000000000000000000000000",
+            "ffff00ff00",
+        );
+        assert_eq!(DeviceConfig::default_config().to_hex(), expected);
+    }
 }
