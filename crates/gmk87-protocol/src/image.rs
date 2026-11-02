@@ -44,6 +44,29 @@ pub fn prepare_static(bytes: &[u8], crop: &CropSpec) -> Result<Vec<u8>, Protocol
 }
 
 fn decode(bytes: &[u8]) -> Result<DynamicImage, ProtocolError> {
+    // Read only the header first so oversized sources are refused before any
+    // pixel buffer is allocated. `into_dimensions` consumes its reader, so a
+    // second reader is built from the same bytes for the actual decode.
+    let (w, h) = open_reader(bytes)?
+        .into_dimensions()
+        .map_err(|e| ProtocolError::ImageDecode(e.to_string()))?;
+    if u64::from(w) * u64::from(h) > MAX_SOURCE_PIXELS {
+        return Err(too_large(w, h));
+    }
+
+    let image = open_reader(bytes)?
+        .decode()
+        .map_err(|e| ProtocolError::ImageDecode(e.to_string()))?;
+
+    // Belt and braces: the decoder's limits can drift, the budget must not.
+    let (w, h) = image.dimensions();
+    if u64::from(w) * u64::from(h) > MAX_SOURCE_PIXELS {
+        return Err(too_large(w, h));
+    }
+    Ok(image)
+}
+
+fn open_reader(bytes: &[u8]) -> Result<ImageReader<std::io::Cursor<&[u8]>>, ProtocolError> {
     let mut reader = ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|e| ProtocolError::ImageDecode(e.to_string()))?;
@@ -51,19 +74,17 @@ fn decode(bytes: &[u8]) -> Result<DynamicImage, ProtocolError> {
     let mut limits = Limits::default();
     limits.max_image_width = Some(MAX_SOURCE_PIXELS.min(u32::MAX as u64) as u32);
     limits.max_image_height = Some(MAX_SOURCE_PIXELS.min(u32::MAX as u64) as u32);
+    // The decoder reserves this before allocating decoded pixels, so an
+    // oversized source fails here rather than after a full-size allocation.
+    limits.max_alloc = Some(MAX_SOURCE_PIXELS * 3);
     reader.limits(limits);
+    Ok(reader)
+}
 
-    let image = reader
-        .decode()
-        .map_err(|e| ProtocolError::ImageDecode(e.to_string()))?;
-
-    let (w, h) = image.dimensions();
-    if u64::from(w) * u64::from(h) > MAX_SOURCE_PIXELS {
-        return Err(ProtocolError::ImageDecode(format!(
-            "source {w}x{h} exceeds the {MAX_SOURCE_PIXELS}-pixel budget"
-        )));
-    }
-    Ok(image)
+fn too_large(width: u32, height: u32) -> ProtocolError {
+    ProtocolError::ImageDecode(format!(
+        "source {width}x{height} exceeds the {MAX_SOURCE_PIXELS}-pixel budget"
+    ))
 }
 
 fn render(image: &DynamicImage, crop: &CropSpec) -> Vec<u8> {

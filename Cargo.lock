@@ -626,6 +626,7 @@ dependencies = [
 name = "gmk87-protocol"
 version = "0.1.0"
 dependencies = [
+ "crc32fast",
  "gif 0.13.3",
  "image",
  "proptest",

@@ -10,4 +10,5 @@ image = "0.25"
 gif = "0.13"
 
 [dev-dependencies]
+crc32fast = "1"
 proptest = "1"

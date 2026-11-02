@@ -13,6 +13,17 @@ fn png(width: u32, height: u32) -> Vec<u8> {
     out.into_inner()
 }
 
+fn png_with_declared_size(width: u32, height: u32) -> Vec<u8> {
+    // Start from a valid 8x8 PNG, rewrite the IHDR dimensions, then fix the
+    // IHDR CRC so the only thing wrong with the header is its size.
+    let mut bytes = png(8, 8);
+    bytes[16..20].copy_from_slice(&width.to_be_bytes());
+    bytes[20..24].copy_from_slice(&height.to_be_bytes());
+    let crc = crc32fast::hash(&bytes[12..29]);
+    bytes[29..33].copy_from_slice(&crc.to_be_bytes());
+    bytes
+}
+
 #[test]
 fn produces_exactly_one_display_frame() {
     let out = prepare_static(&png(800, 600), &CropSpec::default()).unwrap();
@@ -47,18 +58,15 @@ fn rejects_a_truncated_png() {
 
 #[test]
 fn rejects_an_absurdly_large_image() {
-    // A PNG header claiming 50000x50000 is refused before allocation.
-    let header = {
-        let mut v = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
-        v.extend_from_slice(&13u32.to_be_bytes());
-        v.extend_from_slice(b"IHDR");
-        v.extend_from_slice(&50_000u32.to_be_bytes());
-        v.extend_from_slice(&50_000u32.to_be_bytes());
-        v.extend_from_slice(&[8, 2, 0, 0, 0]);
-        v.extend_from_slice(&[0, 0, 0, 0]);
-        v.extend_from_slice(&[0, 0, 0, 0]);
-        v
-    };
-    let err = prepare_static(&header, &CropSpec::default()).unwrap_err();
+    // A real PNG whose IHDR is patched to claim 50000x50000 (with a valid
+    // CRC32), so this asserts on the pixel-budget size guard, not on a decode
+    // failure: the guard must fire from the header alone, before any
+    // full-size pixel buffer is allocated.
+    let bytes = png_with_declared_size(50_000, 50_000);
+    let err = prepare_static(&bytes, &CropSpec::default()).unwrap_err();
     assert!(matches!(err, ProtocolError::ImageDecode(_)), "got {err:?}");
+    assert!(
+        err.to_string().contains("pixel budget"),
+        "expected the size guard to reject the header, got {err:?}"
+    );
 }
