@@ -28,6 +28,8 @@ pub fn run() {
             commands::apply_preset,
             commands::preview_display,
             commands::copy_diagnostics,
+            commands::upload_display,
+            commands::cancel_upload,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the GMK87 configurator");

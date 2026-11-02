@@ -15,9 +15,8 @@ pub struct Runtime {
 
 pub struct AppState {
     pub runtime: Arc<Mutex<Runtime>>,
-    /// Wired up by `cancel_upload` in the upload task; present from the start so
-    /// the state shape does not change under the commands that will use it.
-    #[allow(dead_code)]
+    /// Wired up by `cancel_upload`; the token is stored so a cancel command can
+    /// reach the running upload without taking the runtime mutex.
     pub cancel: Arc<Mutex<Option<CancelToken>>>,
 }
 

@@ -56,6 +56,38 @@ pub fn preview_bytes(job: &PreviewJob) -> Result<Vec<u8>, AppError> {
     preview_png(&job.bytes, &job.crop.to_spec())
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadProgressDto {
+    pub bytes_sent: usize,
+    pub total_bytes: usize,
+}
+
+impl From<gmk87_device::session::UploadProgress> for UploadProgressDto {
+    fn from(progress: gmk87_device::session::UploadProgress) -> Self {
+        Self {
+            bytes_sent: progress.bytes_sent,
+            total_bytes: progress.total_bytes,
+        }
+    }
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+
+    #[test]
+    fn converts_upload_progress_to_a_camel_case_dto() {
+        let dto = UploadProgressDto::from(gmk87_device::session::UploadProgress {
+            bytes_sent: 512,
+            total_bytes: 65536,
+        });
+        let json = serde_json::to_string(&dto).unwrap();
+        assert!(json.contains("\"bytesSent\":512"));
+        assert!(json.contains("\"totalBytes\":65536"));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

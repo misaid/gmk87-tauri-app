@@ -3,11 +3,12 @@
 //! device operations are serialized (the keyboard has one state machine).
 
 use crate::app_state::{AppState, Manager};
-use crate::dto::{preview_bytes, DeviceInfoDto, PresetDto, PreviewJob};
+use crate::dto::{preview_bytes, DeviceInfoDto, PresetDto, PreviewJob, UploadProgressDto};
 use gmk87_app::error::{AppError, ErrorKind};
 use gmk87_app::lighting::LightingPatch;
 use gmk87_app::state::DeviceStateDto;
-use tauri::State;
+use gmk87_device::session::CancelToken;
+use tauri::{AppHandle, Emitter, State};
 
 fn not_connected() -> AppError {
     AppError {
@@ -35,20 +36,28 @@ pub async fn list_devices() -> Result<Vec<DeviceInfoDto>, AppError> {
 }
 
 #[tauri::command]
-pub async fn connect(state: State<'_, AppState>, path: String) -> Result<DeviceStateDto, AppError> {
+pub async fn connect(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<DeviceStateDto, AppError> {
     let runtime = state.runtime.clone();
     let snapshot_path = gmk87_app::snapshot::default_path();
-    tauri::async_runtime::spawn_blocking(move || {
-        let transport = gmk87_device::transport::HidTransport::open(&path)?;
+    let connect_path = path.clone();
+    let state_dto = tauri::async_runtime::spawn_blocking(move || {
+        let transport = gmk87_device::transport::HidTransport::open(&connect_path)?;
         let manager = Manager::new(transport, snapshot_path);
         let state_dto = manager.read_state();
         let mut rt = runtime.lock().expect("runtime lock");
         rt.manager = Some(manager);
-        rt.path = Some(path);
-        Ok(state_dto)
+        rt.path = Some(connect_path);
+        Ok::<_, AppError>(state_dto)
     })
     .await
-    .map_err(join_error)?
+    .map_err(join_error)??;
+
+    spawn_reconnect_monitor(app, &state, path);
+    Ok(state_dto)
 }
 
 #[tauri::command]
@@ -169,4 +178,62 @@ pub async fn copy_diagnostics(state: State<'_, AppState>) -> Result<String, AppE
         report.push_str(&format!("logs: {}\n", dir.display()));
     }
     Ok(report)
+}
+
+#[tauri::command]
+pub async fn upload_display(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    job: gmk87_app::job::DisplayJob,
+) -> Result<(), AppError> {
+    let runtime = state.runtime.clone();
+    let cancel_handle = state.cancel.clone();
+    let token = CancelToken::new();
+    *cancel_handle.lock().expect("cancel lock") = Some(token.clone());
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut rt = runtime.lock().expect("runtime lock");
+        let manager = rt.manager.as_mut().ok_or_else(not_connected)?;
+        manager.upload(&job, &token, &mut |progress| {
+            let _ = app.emit("upload://progress", UploadProgressDto::from(progress));
+        })
+    })
+    .await
+    .map_err(join_error);
+
+    *cancel_handle.lock().expect("cancel lock") = None;
+    result?
+}
+
+#[tauri::command]
+pub fn cancel_upload(state: State<'_, AppState>) -> Result<(), AppError> {
+    if let Some(token) = state.cancel.lock().expect("cancel lock").as_ref() {
+        token.cancel();
+    }
+    Ok(())
+}
+
+/// Watches the connected hidraw node and reports when it disappears.
+///
+/// Called once after a successful connect; the loop ends when the path changes
+/// or the manager is dropped.
+pub fn spawn_reconnect_monitor(app: AppHandle, state: &AppState, path: String) {
+    let runtime = state.runtime.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        {
+            let rt = runtime.lock().expect("runtime lock");
+            match &rt.path {
+                Some(current) if current == &path => {}
+                _ => return,
+            }
+        }
+        if !std::path::Path::new(&path).exists() {
+            let mut rt = runtime.lock().expect("runtime lock");
+            rt.manager = None;
+            rt.path = None;
+            let _ = app.emit("device://disconnected", path.clone());
+            return;
+        }
+    });
 }
