@@ -2,6 +2,8 @@ import { useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Slider } from "@/components/ui/slider";
+import { CropEditor } from "@/components/CropEditor";
+import { UploadControls } from "@/components/UploadControls";
 import { budgetError } from "@/lib/budget";
 import { useAppStore } from "@/store";
 
@@ -11,7 +13,6 @@ export default function DisplayScreen() {
   const setSlot = useAppStore((s) => s.setSlot);
   const source = useAppStore((s) => s.source);
   const sourceInfo = useAppStore((s) => s.sourceInfo);
-  const previewUrl = useAppStore((s) => s.previewUrl);
   const totalFrames = useAppStore((s) => s.totalFrames);
   const delayMs = useAppStore((s) => s.delayMs);
   const setDelayMs = useAppStore((s) => s.setDelayMs);
@@ -50,17 +51,7 @@ export default function DisplayScreen() {
           />
         </div>
 
-        <div className="flex aspect-[240/135] w-full max-w-2xl items-center justify-center overflow-hidden rounded-lg border border-white/10 bg-black">
-          {previewUrl ? (
-            <img
-              src={previewUrl}
-              alt="Display preview"
-              className="size-full object-contain [image-rendering:pixelated]"
-            />
-          ) : (
-            <span className="text-sm text-white/40">240 × 135 preview</span>
-          )}
-        </div>
+        <CropEditor />
       </div>
 
       <div className="flex flex-col gap-4 text-sm">
@@ -86,6 +77,8 @@ export default function DisplayScreen() {
           {sourceInfo && <p className="mt-1 text-xs text-white/40">{source?.name}</p>}
           {problem && <p className="mt-2 text-xs text-amber-300">{problem}</p>}
         </div>
+
+        <UploadControls />
 
         <p className="text-xs text-white/40">
           Both display slots are always sent together: the keyboard rewrites all of its image memory

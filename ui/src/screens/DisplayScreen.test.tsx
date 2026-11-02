@@ -13,6 +13,12 @@ vi.mock("@/store", () => ({
       delayMs: 100,
       setDelayMs: vi.fn(),
       loadSource: vi.fn(),
+      crop: { offsetX: 0, offsetY: 0, zoom: 1, fit: "cover" },
+      setCrop: vi.fn(),
+      uploads: 0,
+      progress: null,
+      upload: vi.fn(),
+      cancel: vi.fn(),
     }),
 }));
 

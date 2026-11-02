@@ -18,3 +18,16 @@ class ResizeObserverStub {
 if (typeof globalThis.ResizeObserver === "undefined") {
   globalThis.ResizeObserver = ResizeObserverStub as unknown as typeof ResizeObserver;
 }
+
+// jsdom does not implement PointerEvent, so its events carry no clientX/Y and
+// the crop editor's drag math sees NaN. A MouseEvent subclass restores them.
+if (typeof globalThis.PointerEvent === "undefined") {
+  class PointerEventStub extends MouseEvent {
+    pointerId: number;
+    constructor(type: string, init: PointerEventInit = {}) {
+      super(type, init);
+      this.pointerId = init.pointerId ?? 0;
+    }
+  }
+  globalThis.PointerEvent = PointerEventStub as unknown as typeof PointerEvent;
+}
