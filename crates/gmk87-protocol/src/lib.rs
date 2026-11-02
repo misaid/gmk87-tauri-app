@@ -2,6 +2,7 @@
 
 pub mod config;
 pub mod error;
+pub mod frames;
 pub mod image;
 pub mod packet;
 pub mod pixel;
