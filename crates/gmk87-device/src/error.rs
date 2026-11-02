@@ -13,6 +13,8 @@ pub enum DeviceError {
     Hid(String),
     #[error("timed out waiting for command 0x{cmd:02x}")]
     ProtocolTimeout { cmd: u8 },
+    #[error("upload timed out after sending {sent} of {total} bytes; display left unchanged")]
+    UploadTimeout { sent: usize, total: usize },
     #[error("response checksum mismatch (expected 0x{expected:04x}, got 0x{actual:04x})")]
     ChecksumMismatch { expected: u16, actual: u16 },
     #[error("device state is unknown after an interrupted write; reconnect and retry")]

@@ -16,6 +16,16 @@ use std::time::{Duration, Instant};
 
 pub const COMMAND_TIMEOUT: Duration = Duration::from_millis(1500);
 pub const WRITE_SETTLE: Duration = Duration::from_millis(100);
+/// A hard ceiling on streaming one upload, independent of packet count.
+///
+/// The 2.4 GHz dongle acknowledges at roughly one packet per second, so the
+/// old per-packet wait had to go; this bounds the whole stream instead.
+pub const UPLOAD_TOTAL_TIMEOUT: Duration = Duration::from_secs(300);
+/// How long one packet's acknowledgement is awaited before moving on.
+pub const FRAME_ACK_WINDOW: Duration = Duration::from_millis(25);
+/// Consecutive packets without a `FrameData` acknowledgement after which the
+/// device is considered to be not responding at all.
+pub const FRAME_ACK_MISS_LIMIT: u32 = 64;
 
 pub struct Session<T: Transport> {
     transport: T,
@@ -25,10 +35,16 @@ pub struct Session<T: Transport> {
 
 impl<T: Transport> Session<T> {
     pub fn new(transport: T) -> Self {
+        Self::with_config(transport, DeviceConfig::default_config())
+    }
+
+    /// Opens a session seeded with a known configuration, such as the
+    /// snapshot the application last wrote to the device.
+    pub fn with_config(transport: T, config: DeviceConfig) -> Self {
         Self {
             transport,
             synced: false,
-            config: DeviceConfig::default_config(),
+            config,
         }
     }
 
@@ -160,6 +176,10 @@ pub struct UploadProgress {
 /// Why the streaming phase stopped, so `upload` can repair once and report.
 enum UploadFailure {
     Cancelled,
+    /// A failure reported as itself after the repair attempt, such as
+    /// [`DeviceError::UploadTimeout`].
+    Fatal(DeviceError),
+    /// A transport failure, reported wrapped in [`DeviceError::UploadFailed`].
     Transport(DeviceError),
 }
 
@@ -194,6 +214,20 @@ impl<T: Transport> Session<T> {
         cancel: &CancelToken,
         progress: &mut dyn FnMut(UploadProgress),
     ) -> Result<()> {
+        self.upload_with_timeout(plan, cancel, progress, UPLOAD_TOTAL_TIMEOUT)
+    }
+
+    /// [`Session::upload`] with an injectable stream deadline.
+    ///
+    /// Tests use a short deadline instead of waiting five minutes; production
+    /// always goes through [`Session::upload`] and [`UPLOAD_TOTAL_TIMEOUT`].
+    pub fn upload_with_timeout(
+        &mut self,
+        plan: &FramePlan,
+        cancel: &CancelToken,
+        progress: &mut dyn FnMut(UploadProgress),
+        total_timeout: Duration,
+    ) -> Result<()> {
         plan.validate()?;
 
         let previous_show = self.config.show_image();
@@ -221,7 +255,7 @@ impl<T: Transport> Session<T> {
 
         // The device now holds a partially written slot, so every exit below
         // must leave the display somewhere safe.
-        if let Err(failure) = self.stream_frames(&memory, cancel, progress) {
+        if let Err(failure) = self.stream_frames(&memory, cancel, progress, total_timeout) {
             // Best-effort: a failed repair must never mask the real cause.
             let _ = self.repair_display(previous_show, plan);
             self.synced = false;
@@ -229,6 +263,7 @@ impl<T: Transport> Session<T> {
                 UploadFailure::Cancelled => {
                     DeviceError::InvalidJob("upload cancelled; display left unchanged".into())
                 }
+                UploadFailure::Fatal(error) => error,
                 UploadFailure::Transport(error) => DeviceError::UploadFailed {
                     source: Box::new(error),
                 },
@@ -238,21 +273,54 @@ impl<T: Transport> Session<T> {
     }
 
     /// Streams every frame packet, then commits. Runs only after READY.
+    ///
+    /// Packets are written without waiting for an acknowledgement: the 2.4 GHz
+    /// dongle answers about one packet per second, so a per-packet wait turned
+    /// a 1,171-packet slot into a ~20-minute upload. Each packet is followed by
+    /// a short probe instead, and the final COMMIT confirms the transaction.
     fn stream_frames(
         &mut self,
         memory: &[u8],
         cancel: &CancelToken,
         progress: &mut dyn FnMut(UploadProgress),
+        total_timeout: Duration,
     ) -> std::result::Result<(), UploadFailure> {
         let total_bytes = memory.len();
+        let started = Instant::now();
         let mut position = 0usize;
+        let mut misses = 0u32;
+
         while position < total_bytes {
             if cancel.is_cancelled() || !self.synced {
                 return Err(UploadFailure::Cancelled);
             }
+            if started.elapsed() > total_timeout {
+                return Err(UploadFailure::Fatal(DeviceError::UploadTimeout {
+                    sent: position,
+                    total: total_bytes,
+                }));
+            }
+
             let end = (position + gmk87_protocol::packet::MAX_PAYLOAD).min(total_bytes);
-            self.send_and_wait(Command::FrameData, position as u32, &memory[position..end])
+            let packet = Packet::new(Command::FrameData, position as u32, &memory[position..end])
+                .map_err(|error| UploadFailure::Fatal(DeviceError::from(error)))?;
+            self.transport
+                .write_report(&packet.encode())
                 .map_err(UploadFailure::Transport)?;
+
+            match self.frame_acknowledged() {
+                Ok(true) => misses = 0,
+                Ok(false) => {
+                    misses += 1;
+                    if misses >= FRAME_ACK_MISS_LIMIT {
+                        return Err(UploadFailure::Fatal(DeviceError::ProtocolTimeout {
+                            cmd: Command::FrameData.as_u8(),
+                        }));
+                    }
+                }
+                Err(error) => return Err(UploadFailure::Transport(error)),
+            }
+
             position = end;
             progress(UploadProgress {
                 bytes_sent: position,
@@ -260,9 +328,31 @@ impl<T: Transport> Session<T> {
             });
         }
 
+        if started.elapsed() > total_timeout {
+            return Err(UploadFailure::Fatal(DeviceError::UploadTimeout {
+                sent: position,
+                total: total_bytes,
+            }));
+        }
+
         self.send_and_wait(Command::Commit, 0, &[])
             .map_err(UploadFailure::Transport)?;
         Ok(())
+    }
+
+    /// Reads for at most [`FRAME_ACK_WINDOW`], returning whether a `FrameData`
+    /// acknowledgement arrived.
+    ///
+    /// A missing acknowledgement is not an error: the dongle acknowledges
+    /// slowly and the final COMMIT confirms the whole transaction. Anything
+    /// that is not a `FrameData` report is noise and is discarded.
+    fn frame_acknowledged(&mut self) -> Result<bool> {
+        match self.transport.read_report(FRAME_ACK_WINDOW)? {
+            Some(report) if report.len() >= 4 && report[3] == Command::FrameData.as_u8() => {
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
     }
 
     /// Waits for READY up to [`COMMAND_TIMEOUT`].

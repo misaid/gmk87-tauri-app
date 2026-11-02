@@ -1,10 +1,11 @@
 use gmk87_device::error::{DeviceError, Result as DeviceResult};
 use gmk87_device::mock::MockTransport;
-use gmk87_device::session::{CancelToken, Session, UploadProgress};
+use gmk87_device::session::{CancelToken, Session, UploadProgress, FRAME_ACK_MISS_LIMIT};
 use gmk87_device::transport::Transport;
 use gmk87_protocol::config::{DeviceConfig, ShowSlot};
 use gmk87_protocol::frames::FramePlan;
 use gmk87_protocol::packet::{Command, Packet};
+use std::collections::VecDeque;
 use std::time::Duration;
 
 fn one_frame_plan() -> FramePlan {
@@ -437,4 +438,209 @@ fn a_frame_budget_violation_never_touches_the_device() {
         DeviceError::Protocol(gmk87_protocol::error::ProtocolError::FrameBudget { .. })
     ));
     assert!(session.transport().writes().is_empty(), "no USB traffic");
+}
+
+/// A transport that answers every command immediately, like a healthy wired
+/// keyboard, but acknowledges `FRAME_DATA` only every `ack_every` packets (or
+/// never, when `ack_every` is `None`).
+///
+/// Reads return instantly instead of blocking for the acknowledgement window,
+/// so a 1,171-packet upload runs in milliseconds rather than one 25 ms window
+/// per packet.
+struct ScriptedDevice {
+    responses: VecDeque<Vec<u8>>,
+    writes: Vec<Vec<u8>>,
+    ack_every: Option<u32>,
+    frames: u32,
+    frame_write_delay: Duration,
+}
+
+impl ScriptedDevice {
+    fn new(ack_every: Option<u32>) -> Self {
+        Self {
+            responses: VecDeque::new(),
+            writes: Vec::new(),
+            ack_every,
+            frames: 0,
+            frame_write_delay: Duration::ZERO,
+        }
+    }
+
+    /// Makes each `FRAME_DATA` write take real time, so a test can spend a
+    /// stream deadline without waiting for a whole upload.
+    fn delay_frame_writes(mut self, delay: Duration) -> Self {
+        self.frame_write_delay = delay;
+        self
+    }
+
+    /// The 2.4 GHz dongle's acknowledgement shape: 64 bytes, report ID `0x01`,
+    /// the command echoed at offset 3, and no application checksum.
+    fn ack(&mut self, command: Command) {
+        let mut report = vec![0u8; 64];
+        report[0] = 0x01;
+        report[1] = command.as_u8();
+        report[2] = 0x09;
+        report[3] = command.as_u8();
+        self.responses.push_back(report);
+    }
+
+    fn writes(&self) -> &[Vec<u8>] {
+        &self.writes
+    }
+}
+
+impl Transport for ScriptedDevice {
+    fn write_report(&mut self, report: &[u8]) -> DeviceResult<()> {
+        self.writes.push(report.to_vec());
+        let Some(command) = Command::from_u8(report[3]) else {
+            return Ok(());
+        };
+        match command {
+            Command::FrameData => {
+                if !self.frame_write_delay.is_zero() {
+                    std::thread::sleep(self.frame_write_delay);
+                }
+                self.frames += 1;
+                if matches!(self.ack_every, Some(every) if self.frames.is_multiple_of(every)) {
+                    self.ack(Command::FrameData);
+                }
+            }
+            // The wired interface sends READY after a configuration COMMIT;
+            // the 2.4 GHz dongle does not, and neither path requires it.
+            Command::Commit => {
+                self.ack(Command::Commit);
+                self.responses.push_back(
+                    Packet::new(Command::Ready, 0, &[])
+                        .unwrap()
+                        .encode()
+                        .to_vec(),
+                );
+            }
+            other => self.ack(other),
+        }
+        Ok(())
+    }
+
+    fn read_report(&mut self, _timeout: Duration) -> DeviceResult<Option<Vec<u8>>> {
+        Ok(self.responses.pop_front())
+    }
+}
+
+#[test]
+fn upload_completes_when_only_every_sixteenth_frame_is_acknowledged() {
+    let previous = previous_config(ShowSlot::Slot1);
+    let plan = one_frame_plan();
+
+    let mut session = Session::with_config(ScriptedDevice::new(Some(16)), previous.clone());
+    let mut last = UploadProgress {
+        bytes_sent: 0,
+        total_bytes: 0,
+    };
+    session
+        .upload(&plan, &CancelToken::new(), &mut |p| last = p)
+        .expect("a slow dongle must not fail the upload");
+
+    assert_eq!(last.bytes_sent, 65536);
+    assert_eq!(last.total_bytes, 65536);
+
+    let writes = session.transport().writes();
+    let frames = reports(writes, Command::FrameData);
+    assert_eq!(frames.len(), 1171, "every packet must still be written");
+    assert_eq!(
+        writes.last().map(|w| w[3]),
+        Some(Command::Commit.as_u8()),
+        "the transaction still ends with COMMIT"
+    );
+
+    // The frame counts and show slot reached the device even though most
+    // packets were never acknowledged.
+    let config_writes = reports(writes, Command::Config);
+    assert_eq!(payload_of(config_writes[0])[33], ShowSlot::Slot0.as_u8());
+    let commands: Vec<u8> = writes.iter().map(|w| w[3]).collect();
+    assert_no_read_commands(&commands);
+}
+
+#[test]
+fn an_unacknowledged_stream_fails_with_a_frame_timeout_and_repairs() {
+    let previous = previous_config(ShowSlot::Slot1);
+    let plan = one_frame_plan();
+
+    let mut session = Session::with_config(ScriptedDevice::new(None), previous.clone());
+    let err = session
+        .upload(&plan, &CancelToken::new(), &mut |_| {})
+        .unwrap_err();
+
+    match &err {
+        DeviceError::ProtocolTimeout { cmd } => assert_eq!(*cmd, Command::FrameData.as_u8()),
+        other => panic!("expected a FRAME_DATA protocol timeout, got {other:?}"),
+    }
+    assert_eq!(
+        reports(session.transport().writes(), Command::FrameData).len(),
+        FRAME_ACK_MISS_LIMIT as usize,
+        "the stream stops after the consecutive-miss limit"
+    );
+
+    // The failure still repairs: a bare COMMIT closes the transaction, then
+    // the config is rewritten with the untouched slot shown.
+    let writes = session.transport().writes();
+    assert_eq!(
+        writes.last().map(|w| w[3]),
+        Some(Command::Commit.as_u8()),
+        "repair COMMIT was sent"
+    );
+    let config_writes = reports(writes, Command::Config);
+    assert_eq!(config_writes.len(), 2, "the upload plus the repair rewrite");
+    assert_eq!(
+        payload_of(config_writes.last().unwrap()),
+        patched(&previous, &plan, ShowSlot::Slot1).as_slice()
+    );
+    assert!(!session.is_synced());
+}
+
+#[test]
+fn an_upload_past_its_deadline_times_out_and_repairs() {
+    let previous = previous_config(ShowSlot::Slot1);
+    let plan = one_frame_plan();
+
+    // Each frame packet takes longer than the stubbed deadline, so exactly one
+    // packet is sent before the ceiling is hit — no five-minute wait.
+    let transport = ScriptedDevice::new(Some(16)).delay_frame_writes(Duration::from_millis(2));
+    let mut session = Session::with_config(transport, previous.clone());
+    let err = session
+        .upload_with_timeout(
+            &plan,
+            &CancelToken::new(),
+            &mut |_| {},
+            Duration::from_millis(1),
+        )
+        .unwrap_err();
+
+    match &err {
+        DeviceError::UploadTimeout { sent, total } => {
+            assert_eq!(*sent, 56, "one packet was streamed before the ceiling");
+            assert_eq!(*total, 65536);
+        }
+        other => panic!("expected UploadTimeout, got {other:?}"),
+    }
+    assert!(
+        err.to_string().contains("56 of 65536"),
+        "the message must name what was sent: {err}"
+    );
+
+    let writes = session.transport().writes();
+    assert_eq!(
+        reports(writes, Command::FrameData).len(),
+        1,
+        "no packet after the deadline"
+    );
+    assert_eq!(
+        writes.last().map(|w| w[3]),
+        Some(Command::Commit.as_u8()),
+        "repair COMMIT was sent"
+    );
+    assert_eq!(
+        payload_of(reports(writes, Command::Config).last().unwrap()),
+        patched(&previous, &plan, ShowSlot::Slot1).as_slice()
+    );
+    assert!(!session.is_synced());
 }
