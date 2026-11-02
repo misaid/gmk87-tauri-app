@@ -103,6 +103,11 @@ read-modify-write. The app maintains the configuration as local state, writes
 the complete 48-byte block, and keeps a snapshot of the last block written. The
 first write sets underglow/LED/time to the app's values.
 
+The MIT reference `codedgar/gmk87-node` still runs `PREP_READ ×10 → READ_CFG
+×12` and calls it read-modify-write, but its read returns whatever the device
+echoes — on this hardware, zeros. It therefore edits a zero base and zeroes
+every byte it does not name, which is the failure this design avoids.
+
 A validated reference config from that capture, used for defaults:
 
 | Offset | Value | Meaning |
@@ -149,6 +154,22 @@ only the command byte.
 - Side LEDs: mode 0–4, color 0–8 (red, orange, yellow, green, teal, blue, purple,
   white, off), saturation 0–9, rainbow toggle.
 - Win-lock on/off.
+
+Names and presets are ported from the MIT reference `codedgar/gmk87-node`, whose
+config map matches ours offset for offset:
+
+- The 19 underglow effects are named: off, horizontal-dimming-wave,
+  horizontal-pulse-wave, waterfall, full-cycling-colors, breathing,
+  full-one-color, glow-pressed-key, glow-spreading, glow-row, random-pattern,
+  rainbow-cycle, rainbow-waterfall, wave-from-center, circling-jk, raining,
+  wave-left-right, slow-saturation-cycle, slow-rainbow-from-center.
+- Speed reads `0 = fast` to `9 = slow`; orientation `0` is left-to-right and
+  `1` is right-to-left.
+- LED modes: `0` blinking one colour, `1` pulse rainbow, `2` blinking one
+  colour (alternate), `3` fixed colour, `4` fixed colour (alternate). LED
+  colours: red, orange, yellow, green, teal, blue, purple, white, off.
+- Eight lighting presets — gaming, relaxed, party, minimal, productivity,
+  purple-wave, matrix, sunset — with fixed field values applied as one block.
 
 ## 4. Architecture
 
@@ -216,6 +237,8 @@ layer.
   operations run one at a time. `connect(path)`, `disconnect()`,
   `list_devices()` (wrapping `discovery::discover`).
 - `set_lighting(edit)` and `sync_clock()` — delegate to `Session`.
+- `list_presets()` and `apply_preset(name)` — the eight named profiles from
+  §3.5, applied as one configuration block; unknown names are an error.
 - `upload(job, cancel)` — builds a `FramePlan` with `gmk87-protocol`, runs
   `Session::upload`, and forwards `UploadProgress` to a caller-supplied callback
   (the Tauri adapter turns it into `upload://progress`).
@@ -234,8 +257,8 @@ layer.
 A thin command and event adapter over `gmk87-app`:
 
 `list_devices`, `connect`, `disconnect`, `read_state`, `set_lighting`,
-`sync_clock`, `upload_display`, `cancel_upload`, `preview_display`,
-`copy_diagnostics`.
+`sync_clock`, `list_presets`, `apply_preset`, `upload_display`,
+`cancel_upload`, `preview_display`, `copy_diagnostics`.
 
 Emits `upload://progress` and `device://disconnected`. A single mutex in
 `gmk87-app` serializes all device operations, because the keyboard has one
@@ -260,8 +283,10 @@ composed 240×135 preview.
   Three Fiber, with the 240×135 panel as a live texture fed by
   `preview_display` and the underglow reflecting the Lighting settings. Built
   in code — no bundled model asset.
-- **Lighting:** underglow effect picker with brightness, speed, orientation,
-  rainbow and color; side LED mode/color/saturation; win-lock.
+- **Lighting:** underglow effect picker by name (the 19 effects from §3.5) with
+  brightness, speed (fast→slow), orientation, rainbow and color; side LED mode
+  by name, color swatches, saturation; win-lock; and the eight preset profiles
+  as one-click chips.
 - **Clock:** preview of the current time as the keyboard will show it, and a
   "Sync now" action.
 
