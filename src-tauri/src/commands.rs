@@ -141,6 +141,16 @@ pub async fn preview_display(job: PreviewJob) -> Result<Vec<u8>, AppError> {
         .map_err(join_error)?
 }
 
+#[tauri::command]
+pub async fn inspect_source(job: PreviewJob) -> Result<crate::dto::SourceInfoDto, AppError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        gmk87_app::inspect::inspect(&job.bytes, &job.crop.to_spec(), 0)
+            .map(crate::dto::SourceInfoDto::from)
+    })
+    .await
+    .map_err(join_error)?
+}
+
 /// Runs `body` against the connected manager; `not_connected` when there is none.
 async fn run_on_manager<T, F>(state: State<'_, AppState>, body: F) -> Result<T, AppError>
 where

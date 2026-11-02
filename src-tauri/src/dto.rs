@@ -72,6 +72,24 @@ impl From<gmk87_device::session::UploadProgress> for UploadProgressDto {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceInfoDto {
+    pub is_gif: bool,
+    pub frames: u32,
+    pub delay_ms: u16,
+}
+
+impl From<gmk87_app::inspect::SourceInfo> for SourceInfoDto {
+    fn from(info: gmk87_app::inspect::SourceInfo) -> Self {
+        Self {
+            is_gif: info.is_gif,
+            frames: info.frames,
+            delay_ms: info.delay_ms,
+        }
+    }
+}
+
 #[cfg(test)]
 mod progress_tests {
     use super::*;

@@ -12,6 +12,9 @@ interface AppStore {
   crop: CropParams;
   slot: Slot;
   source: { bytes: Uint8Array; name: string } | null;
+  sourceInfo: ipc.SourceInfo | null;
+  totalFrames: number;
+  delayMs: number;
   previewUrl: string | null;
   progress: ipc.UploadProgress | null;
   uploads: number;
@@ -22,6 +25,7 @@ interface AppStore {
   setCrop: (crop: CropParams) => void;
   setSlot: (slot: Slot) => void;
   loadSource: (bytes: Uint8Array, name: string) => void;
+  setDelayMs: (ms: number) => void;
   refreshPreview: () => Promise<void>;
   upload: (delayMs: number, showAfter: boolean) => Promise<void>;
   cancel: () => Promise<void>;
@@ -47,6 +51,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
   crop: { ...DEFAULT_CROP },
   slot: "slot0",
   source: null,
+  sourceInfo: null,
+  totalFrames: 0,
+  delayMs: 100,
   previewUrl: null,
   progress: null,
   uploads: 0,
@@ -79,10 +86,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
     void get().refreshPreview();
   },
   setSlot: (slot) => set({ slot }),
-  loadSource: (bytes, name) => {
-    set({ source: { bytes, name } });
+  loadSource: async (bytes, name) => {
+    set({ source: { bytes, name }, sourceInfo: null });
     void get().refreshPreview();
+    try {
+      const info = await ipc.inspectSource(bytes, get().crop);
+      set({ sourceInfo: info, delayMs: info.delayMs, totalFrames: info.frames + 1 });
+    } catch (error) {
+      set({ error: message(error) });
+    }
   },
+  setDelayMs: (delayMs) => set({ delayMs }),
 
   refreshPreview: async () => {
     const { source, crop } = get();

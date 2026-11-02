@@ -27,6 +27,7 @@ pub fn run() {
             commands::list_presets,
             commands::apply_preset,
             commands::preview_display,
+            commands::inspect_source,
             commands::copy_diagnostics,
             commands::upload_display,
             commands::cancel_upload,

@@ -18,6 +18,7 @@ vi.mock("./lib/ipc", () => ({
   listPresets: vi.fn(async () => []),
   applyPreset: vi.fn(),
   previewDisplay: vi.fn(async () => [137, 80, 78, 71]),
+  inspectSource: vi.fn(async () => ({ isGif: false, frames: 1, delayMs: 100 })),
   uploadDisplay: vi.fn(async () => {}),
   cancelUpload: vi.fn(async () => {}),
   copyDiagnostics: vi.fn(),

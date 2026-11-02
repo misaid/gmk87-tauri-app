@@ -62,6 +62,12 @@ export interface UploadProgress {
   totalBytes: number;
 }
 
+export interface SourceInfo {
+  isGif: boolean;
+  frames: number;
+  delayMs: number;
+}
+
 export interface AppError {
   kind: string;
   message: string;
@@ -98,6 +104,9 @@ export function previewDisplay(bytes: Uint8Array, crop: CropParams): Promise<num
       crop: { ...crop, fit: crop.fit as Fit },
     },
   });
+}
+export function inspectSource(bytes: Uint8Array, crop: CropParams): Promise<SourceInfo> {
+  return invoke("inspect_source", { job: { bytes: Array.from(bytes), crop } });
 }
 export function uploadDisplay(job: DisplayJob): Promise<void> {
   return invoke("upload_display", { job });
