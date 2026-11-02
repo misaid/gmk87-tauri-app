@@ -2,6 +2,7 @@ pub mod clock;
 pub mod config;
 pub mod lights;
 pub mod probe;
+pub mod signals;
 pub mod snapshot;
 pub mod upload;
 

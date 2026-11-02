@@ -1,4 +1,4 @@
-use super::{open_session, save_snapshot};
+use super::{open_session, save_snapshot, signals};
 use gmk87_device::session::CancelToken;
 use gmk87_protocol::config::ShowSlot;
 use gmk87_protocol::frames::{extract_gif_frames, FramePlan, MAX_TOTAL_FRAMES, MIN_FRAME_DELAY_MS};
@@ -34,6 +34,9 @@ pub fn run(path: &Path, slot: u8, show: bool) -> anyhow::Result<()> {
 
     let mut session = open_session()?;
     let cancel = CancelToken::new();
+    // `Ctrl-C` and `timeout`'s SIGTERM cancel the stream instead of killing
+    // the process, so the repair path below runs on this thread.
+    let _interrupts = signals::watch(cancel.clone());
     println!(
         "Uploading {} frame(s)...",
         plan.slot0_frames.len() + plan.slot1_frames.len()
