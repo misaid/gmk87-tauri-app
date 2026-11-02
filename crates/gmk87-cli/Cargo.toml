@@ -1,0 +1,14 @@
+[package]
+name = "gmk87-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+gmk87-device = { path = "../gmk87-device" }
+gmk87-protocol = { path = "../gmk87-protocol" }
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+chrono = "0.4"

@@ -1,0 +1,7 @@
+//! Device discovery, transport and session state machine for the GMK87.
+
+pub mod discovery;
+pub mod error;
+pub mod mock;
+pub mod session;
+pub mod transport;

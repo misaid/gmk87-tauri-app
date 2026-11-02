@@ -1,0 +1,15 @@
+[package]
+name = "gmk87-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+image = "0.25"
+gif = "0.13"
+
+[dev-dependencies]
+crc32fast = "1"
+gif = "0.13"
+proptest = "1"
