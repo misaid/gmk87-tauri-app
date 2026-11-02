@@ -11,6 +11,10 @@ pub enum ProtocolError {
     UnknownCommand(u8),
     #[error("configuration buffer of {actual} bytes is shorter than the {expected}-byte minimum")]
     ShortConfig { actual: usize, expected: usize },
+    #[error("configuration hex must be {expected} characters, got {actual}")]
+    InvalidConfigHexLength { actual: usize, expected: usize },
+    #[error("configuration hex has a non-hex character at offset {offset}")]
+    InvalidConfigHexCharacter { offset: usize },
     #[error("value {value} is outside the valid range 0..={max} for {field}")]
     OutOfRange {
         field: &'static str,

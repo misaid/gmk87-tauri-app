@@ -134,6 +134,67 @@ fn each_setter_touches_only_its_own_bytes() {
     assert_eq!(cfg.as_bytes(), &expected);
 }
 
+#[test]
+fn from_hex_is_the_inverse_of_to_hex() {
+    let default = DeviceConfig::default_config();
+    assert_eq!(DeviceConfig::from_hex(&default.to_hex()).unwrap(), default);
+
+    let mut raw = [0u8; 48];
+    for (index, byte) in raw.iter_mut().enumerate() {
+        *byte = (index as u8).wrapping_mul(7).wrapping_add(3);
+    }
+    let config = DeviceConfig::from_bytes(&raw).unwrap();
+    assert_eq!(DeviceConfig::from_hex(&config.to_hex()).unwrap(), config);
+
+    // A snapshot file ends with a newline, and uppercase hex is accepted.
+    let uppercase = format!("{}\n", config.to_hex().to_uppercase());
+    assert_eq!(DeviceConfig::from_hex(&uppercase).unwrap(), config);
+}
+
+#[test]
+fn from_hex_rejects_wrong_length_and_non_hex() {
+    let short = "00".repeat(47);
+    assert!(matches!(
+        DeviceConfig::from_hex(&short),
+        Err(ProtocolError::InvalidConfigHexLength {
+            actual: 94,
+            expected: 96
+        })
+    ));
+
+    let long = "00".repeat(49);
+    assert!(matches!(
+        DeviceConfig::from_hex(&long),
+        Err(ProtocolError::InvalidConfigHexLength {
+            actual: 98,
+            expected: 96
+        })
+    ));
+
+    let mut non_hex = "00".repeat(48);
+    non_hex.replace_range(10..12, "zz");
+    assert!(matches!(
+        DeviceConfig::from_hex(&non_hex),
+        Err(ProtocolError::InvalidConfigHexCharacter { offset: 10 })
+    ));
+
+    // `+1` parses as a number but is not a hex digit.
+    let mut plus = "00".repeat(48);
+    plus.replace_range(0..2, "+1");
+    assert!(matches!(
+        DeviceConfig::from_hex(&plus),
+        Err(ProtocolError::InvalidConfigHexCharacter { offset: 0 })
+    ));
+
+    assert!(matches!(
+        DeviceConfig::from_hex(""),
+        Err(ProtocolError::InvalidConfigHexLength {
+            actual: 0,
+            expected: 96
+        })
+    ));
+}
+
 proptest! {
     /// Any read-then-write round trip must preserve every byte not explicitly changed.
     #[test]

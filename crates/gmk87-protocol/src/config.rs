@@ -108,6 +108,36 @@ impl DeviceConfig {
         self.raw.iter().map(|byte| format!("{byte:02x}")).collect()
     }
 
+    /// Parses the configuration from hex, the inverse of [`Self::to_hex`].
+    ///
+    /// Surrounding whitespace is ignored so a snapshot file's trailing newline
+    /// is harmless. Uppercase digits are accepted; anything that is not exactly
+    /// [`CONFIG_LEN`] bytes of hex is rejected.
+    pub fn from_hex(hex: &str) -> Result<Self, ProtocolError> {
+        let hex = hex.trim();
+        let expected = CONFIG_LEN * 2;
+        if hex.len() != expected {
+            return Err(ProtocolError::InvalidConfigHexLength {
+                actual: hex.len(),
+                expected,
+            });
+        }
+
+        let digits = hex.as_bytes();
+        let mut raw = [0u8; CONFIG_LEN];
+        for (index, byte) in raw.iter_mut().enumerate() {
+            let high = hex_digit(digits[index * 2])
+                .ok_or_else(|| ProtocolError::InvalidConfigHexCharacter { offset: index * 2 })?;
+            let low = hex_digit(digits[index * 2 + 1]).ok_or_else(|| {
+                ProtocolError::InvalidConfigHexCharacter {
+                    offset: index * 2 + 1,
+                }
+            })?;
+            *byte = (high << 4) | low;
+        }
+        Ok(Self { raw })
+    }
+
     pub fn underglow_effect(&self) -> u8 {
         self.raw[1]
     }
@@ -260,6 +290,16 @@ fn check(field: &'static str, value: u32, max: u32) -> Result<(), ProtocolError>
         return Err(ProtocolError::OutOfRange { field, value, max });
     }
     Ok(())
+}
+
+/// One hex digit, or `None` for anything else.
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
