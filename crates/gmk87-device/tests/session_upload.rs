@@ -1,6 +1,8 @@
 use gmk87_device::error::{DeviceError, Result as DeviceResult};
 use gmk87_device::mock::MockTransport;
-use gmk87_device::session::{CancelToken, Session, UploadProgress, FRAME_ACK_MISS_LIMIT};
+use gmk87_device::session::{
+    CancelToken, Session, UploadProgress, FRAME_ACK_MISS_LIMIT, FRAME_ACK_PACING_THRESHOLD,
+};
 use gmk87_device::transport::Transport;
 use gmk87_protocol::config::{DeviceConfig, ShowSlot};
 use gmk87_protocol::frames::FramePlan;
@@ -34,15 +36,13 @@ fn previous_config(show: ShowSlot) -> DeviceConfig {
     DeviceConfig::from_bytes(&raw).unwrap()
 }
 
-/// The upload's CONFIG is written before streaming starts, so a repair rewrites
-/// the in-memory block with the frame counts and delay already patched, changing
-/// only `show_image`.
-fn patched(previous: &DeviceConfig, plan: &FramePlan, show: ShowSlot) -> Vec<u8> {
+/// A repair restores the whole pre-upload block — frame counts, delay and every
+/// unknown byte — changing only `show_image`. Restoring only the shown slot
+/// would leave the untouched slot with nothing to animate, because the upload's
+/// CONFIG already zeroed its frame count.
+fn restored(previous: &DeviceConfig, show: ShowSlot) -> Vec<u8> {
     let mut expected = previous.as_bytes().to_vec();
     expected[33] = show.as_u8();
-    expected[34] = plan.slot0_frames.len() as u8;
-    expected[43..45].copy_from_slice(&plan.delay_ms.to_le_bytes());
-    expected[46] = plan.slot1_frames.len() as u8;
     expected
 }
 
@@ -250,9 +250,23 @@ fn cancellation_restores_the_previous_slot_instead_of_the_clock() {
     );
     assert_eq!(
         repair,
-        patched(&previous, &plan, ShowSlot::Slot1).as_slice(),
-        "the patched config is rewritten with the untouched slot shown"
+        restored(&previous, ShowSlot::Slot1).as_slice(),
+        "the whole pre-upload block is rewritten, with the untouched slot shown"
     );
+    // The upload's CONFIG zeroed slot 1's frame count; the repair must put the
+    // pre-upload value back, not the plan's.
+    assert_eq!(
+        repair[46],
+        previous.slot1_frames(),
+        "the untouched slot keeps its pre-upload frame count"
+    );
+    assert_eq!(repair[34], previous.slot0_frames());
+    assert_eq!(
+        &repair[43..45],
+        &previous.frame_delay_ms().to_le_bytes(),
+        "the pre-upload delay is restored"
+    );
+    assert_ne!(repair[46], 0, "slot 1 must still have frames to animate");
     assert!(!session.is_synced());
 }
 
@@ -277,9 +291,14 @@ fn cancellation_falls_back_to_the_clock_when_the_target_slot_is_on_screen() {
     let config_writes = reports(writes, Command::Config);
     let repair = payload_of(config_writes.last().unwrap());
 
-    let expected = patched(&previous, &plan, ShowSlot::Clock);
+    let expected = restored(&previous, ShowSlot::Clock);
     assert_eq!(repair, expected.as_slice());
     assert_eq!(repair[33], ShowSlot::Clock.as_u8());
+    assert_eq!(
+        repair[34],
+        previous.slot0_frames(),
+        "the torn slot's count is restored too, not left at the plan's"
+    );
 }
 
 #[test]
@@ -319,8 +338,13 @@ fn a_plan_that_writes_both_slots_never_repairs_onto_a_torn_slot() {
         ShowSlot::Clock.as_u8(),
         "the repair falls back to the clock"
     );
-    let expected = patched(&previous, &plan, ShowSlot::Clock);
+    let expected = restored(&previous, ShowSlot::Clock);
     assert_eq!(repair, expected.as_slice());
+    assert_eq!(
+        repair[46],
+        previous.slot1_frames(),
+        "neither slot keeps the plan's frame counts"
+    );
     assert!(!session.is_synced());
 }
 
@@ -417,8 +441,13 @@ fn a_mid_upload_transport_failure_repairs_the_display() {
     let repair = payload_of(config_writes.last().unwrap());
     assert_eq!(
         repair,
-        patched(&previous, &plan, ShowSlot::Slot1).as_slice(),
-        "the patched config is rewritten with the untouched slot shown"
+        restored(&previous, ShowSlot::Slot1).as_slice(),
+        "the pre-upload block is rewritten with the untouched slot shown"
+    );
+    assert_eq!(
+        repair[46],
+        previous.slot1_frames(),
+        "the untouched slot's frame count survives a transport failure"
     );
 }
 
@@ -452,7 +481,12 @@ struct ScriptedDevice {
     writes: Vec<Vec<u8>>,
     ack_every: Option<u32>,
     frames: u32,
+    acks: u32,
+    ack_limit: Option<u32>,
     frame_write_delay: Duration,
+    empty_read_sleep: Duration,
+    ack_after_reads: Option<u32>,
+    reads_since_write: u32,
 }
 
 impl ScriptedDevice {
@@ -462,7 +496,12 @@ impl ScriptedDevice {
             writes: Vec::new(),
             ack_every,
             frames: 0,
+            acks: 0,
+            ack_limit: None,
             frame_write_delay: Duration::ZERO,
+            empty_read_sleep: Duration::ZERO,
+            ack_after_reads: None,
+            reads_since_write: 0,
         }
     }
 
@@ -470,6 +509,29 @@ impl ScriptedDevice {
     /// stream deadline without waiting for a whole upload.
     fn delay_frame_writes(mut self, delay: Duration) -> Self {
         self.frame_write_delay = delay;
+        self
+    }
+
+    /// Stops acknowledging after `limit` `FRAME_DATA` acknowledgements, as a
+    /// dongle that goes silent mid-stream.
+    fn stop_acking_after(mut self, limit: u32) -> Self {
+        self.ack_limit = Some(limit);
+        self
+    }
+
+    /// Sleeps when no report is queued, like a blocking transport, so a wait
+    /// for an acknowledgement spends wall time instead of spinning.
+    fn block_empty_reads(mut self) -> Self {
+        self.empty_read_sleep = Duration::from_millis(1);
+        self
+    }
+
+    /// Acknowledges from the device's own clock: after this many reads with no
+    /// write in between, an acknowledgement arrives. Real dongles answer on a
+    /// timer, not per write; modelling that lets a paced stream resume instead
+    /// of deadlocking on a write-driven mock.
+    fn ack_after_reads(mut self, reads: u32) -> Self {
+        self.ack_after_reads = Some(reads);
         self
     }
 
@@ -491,6 +553,8 @@ impl ScriptedDevice {
 
 impl Transport for ScriptedDevice {
     fn write_report(&mut self, report: &[u8]) -> DeviceResult<()> {
+        // A write restarts the device's "host is waiting" ack timer.
+        self.reads_since_write = 0;
         self.writes.push(report.to_vec());
         let Some(command) = Command::from_u8(report[3]) else {
             return Ok(());
@@ -501,7 +565,11 @@ impl Transport for ScriptedDevice {
                     std::thread::sleep(self.frame_write_delay);
                 }
                 self.frames += 1;
-                if matches!(self.ack_every, Some(every) if self.frames.is_multiple_of(every)) {
+                let allowed = self.ack_limit.is_none_or(|limit| self.acks < limit);
+                if allowed
+                    && matches!(self.ack_every, Some(every) if self.frames.is_multiple_of(every))
+                {
+                    self.acks += 1;
                     self.ack(Command::FrameData);
                 }
             }
@@ -522,7 +590,22 @@ impl Transport for ScriptedDevice {
     }
 
     fn read_report(&mut self, _timeout: Duration) -> DeviceResult<Option<Vec<u8>>> {
-        Ok(self.responses.pop_front())
+        if let Some(report) = self.responses.pop_front() {
+            return Ok(Some(report));
+        }
+        self.reads_since_write += 1;
+        let device_alive = self.ack_limit.is_none_or(|limit| self.acks < limit);
+        if device_alive
+            && matches!(self.ack_after_reads, Some(reads) if self.reads_since_write >= reads)
+        {
+            self.acks += 1;
+            self.ack(Command::FrameData);
+            return Ok(self.responses.pop_front());
+        }
+        if !self.empty_read_sleep.is_zero() {
+            std::thread::sleep(self.empty_read_sleep);
+        }
+        Ok(None)
     }
 }
 
@@ -531,7 +614,10 @@ fn upload_completes_when_only_every_sixteenth_frame_is_acknowledged() {
     let previous = previous_config(ShowSlot::Slot1);
     let plan = one_frame_plan();
 
-    let mut session = Session::with_config(ScriptedDevice::new(Some(16)), previous.clone());
+    // The dongle answers on its own clock, so a paced stream that stops
+    // writing still eventually sees an acknowledgement.
+    let device = ScriptedDevice::new(Some(16)).ack_after_reads(2);
+    let mut session = Session::with_config(device, previous.clone());
     let mut last = UploadProgress {
         bytes_sent: 0,
         total_bytes: 0,
@@ -592,7 +678,58 @@ fn an_unacknowledged_stream_fails_with_a_frame_timeout_and_repairs() {
     assert_eq!(config_writes.len(), 2, "the upload plus the repair rewrite");
     assert_eq!(
         payload_of(config_writes.last().unwrap()),
-        patched(&previous, &plan, ShowSlot::Slot1).as_slice()
+        restored(&previous, ShowSlot::Slot1).as_slice()
+    );
+    assert!(!session.is_synced());
+}
+
+#[test]
+fn a_stream_that_goes_silent_times_out_instead_of_queueing_forever() {
+    let previous = previous_config(ShowSlot::Slot1);
+    let plan = one_frame_plan();
+
+    // The device answers the first packet — proving it is alive — and then
+    // goes silent. Pacing must stop queueing once the outstanding-write limit
+    // is reached, and the stream budget must end the upload.
+    let transport = ScriptedDevice::new(Some(1))
+        .stop_acking_after(1)
+        .block_empty_reads();
+    let mut session = Session::with_config(transport, previous.clone());
+    let err = session
+        .upload_with_timeout(
+            &plan,
+            &CancelToken::new(),
+            &mut |_| {},
+            Duration::from_millis(100),
+        )
+        .unwrap_err();
+
+    match &err {
+        DeviceError::UploadTimeout { sent, total } => {
+            assert_eq!(
+                *sent,
+                (FRAME_ACK_PACING_THRESHOLD as usize + 1) * 56,
+                "pacing stops after the threshold, so the whole slot is not queued"
+            );
+            assert_eq!(*total, 65536);
+        }
+        other => panic!("expected UploadTimeout, got {other:?}"),
+    }
+
+    let writes = session.transport().writes();
+    assert_eq!(
+        reports(writes, Command::FrameData).len(),
+        FRAME_ACK_PACING_THRESHOLD as usize + 1,
+        "the stream must not keep writing once the device is silent"
+    );
+    assert_eq!(
+        writes.last().map(|w| w[3]),
+        Some(Command::Commit.as_u8()),
+        "repair COMMIT was sent"
+    );
+    assert_eq!(
+        payload_of(reports(writes, Command::Config).last().unwrap()),
+        restored(&previous, ShowSlot::Slot1).as_slice()
     );
     assert!(!session.is_synced());
 }
@@ -640,7 +777,7 @@ fn an_upload_past_its_deadline_times_out_and_repairs() {
     );
     assert_eq!(
         payload_of(reports(writes, Command::Config).last().unwrap()),
-        patched(&previous, &plan, ShowSlot::Slot1).as_slice()
+        restored(&previous, ShowSlot::Slot1).as_slice()
     );
     assert!(!session.is_synced());
 }

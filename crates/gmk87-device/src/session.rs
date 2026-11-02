@@ -26,6 +26,13 @@ pub const FRAME_ACK_WINDOW: Duration = Duration::from_millis(25);
 /// Consecutive packets without a `FrameData` acknowledgement after which the
 /// device is considered to be not responding at all.
 pub const FRAME_ACK_MISS_LIMIT: u32 = 64;
+/// Consecutive unacknowledged packets after which the stream waits for the
+/// device instead of queueing more writes.
+///
+/// Writes race ahead of a dongle that acknowledges about once a second; a
+/// bounded number of outstanding packets keeps the slot from being silently
+/// truncated while still allowing bursts between acknowledgements.
+pub const FRAME_ACK_PACING_THRESHOLD: u32 = 8;
 
 pub struct Session<T: Transport> {
     transport: T,
@@ -230,7 +237,10 @@ impl<T: Transport> Session<T> {
     ) -> Result<()> {
         plan.validate()?;
 
-        let previous_show = self.config.show_image();
+        // The block in place before this upload: the repair path restores it,
+        // because the CONFIG sent below already overwrites both frame counts
+        // and the delay — including the count of the slot not being uploaded.
+        let previous = self.config.clone();
         self.config
             .set_slot0_frames(plan.slot0_frames.len().min(u8::MAX as usize) as u8);
         self.config
@@ -247,7 +257,7 @@ impl<T: Transport> Session<T> {
         self.send_and_wait(Command::Config, 0, config.as_bytes())?;
         std::thread::sleep(WRITE_SETTLE);
         self.send_and_wait(Command::Commit, 0, &[])?;
-        if !self.wait_for_ready()? {
+        if !self.wait_for_ready(COMMAND_TIMEOUT)? {
             tracing::debug!("device sent no READY; continuing after the COMMIT acknowledgement");
         }
         // The handshake completed, so streaming may begin.
@@ -257,7 +267,7 @@ impl<T: Transport> Session<T> {
         // must leave the display somewhere safe.
         if let Err(failure) = self.stream_frames(&memory, cancel, progress, total_timeout) {
             // Best-effort: a failed repair must never mask the real cause.
-            let _ = self.repair_display(previous_show, plan);
+            let _ = self.repair_display(&previous, plan);
             self.synced = false;
             return Err(match failure {
                 UploadFailure::Cancelled => {
@@ -278,6 +288,13 @@ impl<T: Transport> Session<T> {
     /// dongle answers about one packet per second, so a per-packet wait turned
     /// a 1,171-packet slot into a ~20-minute upload. Each packet is followed by
     /// a short probe instead, and the final COMMIT confirms the transaction.
+    ///
+    /// Once the device has demonstrated it is alive, the number of outstanding
+    /// writes is bounded: after [`FRAME_ACK_PACING_THRESHOLD`] consecutive
+    /// misses the stream waits for an acknowledgement before queueing more, so
+    /// a host that outruns the dongle cannot silently truncate the slot. This
+    /// is not a per-packet wait — it only engages when the host is ahead — and
+    /// the wait is capped by what is left of `total_timeout`.
     fn stream_frames(
         &mut self,
         memory: &[u8],
@@ -289,6 +306,7 @@ impl<T: Transport> Session<T> {
         let started = Instant::now();
         let mut position = 0usize;
         let mut misses = 0u32;
+        let mut seen_ack = false;
 
         while position < total_bytes {
             if cancel.is_cancelled() || !self.synced {
@@ -309,7 +327,10 @@ impl<T: Transport> Session<T> {
                 .map_err(UploadFailure::Transport)?;
 
             match self.frame_acknowledged() {
-                Ok(true) => misses = 0,
+                Ok(true) => {
+                    misses = 0;
+                    seen_ack = true;
+                }
                 Ok(false) => {
                     misses += 1;
                     if misses >= FRAME_ACK_MISS_LIMIT {
@@ -326,6 +347,23 @@ impl<T: Transport> Session<T> {
                 bytes_sent: position,
                 total_bytes,
             });
+
+            // Pace only once the device has answered at least once: a device
+            // that has never answered is diagnosed quickly by the miss limit
+            // above rather than by burning the whole upload budget on a wait.
+            if seen_ack && misses >= FRAME_ACK_PACING_THRESHOLD {
+                let budget = total_timeout.saturating_sub(started.elapsed());
+                match self.wait_for_frame_ack(budget) {
+                    Ok(true) => misses = 0,
+                    Ok(false) => {
+                        return Err(UploadFailure::Fatal(DeviceError::UploadTimeout {
+                            sent: position,
+                            total: total_bytes,
+                        }))
+                    }
+                    Err(error) => return Err(UploadFailure::Transport(error)),
+                }
+            }
         }
 
         if started.elapsed() > total_timeout {
@@ -355,17 +393,44 @@ impl<T: Transport> Session<T> {
         }
     }
 
-    /// Waits for READY up to [`COMMAND_TIMEOUT`].
+    /// Blocks up to `budget` for a `FrameData` acknowledgement.
+    ///
+    /// Used to pace a host that is outrunning the device. Returns `Ok(false)`
+    /// only when the whole budget is spent without an acknowledgement; reports
+    /// for other commands cannot confirm the frames, so they are discarded.
+    fn wait_for_frame_ack(&mut self, budget: Duration) -> Result<bool> {
+        let deadline = Instant::now() + budget;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Ok(false);
+            }
+            match self.transport.read_report(remaining)? {
+                Some(report) if report.len() >= 4 && report[3] == Command::FrameData.as_u8() => {
+                    return Ok(true)
+                }
+                // A read timeout or an unrelated report: keep waiting while
+                // there is budget left.
+                _ => continue,
+            }
+        }
+    }
+
+    /// Waits for READY for at most `timeout`.
     ///
     /// The 2.4 GHz dongle never sends READY: no `0x23` report arrives within
     /// 10 s of COMMIT, while FRAME_DATA is accepted immediately afterwards.
     /// The wired interface does send it. Returns whether READY was seen; the
     /// caller proceeds either way because the COMMIT acknowledgement already
-    /// confirmed the configuration.
-    fn wait_for_ready(&mut self) -> Result<bool> {
-        let deadline = Instant::now() + COMMAND_TIMEOUT;
+    /// confirmed the configuration. Public so tests can use a short timeout.
+    pub fn wait_for_ready(&mut self, timeout: Duration) -> Result<bool> {
+        let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
-            match self.transport.read_report(Duration::from_millis(100))? {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match self
+                .transport
+                .read_report(remaining.min(Duration::from_millis(100)))?
+            {
                 Some(report) if report.len() >= 4 && report[3] == Command::Ready.as_u8() => {
                     return Ok(true);
                 }
@@ -378,44 +443,32 @@ impl<T: Transport> Session<T> {
     /// Puts the display back after an aborted upload.
     ///
     /// A bare COMMIT closes the interrupted frame transaction first; only then
-    /// is a config write accepted. `previous_show` is restored unless its slot
-    /// is one the plan wrote, whose memory is the torn one — that falls back to
-    /// the clock. Both steps are attempted independently so a failed commit
-    /// still gets a rewrite attempt; the commit error is reported first.
-    fn repair_display(&mut self, previous_show: ShowSlot, plan: &FramePlan) -> Result<()> {
+    /// is a config write accepted. The whole pre-upload block is restored —
+    /// frame counts, delay and every unknown byte — because the upload's own
+    /// CONFIG already zeroed the other slot's count, so restoring only the
+    /// shown slot would leave an untouched slot with nothing to animate. The
+    /// previously shown slot is restored unless the plan wrote it, whose memory
+    /// is the torn one — that falls back to the clock. Both steps are attempted
+    /// independently so a failed commit still gets a rewrite attempt; the
+    /// commit error is reported first.
+    fn repair_display(&mut self, previous: &DeviceConfig, plan: &FramePlan) -> Result<()> {
         let commit = self.send_and_wait(Command::Commit, 0, &[]);
 
         // `to_memory` streams slot 0 and then slot 1, so either slot can be
         // torn — not just the one `plan.show` selects.
+        let shown = previous.show_image();
         let torn = |slot: ShowSlot| match slot {
             ShowSlot::Slot0 => !plan.slot0_frames.is_empty(),
             ShowSlot::Slot1 => !plan.slot1_frames.is_empty(),
             ShowSlot::Clock => false,
         };
-        let target = if torn(previous_show) {
-            ShowSlot::Clock
-        } else {
-            previous_show
-        };
+        let target = if torn(shown) { ShowSlot::Clock } else { shown };
 
-        self.config.set_show_image(target);
-        let config = self.config.clone();
-        let rewrite = self.write_config(&config);
+        let mut restored = previous.clone();
+        restored.set_show_image(target);
+        let rewrite = self.write_config(&restored);
 
         commit?;
         rewrite
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::mock::MockTransport;
-
-    #[test]
-    fn ready_is_optional() {
-        // The dongle never answers READY; the wait must give up, not fail.
-        let mut session = Session::new(MockTransport::new());
-        assert!(!session.wait_for_ready().unwrap());
     }
 }

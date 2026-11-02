@@ -3,6 +3,7 @@ use gmk87_device::mock::MockTransport;
 use gmk87_device::session::Session;
 use gmk87_protocol::config::DeviceConfig;
 use gmk87_protocol::packet::{Command, Packet};
+use std::time::{Duration, Instant};
 
 fn config_payload(report: &[u8]) -> &[u8] {
     &report[8..8 + report[4] as usize]
@@ -164,6 +165,19 @@ fn sync_clock_sets_the_in_memory_time_and_writes_it() {
     assert_eq!(hour, now.hour() as u8);
     assert_eq!(minute, now.minute() as u8);
     assert_eq!(second, now.second() as u8);
+}
+
+#[test]
+fn ready_is_optional_and_the_wait_honours_its_timeout() {
+    // The dongle never answers READY; the wait must give up, not fail, and it
+    // must do so in the injected time rather than in COMMAND_TIMEOUT.
+    let mut session = Session::new(MockTransport::new());
+    let started = Instant::now();
+    assert!(!session.wait_for_ready(Duration::from_millis(5)).unwrap());
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "the READY wait ignored its timeout"
+    );
 }
 
 #[test]
