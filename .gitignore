@@ -1,13 +1,29 @@
+# Rust
 /target
-/node_modules
+**/*.rs.bk
+
+# Node / frontend
 node_modules/
 /ui/dist
+npm-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Tauri
 /src-tauri/target
 /src-tauri/gen
-*.log
 
-# Planning/skill artifacts: kept locally, never published.
-/docs/superpowers/
-/.superpowers/
-/.opencode/
-/.claude/
+# Editors and OS cruft
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+
+# Local notes and scratch files
+*.local
+/local/
+/scratch/
+notes.md
+Untitled*

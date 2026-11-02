@@ -53,7 +53,13 @@ crates/
                     the upload frame budget
   gmk87-device/     discovery, the hidapi Transport, and the Session state
                     machine: configuration writes, upload streaming, repair
+  gmk87-app/        Tauri-independent orchestration: session ownership, the
+                    both-slot image memory, upload jobs, lighting presets and
+                    on-disk snapshots — tested against a mock transport
   gmk87-cli/        the gmk87-cli debug and recovery tool
+src-tauri/          Tauri v2 command and event adapter over gmk87-app
+ui/                 React + TypeScript + Vite front end (Tailwind, shadcn/ui
+                    style components, React Three Fiber keyboard preview)
 docs/
   protocol.md               corrected protocol reference
   hardware-testing.md       verified results, safety rules, results table
@@ -62,7 +68,8 @@ packaging/
 ```
 
 The protocol crate is deliberately free of I/O so a future background service
-can link it unchanged.
+can link it unchanged; `gmk87-app` is deliberately free of Tauri so the whole
+application layer is unit-testable without a window.
 
 ## Building
 
@@ -168,27 +175,52 @@ a future run.
 
 ## Desktop application
 
-The Tauri + React application — device picker, crop/zoom display editor, upload
-progress and cancel, lighting (named effects and presets) and clock screens, plus
-a 3D keyboard preview — sits on the same `gmk87-device` API.
+A Tauri v2 desktop app sits on the same `gmk87-app` / `gmk87-device` API and
+covers the whole feature set with a live preview:
+
+- **Device** — lists the wired keyboard and the 2.4 GHz dongle, connects and
+  disconnects, flags the VIA interface, and copies a short diagnostics report.
+- **Display** — slot tabs, a file picker for images and GIFs, a crop/zoom/pan
+  editor, a frame-budget meter (36 frames across both slots, 60 ms minimum
+  delay), and an upload button with live progress and cancel. The Rust side
+  renders the preview; the UI only sends crop parameters.
+- **Lighting** — the 19 named underglow effects with brightness, speed,
+  orientation, rainbow and RGB colour; side-LED mode, colour and saturation;
+  win-lock; and eight one-click presets (gaming, relaxed, party, minimal,
+  productivity, purple-wave, matrix, sunset).
+- **Clock** — shows the time the app will write and syncs it on demand.
+- **Keyboard preview** — a procedurally-built GMK87 rendered with React Three
+  Fiber, showing the display as a live texture and the underglow in the chosen
+  colour.
+
+Every upload streams **both** display slots, because the keyboard rewrites all
+of its image memory in one session; the slot you did not change is resent from
+the app's in-memory copy, so it is preserved for the session. (The device cannot
+be read back, so after a restart the first upload resets the other slot.)
+
+### Run it
 
 Prerequisites on Linux: `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libsoup-3.0`,
-`librsvg2-dev`, and [bun](https://bun.sh). Then:
+`librsvg2-dev`, and [bun](https://bun.sh).
 
 ```bash
 cd ui && bun install
-bun run tauri dev      # development window
+bun run tauri dev      # opens the configurator window
 ```
 
-Tests and build:
+Install the udev rule first (see above) so the app can open the device without
+root.
+
+### Tests and build
 
 ```bash
-cargo test --all                                   # protocol, device, app
+cargo test --all                 # protocol, device and app crates
+cargo clippy --all-targets -- -D warnings
 cd src-tauri && cargo test && cargo clippy --all-targets -- -D warnings
 cd ui && bun run test && bun run build
 ```
 
-Packaging (`.deb` / AppImage, icons, bundled udev rule) is a later plan; the
+Packaging (`.deb` / AppImage, icons, bundled udev rule) is a later step; the
 placeholder icons in `src-tauri/icons` are replaced then.
 
 ## License and attribution
