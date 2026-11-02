@@ -15,9 +15,9 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-gmk87-app = { path = "../crates/gmk87-app" }
-gmk87-device = { path = "../crates/gmk87-device" }
-gmk87-protocol = { path = "../crates/gmk87-protocol" }
+gmk87-app = { path = "../../crates/gmk87-app" }
+gmk87-device = { path = "../../crates/gmk87-device" }
+gmk87-protocol = { path = "../../crates/gmk87-protocol" }
 thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = "0.3"

@@ -10,8 +10,8 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # Tauri
-/src-tauri/target
-/src-tauri/gen
+/ui/src-tauri/target
+/ui/src-tauri/gen
 
 # Editors and OS cruft
 .DS_Store

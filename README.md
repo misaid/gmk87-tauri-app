@@ -57,9 +57,9 @@ crates/
                     both-slot image memory, upload jobs, lighting presets and
                     on-disk snapshots — tested against a mock transport
   gmk87-cli/        the gmk87-cli debug and recovery tool
-src-tauri/          Tauri v2 command and event adapter over gmk87-app
 ui/                 React + TypeScript + Vite front end (Tailwind, shadcn/ui
                     style components, React Three Fiber keyboard preview)
+ui/src-tauri/       Tauri v2 command and event adapter over gmk87-app
 docs/
   protocol.md               corrected protocol reference
   hardware-testing.md       verified results, safety rules, results table
@@ -216,12 +216,12 @@ root.
 ```bash
 cargo test --all                 # protocol, device and app crates
 cargo clippy --all-targets -- -D warnings
-cd src-tauri && cargo test && cargo clippy --all-targets -- -D warnings
+cd ui/src-tauri && cargo test && cargo clippy --all-targets -- -D warnings
 cd ui && bun run test && bun run build
 ```
 
 Packaging (`.deb` / AppImage, icons, bundled udev rule) is a later step; the
-placeholder icons in `src-tauri/icons` are replaced then.
+placeholder icons in `ui/src-tauri/icons` are replaced then.
 
 ## License and attribution
 

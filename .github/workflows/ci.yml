@@ -15,4 +15,4 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --all
       - run: cd ui && bun install --frozen-lockfile && bun run test && bun run build
-      - run: cd src-tauri && cargo test && cargo clippy --all-targets -- -D warnings
+      - run: cd ui/src-tauri && cargo test && cargo clippy --all-targets -- -D warnings
