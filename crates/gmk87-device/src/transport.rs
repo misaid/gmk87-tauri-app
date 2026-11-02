@@ -65,6 +65,22 @@ fn timeout_millis(timeout: Duration) -> i32 {
     timeout.as_millis().min(i32::MAX as u128) as i32
 }
 
+/// Rejects a partial HID write.
+///
+/// The handle is opened non-blocking, so `hid_write` may return fewer bytes
+/// than the report without an error. Treating that as success would leave the
+/// stream desynchronised while the final `COMMIT` still "confirms" the write,
+/// so a short write is a transport failure naming the byte counts.
+fn check_write_len(report: &[u8], written: usize) -> Result<()> {
+    if written != report.len() {
+        return Err(DeviceError::Transport(std::io::Error::new(
+            std::io::ErrorKind::WriteZero,
+            format!("short HID write: wrote {written} of {} bytes", report.len()),
+        )));
+    }
+    Ok(())
+}
+
 impl HidTransport {
     pub fn open(path: &str) -> Result<Self> {
         let api = hidapi::HidApi::new().map_err(|e| DeviceError::Hid(e.to_string()))?;
@@ -82,10 +98,11 @@ impl HidTransport {
 
 impl Transport for HidTransport {
     fn write_report(&mut self, report: &[u8]) -> Result<()> {
-        self.device
+        let written = self
+            .device
             .write(report)
-            .map(|_| ())
-            .map_err(|e| DeviceError::Hid(e.to_string()))
+            .map_err(|e| DeviceError::Hid(e.to_string()))?;
+        check_write_len(report, written)
     }
 
     fn read_report(&mut self, timeout: Duration) -> Result<Option<Vec<u8>>> {
@@ -162,5 +179,24 @@ mod tests {
     fn huge_timeout_is_clamped() {
         assert_eq!(timeout_millis(Duration::from_millis(10)), 10);
         assert_eq!(timeout_millis(Duration::from_secs(u64::MAX)), i32::MAX);
+    }
+
+    #[test]
+    fn a_full_hid_write_is_accepted() {
+        assert!(check_write_len(&[0u8; 64], 64).is_ok());
+    }
+
+    #[test]
+    fn a_short_hid_write_is_a_transport_error_naming_the_counts() {
+        let error = check_write_len(&[0u8; 64], 63).unwrap_err();
+        assert!(matches!(error, DeviceError::Transport(_)));
+        assert!(
+            error.to_string().contains("63 of 64"),
+            "the short write must name both counts: {error}"
+        );
+        assert!(
+            check_write_len(&[0u8; 64], 0).is_err(),
+            "a zero-byte write is a short write"
+        );
     }
 }
