@@ -213,7 +213,9 @@ impl<T: Transport> Session<T> {
         self.send_and_wait(Command::Config, 0, config.as_bytes())?;
         std::thread::sleep(WRITE_SETTLE);
         self.send_and_wait(Command::Commit, 0, &[])?;
-        self.wait_for_ready()?;
+        if !self.wait_for_ready()? {
+            tracing::debug!("device sent no READY; continuing after the COMMIT acknowledgement");
+        }
         // The handshake completed, so streaming may begin.
         self.synced = true;
 
@@ -263,19 +265,24 @@ impl<T: Transport> Session<T> {
         Ok(())
     }
 
-    fn wait_for_ready(&mut self) -> Result<()> {
+    /// Waits for READY up to [`COMMAND_TIMEOUT`].
+    ///
+    /// The 2.4 GHz dongle never sends READY: no `0x23` report arrives within
+    /// 10 s of COMMIT, while FRAME_DATA is accepted immediately afterwards.
+    /// The wired interface does send it. Returns whether READY was seen; the
+    /// caller proceeds either way because the COMMIT acknowledgement already
+    /// confirmed the configuration.
+    fn wait_for_ready(&mut self) -> Result<bool> {
         let deadline = Instant::now() + COMMAND_TIMEOUT;
         while Instant::now() < deadline {
             match self.transport.read_report(Duration::from_millis(100))? {
                 Some(report) if report.len() >= 4 && report[3] == Command::Ready.as_u8() => {
-                    return Ok(());
+                    return Ok(true);
                 }
                 _ => continue,
             }
         }
-        Err(DeviceError::ProtocolTimeout {
-            cmd: Command::Ready.as_u8(),
-        })
+        Ok(false)
     }
 
     /// Puts the display back after an aborted upload.
@@ -307,5 +314,18 @@ impl<T: Transport> Session<T> {
 
         commit?;
         rewrite
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mock::MockTransport;
+
+    #[test]
+    fn ready_is_optional() {
+        // The dongle never answers READY; the wait must give up, not fail.
+        let mut session = Session::new(MockTransport::new());
+        assert!(!session.wait_for_ready().unwrap());
     }
 }
