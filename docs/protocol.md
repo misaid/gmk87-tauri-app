@@ -63,11 +63,16 @@ The wired keyboard presents four interfaces:
 
 **Verified** for the usage pages and report IDs. The 7-byte input report and the
 resulting 8-byte acknowledgements were established with read/echo probes on the
-wired interface; **no wired configuration or frame write has been attempted**.
+wired interface, and later confirmed on wired configuration and frame writes.
 That asymmetry is the single most surprising fact about this device: the input
 report is declared seven bytes long, so every acknowledgement read from the
 wired keyboard is truncated to **8 bytes** and the payload at offset 8 is lost.
 The write path is unaffected; there is no read path anyway (§6).
+
+Wired writes now have hardware evidence: `clock` and `lights` complete in about
+0.1 s, and a wired frame upload was attempted (it failed on a backlog of
+unacknowledged frames, not on the handshake — see §11 and
+[`hardware-testing.md`](hardware-testing.md)).
 
 The 2.4 GHz dongle exposes a vendor collection on usage page `0xFF1C` with a
 63-byte input *and* a 63-byte output report. It therefore returns full 64-byte
@@ -88,8 +93,9 @@ application and the working community Linux tool use.
 ## 3. Report format
 
 Every write is a **64-byte HID report on report ID `0x04`**, on either
-transport. **Verified** on the 2.4 GHz dongle; **Reference** for the wired
-interface, because no wired configuration or frame write has been attempted.
+transport. **Verified** on both: the dongle acknowledges configuration and
+frame writes, and the wired interface accepts configuration writes and frame
+packets (its first full frame stream timed out; see §11).
 
 | Offset | Size | Meaning |
 |---|---|---|
@@ -141,10 +147,10 @@ answer with different shapes:
 | Wired | 8 bytes | `04 cs cs cmd 00 00 00 00` | not validated — the report is truncated |
 | 2.4 GHz dongle | 64 bytes | `01 cmd 09 cmd 00 … 00` | no — report ID `0x01`, bytes 1–2 are not a checksum |
 
-The wired 8-byte shape was observed during read/echo probes; the dongle's
-64-byte shape was observed on configuration and frame writes. No wired
-configuration or frame write has been attempted. The dongle literally echoes the
-command at offsets 1 and 3, with `0x09` between them and zeros after.
+The wired 8-byte shape was observed during read/echo probes and again on wired
+configuration and frame writes; the dongle's 64-byte shape was observed on
+configuration and frame writes. The dongle literally echoes the command at
+offsets 1 and 3, with `0x09` between them and zeros after.
 
 The read path therefore:
 
@@ -170,7 +176,7 @@ equally tolerant where it must be (the dongle's framing).
 | `PREP_READ` | `0x03` | — | — | **never send**: the reference read preamble reset and re-enumerated this keyboard twice |
 | `READ_CFG` | `0x05` | — | — | **never send**: it echoes the request payload and never returns device memory (§6) |
 | `CONFIG` | `0x06` | host → device | 48 bytes | the complete configuration block (§7) |
-| `FRAME_DATA` | `0x21` | host → device | ≤ 56 bytes | frame memory at a 24-bit position; not acknowledged per packet (§11) |
+| `FRAME_DATA` | `0x21` | host → device | ≤ 56 bytes | frame memory at a 24-bit position; acknowledged per packet when the transport is prompt, otherwise paced adaptively (§11) |
 | `READY` | `0x23` | device → host | none | sent by the wired interface, **not** by the dongle; optional |
 
 `PREP_READ` and `READ_CFG` remain in the codec only so that the full command set
@@ -307,10 +313,10 @@ the block it wrote and marks itself synchronised.
 Lighting and clock changes use exactly this sequence — no settle, no frame
 streaming, no read beforehand. The upload handshake writes the same block but
 does add a 100 ms settle between `CONFIG` and `COMMIT` (see §11); that pause is
-specific to the upload path. **Acknowledged on the dongle**: the clock and
-brightness writes were confirmed at the protocol level, but the effect was never
-seen, and no wired configuration write has been attempted (see
-`hardware-testing.md`).
+specific to the upload path. **Acknowledged on both transports**: the dongle's
+clock and brightness writes were confirmed at the protocol level (the effect was
+never seen), and the wired `clock` and `lights` writes complete in about 0.1 s
+(see `hardware-testing.md`).
 
 ## 8. Display
 
@@ -411,44 +417,58 @@ COMMIT
 ```
 
 **Verified** up to and including individual `FRAME_DATA` acknowledgements on
-the dongle. **Unverified** end to end: no complete slot has been streamed and
-displayed on this hardware (see `hardware-testing.md`).
+the dongle, and the wired handshake plus the start of a frame stream. A first
+wired one-slot upload failed after about 17 s with
+`hidapi error: Connection timed out`: the host had written frames without
+reading their acknowledgements, the device's buffer filled, and its OUT
+endpoint stopped accepting writes. That is the defect the adaptive pacing below
+fixes; the retry is pending (see `hardware-testing.md`).
 
 `READY (0x23)` is awaited for up to 1.5 s but is not required. The wired
 interface sends it; the dongle does not, yet accepts `FRAME_DATA` immediately
 after the `COMMIT` acknowledgement. **Verified** on the dongle (10 s of reads
 produced no `0x23`).
 
-### Frames are not acknowledged individually
+### Frame acknowledgement pacing adapts to the transport
 
-This is the correction that followed the first hardware attempt. The dongle
-acknowledges roughly **one packet per second** (measured repeatedly at
-~1.02 s), so waiting for each packet's acknowledgement made a single
-1,171-packet frame take about **twenty minutes**. The stream no longer waits per
-packet. Instead:
+Frame packets **are** acknowledged individually when the transport is prompt.
+The wired interface answers each packet in milliseconds, so the stream waits for
+that packet's acknowledgement: the cost is the real round-trip and no backlog of
+unread acknowledgements can build up. Waiting per packet on the dongle is not
+possible — it acknowledges roughly **one packet per second** (measured
+repeatedly at ~1.02 s), which made a single 1,171-packet frame take about
+**twenty minutes** — so the stream falls back to a tolerant fire-and-forget mode
+when acknowledgements are sparse.
 
 | Constant | Value | Role |
 |---|---|---|
 | `COMMAND_TIMEOUT` | 1.5 s | deadline for a handshake acknowledgement |
 | `WRITE_SETTLE` | 100 ms | pause between `CONFIG` and `COMMIT` |
-| `FRAME_ACK_WINDOW` | 25 ms | how long each packet's acknowledgement is probed for |
+| `FRAME_PACED_ACK_WINDOW` | 200 ms | how long paced mode waits for one packet's acknowledgement |
+| `FRAME_PACED_MISS_LIMIT` | 3 | consecutive paced misses before falling back to the tolerant mode |
+| `FRAME_ACK_WINDOW` | 25 ms | how long each packet's acknowledgement is probed for in the tolerant mode |
+| `FRAME_ACK_PACING_THRESHOLD` | 8 | tolerant-mode misses after which the stream waits instead of queueing more |
 | `FRAME_ACK_MISS_LIMIT` | 64 | consecutive silent packets before the device is declared dead |
-| `FRAME_ACK_PACING_THRESHOLD` | 8 | consecutive misses after which the stream waits instead of queueing more |
+| `CANCEL_POLL_SLICE` | 200 ms | longest single read inside a wait, so cancellation is noticed |
 | `UPLOAD_TOTAL_TIMEOUT` | 300 s | hard ceiling on the whole stream, independent of packet count |
 
-After each packet the host writes the next one and probes briefly. A `FRAME_DATA`
-acknowledgement resets the miss counter. Once at least one acknowledgement has
-been seen, eight consecutive misses make the stream **wait** for one before
-queueing more, so a host that outruns the dongle cannot silently truncate the
-slot. This is pacing, not a per-packet wait: it only engages when the host is
-ahead. Sixty-four consecutive misses with no acknowledgement at all mean the
-device is not responding, and the upload fails with
-`ProtocolTimeout { cmd: 0x21 }`. Exceeding the 300 s ceiling fails with
-`UploadTimeout { sent, total }`. On success, the final `COMMIT`'s acknowledgement
-is the authority that the transaction finished.
+The stream starts **paced**: after writing a packet it waits up to
+`FRAME_PACED_ACK_WINDOW` for that packet's acknowledgement, clamped by what is
+left of the 300 s budget. If acknowledgements keep arriving it stays paced; each
+packet then costs only its round-trip (milliseconds on wired). After
+`FRAME_PACED_MISS_LIMIT` consecutive misses it switches, **once and for the rest
+of the upload**, to the tolerant mode: write the next packet without waiting,
+probe `FRAME_ACK_WINDOW`, and only wait for an acknowledgement after
+`FRAME_ACK_PACING_THRESHOLD` consecutive misses. That is the dongle's mode. A
+device that never answers at all is still diagnosed by `FRAME_ACK_MISS_LIMIT`
+consecutive misses (`ProtocolTimeout { cmd: 0x21 }`), and a spent budget fails
+with `UploadTimeout { sent, total }`. On success, the final `COMMIT`'s
+acknowledgement is the authority that the transaction finished.
 
-The current build is therefore bounded rather than hanging, but whether a full
-65,536-byte frame finishes in 300 s over the dongle is **unverified**.
+The switch is one-way so a single slow packet cannot make the mode flap. Both
+modes check cancellation between packets and at least every `CANCEL_POLL_SLICE`
+inside a wait. Whether a full 65,536-byte frame finishes in 300 s over the
+dongle is still **unverified**.
 
 ### Failure and repair
 
@@ -493,10 +513,10 @@ slot 0 intact has not been observed.
 
 All of these are written by patching the in-memory block and sending the whole
 48-byte block with `INIT → CONFIG → COMMIT`. Nothing is read first, and no frame
-streaming is involved. **Reference** for the ranges; on the dongle the write path
-is confirmed only to the level of an acknowledged `COMMIT` (the underglow was
-never seen to change — see `hardware-testing.md`), and no wired write has been
-tried.
+streaming is involved. **Reference** for the ranges; on both transports the
+write path is confirmed only to the level of an acknowledged `COMMIT` (the
+underglow was never seen to change — see `hardware-testing.md`). The wired
+`clock` and `lights` commands complete in about 0.1 s.
 
 ## 13. Open questions
 
@@ -510,7 +530,7 @@ write path's shape.
 | What do offsets 0, 9–20, 22–27, 30, 42, 45 and 47 mean? | Opaque; carried verbatim from the reference/default block |
 | Does `show_image` survive a power cycle? | Never observed |
 | Are the frame-count and delay limits really 36 and 60 ms? | Taken from the references; never tested at the boundary |
-| Does the wired transport finish an upload faster than the dongle? | The wired upload path was never attempted |
+| Does the wired transport finish an upload now that frames are acknowledged per packet? | The first wired attempt failed after ~17 s with an OUT-transfer timeout; the adaptive-pacing retry is pending |
 | Does hidapi preserve the report ID at offset 0 of input reports? | Matching reads `report[3]`, which assumes it does. Unconfirmed on hardware; if it does not, every acknowledgement misses and the upload fails after 64 misses with `ProtocolTimeout` |
 | Is interface 2 (`0xFFEF`, report ID 5) a safe alternate transport? | It answers with full-length reports, but is unused and untested for writes |
 | Do GIFs with partial-frame updates render correctly? | Frames are decoded independently, without compositing |

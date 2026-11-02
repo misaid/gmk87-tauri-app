@@ -1,8 +1,8 @@
 use gmk87_device::error::{DeviceError, Result as DeviceResult};
 use gmk87_device::mock::MockTransport;
 use gmk87_device::session::{
-    CancelToken, Session, UploadProgress, CANCEL_POLL_SLICE, FRAME_ACK_MISS_LIMIT,
-    FRAME_ACK_PACING_THRESHOLD,
+    CancelToken, Session, StreamTiming, UploadProgress, CANCEL_POLL_SLICE, FRAME_ACK_MISS_LIMIT,
+    FRAME_ACK_PACING_THRESHOLD, FRAME_ACK_WINDOW,
 };
 use gmk87_device::transport::Transport;
 use gmk87_protocol::config::{DeviceConfig, ShowSlot};
@@ -540,6 +540,33 @@ fn a_failed_handshake_leaves_the_in_memory_config_untouched() {
     assert_eq!(session.config().slot0_frames(), previous.slot0_frames());
 }
 
+#[test]
+fn no_test_source_touches_a_device_node() {
+    // The suite is hardware-free by construction: every transport is an
+    // in-process mock. Guard against an accidental hardware dependency
+    // creeping into a test.
+    let device_node = concat!("/dev/", "hidraw");
+    let hardware_transport = concat!("Hid", "Transport");
+    let tests = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+    for entry in std::fs::read_dir(&tests).expect("tests directory") {
+        let path = entry.expect("directory entry").path();
+        if path.extension().is_none_or(|extension| extension != "rs") {
+            continue;
+        }
+        let source = std::fs::read_to_string(&path).expect("test source");
+        assert!(
+            !source.contains(device_node),
+            "{} references a device node",
+            path.display()
+        );
+        assert!(
+            !source.contains(hardware_transport),
+            "{} uses the hardware transport",
+            path.display()
+        );
+    }
+}
+
 /// A transport that answers every command immediately, like a healthy wired
 /// keyboard, but acknowledges `FRAME_DATA` only every `ack_every` packets (or
 /// never, when `ack_every` is `None`).
@@ -556,8 +583,7 @@ struct ScriptedDevice {
     ack_limit: Option<u32>,
     frame_write_delay: Duration,
     empty_read_sleep: Duration,
-    ack_after_reads: Option<u32>,
-    reads_since_write: u32,
+    frame_ack_reads: Vec<Duration>,
 }
 
 impl ScriptedDevice {
@@ -571,8 +597,7 @@ impl ScriptedDevice {
             ack_limit: None,
             frame_write_delay: Duration::ZERO,
             empty_read_sleep: Duration::ZERO,
-            ack_after_reads: None,
-            reads_since_write: 0,
+            frame_ack_reads: Vec::new(),
         }
     }
 
@@ -597,13 +622,11 @@ impl ScriptedDevice {
         self
     }
 
-    /// Acknowledges from the device's own clock: after this many reads with no
-    /// write in between, an acknowledgement arrives. Real dongles answer on a
-    /// timer, not per write; modelling that lets a paced stream resume instead
-    /// of deadlocking on a write-driven mock.
-    fn ack_after_reads(mut self, reads: u32) -> Self {
-        self.ack_after_reads = Some(reads);
-        self
+    /// The timeouts of the reads that returned a `FRAME_DATA` acknowledgement,
+    /// in order. A longer request means the stream was in paced mode rather
+    /// than probing with [`FRAME_ACK_WINDOW`].
+    fn frame_ack_reads(&self) -> &[Duration] {
+        &self.frame_ack_reads
     }
 
     /// The 2.4 GHz dongle's acknowledgement shape: 64 bytes, report ID `0x01`,
@@ -624,8 +647,6 @@ impl ScriptedDevice {
 
 impl Transport for ScriptedDevice {
     fn write_report(&mut self, report: &[u8]) -> DeviceResult<()> {
-        // A write restarts the device's "host is waiting" ack timer.
-        self.reads_since_write = 0;
         self.writes.push(report.to_vec());
         let Some(command) = Command::from_u8(report[3]) else {
             return Ok(());
@@ -660,18 +681,12 @@ impl Transport for ScriptedDevice {
         Ok(())
     }
 
-    fn read_report(&mut self, _timeout: Duration) -> DeviceResult<Option<Vec<u8>>> {
+    fn read_report(&mut self, timeout: Duration) -> DeviceResult<Option<Vec<u8>>> {
         if let Some(report) = self.responses.pop_front() {
+            if report.len() >= 4 && report[3] == Command::FrameData.as_u8() {
+                self.frame_ack_reads.push(timeout);
+            }
             return Ok(Some(report));
-        }
-        self.reads_since_write += 1;
-        let device_alive = self.ack_limit.is_none_or(|limit| self.acks < limit);
-        if device_alive
-            && matches!(self.ack_after_reads, Some(reads) if self.reads_since_write >= reads)
-        {
-            self.acks += 1;
-            self.ack(Command::FrameData);
-            return Ok(self.responses.pop_front());
         }
         if !self.empty_read_sleep.is_zero() {
             std::thread::sleep(self.empty_read_sleep);
@@ -681,21 +696,27 @@ impl Transport for ScriptedDevice {
 }
 
 #[test]
-fn upload_completes_when_only_every_sixteenth_frame_is_acknowledged() {
+fn upload_completes_when_only_every_eighth_frame_is_acknowledged() {
     let previous = previous_config(ShowSlot::Slot1);
     let plan = one_frame_plan();
 
-    // The dongle answers on its own clock, so a paced stream that stops
-    // writing still eventually sees an acknowledgement.
-    let device = ScriptedDevice::new(Some(16)).ack_after_reads(2);
+    // The first three paced waits miss, which switches the stream to the
+    // tolerant mode; from then on every eighth packet is acknowledged and the
+    // seven silent packets in between are tolerated.
+    let device = ScriptedDevice::new(Some(8)).block_empty_reads();
     let mut session = Session::with_config(device, previous.clone());
+    let timing = StreamTiming {
+        paced_ack_window: Duration::from_millis(5),
+        cancel_poll: Duration::from_millis(1),
+        ..StreamTiming::PRODUCTION
+    };
     let mut last = UploadProgress {
         bytes_sent: 0,
         total_bytes: 0,
     };
     session
-        .upload(&plan, &CancelToken::new(), &mut |p| last = p)
-        .expect("a slow dongle must not fail the upload");
+        .upload_with_timing(&plan, &CancelToken::new(), &mut |p| last = p, timing)
+        .expect("sparse acknowledgements must not fail the upload");
 
     assert_eq!(last.bytes_sent, 65536);
     assert_eq!(last.total_bytes, 65536);
@@ -709,6 +730,17 @@ fn upload_completes_when_only_every_sixteenth_frame_is_acknowledged() {
         "the transaction still ends with COMMIT"
     );
 
+    // Those acknowledgements were read by the tolerant probe, not by a paced
+    // wait: every read that saw one offered the short probe window.
+    assert!(
+        session
+            .transport()
+            .frame_ack_reads()
+            .iter()
+            .all(|timeout| *timeout <= FRAME_ACK_WINDOW),
+        "the stream never left the tolerant mode"
+    );
+
     // The frame counts and show slot reached the device even though most
     // packets were never acknowledged.
     let config_writes = reports(writes, Command::Config);
@@ -718,13 +750,56 @@ fn upload_completes_when_only_every_sixteenth_frame_is_acknowledged() {
 }
 
 #[test]
+fn a_promptly_acknowledged_stream_completes_in_paced_mode() {
+    let previous = previous_config(ShowSlot::Slot1);
+    let plan = one_frame_plan();
+
+    // Every packet is acknowledged immediately, as the wired interface does.
+    let mut session = Session::with_config(ScriptedDevice::new(Some(1)), previous.clone());
+    let mut last = UploadProgress {
+        bytes_sent: 0,
+        total_bytes: 0,
+    };
+    session
+        .upload(&plan, &CancelToken::new(), &mut |p| last = p)
+        .expect("a promptly acknowledged stream must complete");
+
+    assert_eq!(last.bytes_sent, 65536);
+    let writes = session.transport().writes();
+    assert_eq!(
+        reports(writes, Command::FrameData).len(),
+        1171,
+        "every packet must be written"
+    );
+
+    // One acknowledgement read per packet, each offering the paced window.
+    // The tolerant probe would have asked for only FRAME_ACK_WINDOW.
+    let ack_reads = session.transport().frame_ack_reads();
+    assert_eq!(ack_reads.len(), 1171, "one acknowledgement per packet");
+    assert!(
+        ack_reads.iter().all(|timeout| *timeout > FRAME_ACK_WINDOW),
+        "the stream was not waiting per packet: first read {:?}",
+        ack_reads.first()
+    );
+    assert_no_read_commands(&writes.iter().map(|w| w[3]).collect::<Vec<_>>());
+}
+
+#[test]
 fn an_unacknowledged_stream_fails_with_a_frame_timeout_and_repairs() {
     let previous = previous_config(ShowSlot::Slot1);
     let plan = one_frame_plan();
 
-    let mut session = Session::with_config(ScriptedDevice::new(None), previous.clone());
+    // The three paced waits miss, the stream switches to the tolerant mode,
+    // and the miss limit then ends it.
+    let device = ScriptedDevice::new(None).block_empty_reads();
+    let mut session = Session::with_config(device, previous.clone());
+    let timing = StreamTiming {
+        paced_ack_window: Duration::from_millis(5),
+        cancel_poll: Duration::from_millis(1),
+        ..StreamTiming::PRODUCTION
+    };
     let err = session
-        .upload(&plan, &CancelToken::new(), &mut |_| {})
+        .upload_with_timing(&plan, &CancelToken::new(), &mut |_| {}, timing)
         .unwrap_err();
 
     match &err {
@@ -760,19 +835,21 @@ fn a_stream_that_goes_silent_times_out_instead_of_queueing_forever() {
     let plan = one_frame_plan();
 
     // The device answers the first packet — proving it is alive — and then
-    // goes silent. Pacing must stop queueing once the outstanding-write limit
-    // is reached, and the stream budget must end the upload.
+    // goes silent. Three paced misses switch the stream to the tolerant mode;
+    // the next time the outstanding-write threshold is reached the stream waits
+    // for an acknowledgement and the budget ends it. Nothing keeps queueing.
     let transport = ScriptedDevice::new(Some(1))
         .stop_acking_after(1)
         .block_empty_reads();
     let mut session = Session::with_config(transport, previous.clone());
+    let timing = StreamTiming {
+        total: Duration::from_millis(200),
+        paced_ack_window: Duration::from_millis(10),
+        cancel_poll: Duration::from_millis(2),
+        ..StreamTiming::PRODUCTION
+    };
     let err = session
-        .upload_with_timeout(
-            &plan,
-            &CancelToken::new(),
-            &mut |_| {},
-            Duration::from_millis(100),
-        )
+        .upload_with_timing(&plan, &CancelToken::new(), &mut |_| {}, timing)
         .unwrap_err();
 
     match &err {
@@ -780,7 +857,7 @@ fn a_stream_that_goes_silent_times_out_instead_of_queueing_forever() {
             assert_eq!(
                 *sent,
                 (FRAME_ACK_PACING_THRESHOLD as usize + 1) * 56,
-                "pacing stops after the threshold, so the whole slot is not queued"
+                "the tolerant mode stopped writing at its pacing threshold"
             );
             assert_eq!(*total, 65536);
         }
@@ -853,10 +930,10 @@ fn an_upload_past_its_deadline_times_out_and_repairs() {
     assert!(!session.is_synced());
 }
 
-/// Wraps a scripted device and cancels the token on the first read that could
-/// only have come from the pacing wait (a read offered the full cancel slice,
-/// which is longer than both the per-packet acknowledgement window and the
-/// 100 ms command reads), recording the largest read timeout it was given.
+/// Wraps a scripted device and cancels the token on the first framing read
+/// after a `FRAME_DATA` write that was offered more than the tolerant probe
+/// window — i.e. inside a paced wait rather than a probe. Records the largest
+/// read timeout it was given.
 ///
 /// This is the "acknowledged once, then went silent" dongle: the only way to
 /// leave the wait is the cancel check between reads, not an acknowledgement.
@@ -889,7 +966,9 @@ impl Transport for CancelDuringPacingWait {
 
     fn read_report(&mut self, timeout: Duration) -> DeviceResult<Option<Vec<u8>>> {
         self.max_read_timeout = self.max_read_timeout.max(timeout);
-        if !self.cancelled_in_wait && timeout >= CANCEL_POLL_SLICE {
+        // `frames` is only non-zero once the stream is writing; a read longer
+        // than the tolerant probe window after that is a paced wait.
+        if !self.cancelled_in_wait && self.inner.frames > 0 && timeout > FRAME_ACK_WINDOW {
             self.cancelled_in_wait = true;
             self.cancel.cancel();
         }
@@ -902,8 +981,8 @@ fn cancellation_during_the_pacing_wait_returns_and_repairs_promptly() {
     let previous = previous_config(ShowSlot::Slot1);
     let plan = one_frame_plan();
 
-    // First packet acknowledged, then the device stays silent. The stream
-    // reaches the pacing threshold and waits with the full 300 s budget.
+    // First packet is written and its paced wait starts; the device stays
+    // silent, so the only way out is the cancel check between reads.
     let device = ScriptedDevice::new(Some(1)).stop_acking_after(1);
     let cancel = CancelToken::new();
     let mut session = Session::with_config(
@@ -914,7 +993,7 @@ fn cancellation_during_the_pacing_wait_returns_and_repairs_promptly() {
     let started = Instant::now();
     let err = session
         .upload(&plan, &cancel, &mut |_| {})
-        .expect_err("the pacing wait must observe cancellation");
+        .expect_err("the paced wait must observe cancellation");
     let elapsed = started.elapsed();
 
     assert_cancelled(&err);
@@ -929,20 +1008,21 @@ fn cancellation_during_the_pacing_wait_returns_and_repairs_promptly() {
         "the test must cancel inside the pacing wait"
     );
     assert!(
+        transport.max_read_timeout > FRAME_ACK_WINDOW,
+        "the wait should offer more than the tolerant probe: {:?}",
+        transport.max_read_timeout
+    );
+    assert!(
         transport.max_read_timeout <= CANCEL_POLL_SLICE,
         "no single read may block for the whole budget: {:?}",
         transport.max_read_timeout
-    );
-    assert_eq!(
-        transport.max_read_timeout, CANCEL_POLL_SLICE,
-        "the wait should offer the clamped slice"
     );
 
     let writes = transport.inner().writes();
     assert_eq!(
         reports(writes, Command::FrameData).len(),
-        FRAME_ACK_PACING_THRESHOLD as usize + 1,
-        "pacing stopped instead of queueing the whole slot"
+        1,
+        "the paced wait stopped the stream at the first packet"
     );
     assert_eq!(
         writes.last().map(|w| w[3]),

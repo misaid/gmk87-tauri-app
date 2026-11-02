@@ -19,25 +19,28 @@
 
 ## 1. Status at the time of writing
 
-Everything in this document comes from the M0 investigation on 2026-11-01.
-Discovery and the read/echo diagnosis exercised both transports (the wired
-acknowledgement was observed as 8 bytes, during those read probes). Every
-configuration and frame write was over the 2.4 GHz dongle; **no wired
-configuration or frame write was attempted**. No hardware run has happened
-since. The automated suite uses mock transports only and never opens
-`/dev/hidraw*`.
+Everything in this document comes from the M0 investigation on 2026-11-01,
+except where a later wired test is named explicitly. Discovery and the read/echo
+diagnosis exercised both transports (the wired acknowledgement was observed as 8
+bytes, during those read probes). The original configuration and frame writes
+were over the 2.4 GHz dongle. A later wired test on `/dev/hidraw12` (interface 3,
+usage page `0xFF1C`) confirmed configuration writes and exposed a frame-stream
+defect: one 65,536-byte slot failed after about 17 s with `hidapi error:
+Connection timed out`. That cause and the awaiting-retry fix are recorded below.
+The automated suite uses mock transports only and never opens `/dev/hidraw*`.
 
 | Area | Status | Evidence |
 |---|---|---|
 | Discovery (`probe`) | works | wired `320f:5055` and dongle `320f:5088`, `via=true` on both |
-| Wired acknowledgement shape | observed, read/echo probes only | 8-byte acknowledgement seen; not observed from a configuration or frame write |
+| Wired acknowledgement shape | verified | 8-byte acknowledgement seen during read/echo probes and again on configuration and frame writes |
 | `show-config` | works | prints the snapshot; performs no device I/O by design |
-| Configuration write (`clock`, `lights`) | acknowledged, **not visually confirmed** | `COMMIT` acks arrived at ~1.02 s; snapshot holds the intended bytes |
-| Upload handshake | acknowledged | `INIT ×2 → CONFIG → COMMIT` acked; `READY` absent on the dongle, as expected |
-| `FRAME_DATA` packets | accepted individually | one packet acked after ~1.018 s |
-| Full slot upload | **did not complete** | ~1.02 s per ack; a 1,171-packet frame is ~20 min at that rate |
-| Display showing an image | **unverified** | the upload never finished; the panel state was never observed |
-| Wired transport write | **never attempted** | only the dongle was used for writes |
+| Configuration write (`clock`, `lights`) | acknowledged, **not visually confirmed** | dongle: `COMMIT` acks at ~1.02 s; wired: both commands complete in ~0.1 s; snapshots hold the intended bytes |
+| Upload handshake | acknowledged | `INIT ×2 → CONFIG → COMMIT` acked on both transports; `READY` absent on the dongle, as expected |
+| `FRAME_DATA` packets | accepted individually | one packet acked after ~1.018 s on the dongle |
+| Full slot upload | **did not complete** | dongle: ~1.02 s per ack, ~20 min per frame; wired: failed after ~17 s with `hidapi error: Connection timed out` |
+| Wired frame stream | **failed on a backlog** | frames were written without reading their acknowledgements, the device buffer filled, and its OUT endpoint stopped accepting writes; adaptive pacing is the fix, retry pending |
+| Display showing an image | **unverified** | no upload has finished; the panel state was never observed |
+| Wired transport write | **partly verified** | configuration writes succeed in ~0.1 s; a frame stream has not yet completed |
 | Animated GIF | **never attempted** | — |
 | Cancel / repair | **never attempted on hardware** | mock coverage only |
 | Power-cycle persistence | **never tested** | — |
@@ -144,6 +147,9 @@ effect was seen.
 | 19:09 | `probe` | dongle | path had changed `/dev/hidraw10` → `/dev/hidraw6`; the interrupted upload re-enumerated the dongle |
 | 19:09 | bare `COMMIT`, then `INIT → CONFIG(default) → COMMIT` | dongle | all acks ~1.026 s; display recovered to the default clock, per the rewritten block |
 | 19:10 | `clock` | dongle | acked; snapshot left `… 00 51 10 19 00 01 11 26 00 ff ff 00 ff 00` |
+| later | `clock`, `lights` | wired `/dev/hidraw12` | both complete in ~0.1 s; the `INIT → CONFIG → COMMIT` handshake is confirmed working on real wired hardware |
+| later | `upload static.png --slot 0` | wired `/dev/hidraw12` | failed after ~17 s with `hidapi error: Connection timed out`; the handshake succeeded, then the device's OUT endpoint stopped accepting writes |
+| later | diagnosis | — | fire-and-forget frames left a backlog of unread acknowledgements, the device buffer filled and the OUT transfer timed out. Adaptive pacing (per-packet on wired, tolerant fallback on the dongle) is implemented; the hardware retry is pending |
 
 The measured dongle cadence, repeated across commands:
 
@@ -157,10 +163,13 @@ final COMMIT ack after 1016.0 ms
 ```
 
 A 65,536-byte frame is 1,171 packets of 56 bytes. At one acknowledged packet per
-second that is about **twenty minutes per frame** if each packet is waited for.
-The current build probes for 25 ms per packet and paces only when the host
-outruns the device, with a hard 300 s ceiling; that bound has never been
-exercised against the hardware.
+second that is about **twenty minutes per frame** if each packet is waited for,
+which is why the stream falls back to the tolerant mode there. On the wired
+interface each packet is answered in milliseconds, and the earlier fire-and-forget
+stream filled the device's buffer and timed out after ~17 s. The adaptive stream
+now waits per packet when acknowledgements are prompt and switches once to the
+tolerant mode when they are sparse, always inside the 300 s ceiling. That fix has
+not yet been retried on hardware.
 
 The incident itself, for the record: detached uploads launched with
 `setsid nohup …` survived the session, kept writing to a keyboard left in a
@@ -191,7 +200,7 @@ exact command and any error text next to the observation.
 | 11 | Cancel an upload mid-stream (`Ctrl-C` at ~50%) | `SIGINT`/`SIGTERM` cancels the stream and the in-process repair sends `COMMIT` and rewrites the pre-upload block; `SIGKILL` cannot be caught and leaves the display mid-transaction, so the §2 recovery procedure must be run | | | |
 | 12 | Unplug the keyboard mid-upload | CLI reports a transport error; replug re-enumerates; display not torn | | | |
 | 13 | Power-cycle the keyboard after a successful upload | `show_image` and the uploaded frame survive, or the behaviour is recorded | | | |
-| 14 | Repeat steps 7–9 over the **wired** interface | same results, materially faster than the dongle | | | |
+| 14 | Repeat steps 7–9 over the **wired** interface | same results, materially faster than the dongle; the stream stays in paced mode instead of reaching `UploadTimeout` | | | |
 | 15 | Repeat step 7 over the **dongle** with `timeout 360` | completes inside 300 s, or fails cleanly with `UploadTimeout` and repairs | | | |
 | 16 | Run with the udev rule removed | `PermissionDenied`, with the rule named in the message | | | |
 | 17 | Plug in wired and dongle together | `probe` lists two; CLI opens the wired one; state not confused | | | |
@@ -233,6 +242,10 @@ here so a future run can replace it with a finding and a date.
   path runs. Record the raw bytes of the first acknowledgement on each transport.
 - **Slot-1-only uploads.** Record whether writing slot 1 at position 0 leaves
   slot 0's image intact, or whether the frame-count split assumption is wrong.
+- **Wired frame backlog.** The first wired one-slot upload failed after ~17 s
+  with an OUT-transfer timeout caused by unread frame acknowledgements. The
+  stream now waits per packet when acknowledgements are prompt. Record whether
+  the retry completes, the wall time, and whether the display shows the image.
 - **GIF compositing.** Frames are decoded independently, without disposal or
   offset compositing. Record how badly a partial-update GIF renders.
 - **The power-key hazard.** The keyboard is watched as a system-button device.
@@ -250,6 +263,7 @@ Hardware verification resumes only on an explicit human decision, with:
 - the results table above filled in as the run proceeds, not afterwards.
 
 Until then, the honest summary is: **the protocol is understood, the write path
-is implemented and unit-tested, and the device has acknowledged configuration
-writes — but no upload has ever been seen to finish, and no display or lighting
-change has been confirmed by eye.**
+is implemented and unit-tested, configuration writes are acknowledged on both
+transports (wired in ~0.1 s), and a first wired frame stream exposed and then
+fixed a buffer-backlog defect — but no upload has ever been seen to finish, and
+no display or lighting change has been confirmed by eye.**

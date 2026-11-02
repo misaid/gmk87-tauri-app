@@ -26,10 +26,10 @@ pub const FRAME_ACK_WINDOW: Duration = Duration::from_millis(25);
 /// Consecutive packets without a `FrameData` acknowledgement after which the
 /// device is considered to be not responding at all.
 pub const FRAME_ACK_MISS_LIMIT: u32 = 64;
-/// The longest single `read_report` inside the pacing wait.
+/// The longest single `read_report` inside an acknowledgement wait.
 ///
-/// The wait can run against the whole remaining upload budget (up to
-/// [`UPLOAD_TOTAL_TIMEOUT`]). A single read for all of it would leave a
+/// A tolerant-mode wait can run against the whole remaining upload budget (up
+/// to [`UPLOAD_TOTAL_TIMEOUT`]). A single read for all of it would leave a
 /// cancellation — Ctrl-C against a dongle that acknowledged once and then went
 /// silent — unobserved for minutes, so each read is clamped to this slice and
 /// the token is checked between them.
@@ -41,6 +41,46 @@ pub const CANCEL_POLL_SLICE: Duration = Duration::from_millis(200);
 /// bounded number of outstanding packets keeps the slot from being silently
 /// truncated while still allowing bursts between acknowledgements.
 pub const FRAME_ACK_PACING_THRESHOLD: u32 = 8;
+/// How long the paced mode waits for one frame packet's acknowledgement.
+///
+/// The wired interface answers each packet in milliseconds, so this bounds the
+/// wait without adding per-packet latency in the normal case.
+pub const FRAME_PACED_ACK_WINDOW: Duration = Duration::from_millis(200);
+/// Consecutive paced-mode misses after which the stream stops waiting per
+/// packet and falls back to the tolerant mode.
+///
+/// The 2.4 GHz dongle acknowledges roughly once per second, so a per-packet
+/// wait cannot be satisfied there. Three misses is enough to tell "slow
+/// transport" from "one late packet".
+pub const FRAME_PACED_MISS_LIMIT: u32 = 3;
+
+/// Timings for one frame stream.
+///
+/// Production always uses [`StreamTiming::PRODUCTION`]. Tests shrink the
+/// windows so the paced and tolerant paths run in milliseconds; the structure
+/// exists so no test has to wait a real 200 ms acknowledgement window.
+#[derive(Debug, Clone, Copy)]
+pub struct StreamTiming {
+    /// Hard ceiling on the whole stream, independent of packet count.
+    pub total: Duration,
+    /// How long paced mode waits for one packet's acknowledgement.
+    pub paced_ack_window: Duration,
+    /// How long tolerant mode probes each packet.
+    pub ack_window: Duration,
+    /// Longest single blocking read inside a wait, so cancellation is checked
+    /// at least this often.
+    pub cancel_poll: Duration,
+}
+
+impl StreamTiming {
+    /// The values production uses.
+    pub const PRODUCTION: Self = Self {
+        total: UPLOAD_TOTAL_TIMEOUT,
+        paced_ack_window: FRAME_PACED_ACK_WINDOW,
+        ack_window: FRAME_ACK_WINDOW,
+        cancel_poll: CANCEL_POLL_SLICE,
+    };
+}
 
 pub struct Session<T: Transport> {
     transport: T,
@@ -243,6 +283,29 @@ impl<T: Transport> Session<T> {
         progress: &mut dyn FnMut(UploadProgress),
         total_timeout: Duration,
     ) -> Result<()> {
+        self.upload_with_timing(
+            plan,
+            cancel,
+            progress,
+            StreamTiming {
+                total: total_timeout,
+                ..StreamTiming::PRODUCTION
+            },
+        )
+    }
+
+    /// [`Session::upload`] with every stream timing injectable.
+    ///
+    /// Production uses [`StreamTiming::PRODUCTION`]; tests use it to exercise
+    /// the paced and tolerant acknowledgement paths without waiting real
+    /// windows.
+    pub fn upload_with_timing(
+        &mut self,
+        plan: &FramePlan,
+        cancel: &CancelToken,
+        progress: &mut dyn FnMut(UploadProgress),
+        timing: StreamTiming,
+    ) -> Result<()> {
         plan.validate()?;
 
         // The block in place before this upload: the repair path restores it,
@@ -279,7 +342,7 @@ impl<T: Transport> Session<T> {
 
         // The device now holds a partially written slot, so every exit below
         // must leave the display somewhere safe.
-        if let Err(failure) = self.stream_frames(&memory, cancel, progress, total_timeout) {
+        if let Err(failure) = self.stream_frames(&memory, cancel, progress, timing) {
             // Best-effort: a failed repair must never mask the real cause.
             let _ = self.repair_display(&previous, plan);
             self.synced = false;
@@ -298,35 +361,49 @@ impl<T: Transport> Session<T> {
 
     /// Streams every frame packet, then commits. Runs only after READY.
     ///
-    /// Packets are written without waiting for an acknowledgement: the 2.4 GHz
-    /// dongle answers about one packet per second, so a per-packet wait turned
-    /// a 1,171-packet slot into a ~20-minute upload. Each packet is followed by
-    /// a short probe instead, and the final COMMIT confirms the transaction.
+    /// The stream has two acknowledgement modes and picks between them from
+    /// what the transport actually does:
     ///
-    /// Once the device has demonstrated it is alive, the number of outstanding
-    /// writes is bounded: after [`FRAME_ACK_PACING_THRESHOLD`] consecutive
-    /// misses the stream waits for an acknowledgement before queueing more, so
-    /// a host that outruns the dongle cannot silently truncate the slot. This
-    /// is not a per-packet wait — it only engages when the host is ahead — and
-    /// the wait is capped by what is left of `total_timeout`.
+    /// * **Paced** (the starting mode). After each packet, wait up to
+    ///   `timing.paced_ack_window` for that packet's acknowledgement. The wired
+    ///   interface answers each packet in milliseconds, so the cost is the real
+    ///   round-trip, and no backlog of unread acknowledgements can fill the
+    ///   device's buffer. That backlog is what stopped accepting writes on a
+    ///   wired upload (`hidapi error: Connection timed out`).
+    /// * **Tolerant** (fallback). A transport that misses
+    ///   [`FRAME_PACED_MISS_LIMIT`] paced acknowledgements in a row cannot be
+    ///   paced — the 2.4 GHz dongle acknowledges roughly once per second — so
+    ///   the stream stops waiting per packet, probes [`FRAME_ACK_WINDOW`]
+    ///   instead, and only waits after [`FRAME_ACK_PACING_THRESHOLD`]
+    ///   consecutive misses. The switch is one-way for the rest of the upload,
+    ///   so a single slow packet cannot make the mode flap.
+    ///
+    /// Both modes are bounded by `timing.total`; the acceptance waits check
+    /// `cancel` at least every `timing.cancel_poll`. Sixty-four consecutive
+    /// silent packets fail with [`DeviceError::ProtocolTimeout`] and a spent
+    /// budget fails with [`DeviceError::UploadTimeout`]; the caller repairs the
+    /// display on every failure path.
     fn stream_frames(
         &mut self,
         memory: &[u8],
         cancel: &CancelToken,
         progress: &mut dyn FnMut(UploadProgress),
-        total_timeout: Duration,
+        timing: StreamTiming,
     ) -> std::result::Result<(), UploadFailure> {
         let total_bytes = memory.len();
         let started = Instant::now();
         let mut position = 0usize;
         let mut misses = 0u32;
         let mut seen_ack = false;
+        // One-way: once the acknowledgements are shown to be sparse, do not
+        // wait for every packet again for the rest of this upload.
+        let mut paced = true;
 
         while position < total_bytes {
             if cancel.is_cancelled() || !self.synced {
                 return Err(UploadFailure::Cancelled);
             }
-            if started.elapsed() > total_timeout {
+            if started.elapsed() > timing.total {
                 return Err(UploadFailure::Fatal(DeviceError::UploadTimeout {
                     sent: position,
                     total: total_bytes,
@@ -340,20 +417,45 @@ impl<T: Transport> Session<T> {
                 .write_report(&packet.encode())
                 .map_err(UploadFailure::Transport)?;
 
-            match self.frame_acknowledged() {
-                Ok(true) => {
+            if paced {
+                let budget = timing.total.saturating_sub(started.elapsed());
+                let window = timing.paced_ack_window.min(budget);
+                if self.wait_for_frame_ack(cancel, window, timing.cancel_poll)? {
                     misses = 0;
                     seen_ack = true;
-                }
-                Ok(false) => {
-                    misses += 1;
-                    if misses >= FRAME_ACK_MISS_LIMIT {
-                        return Err(UploadFailure::Fatal(DeviceError::ProtocolTimeout {
-                            cmd: Command::FrameData.as_u8(),
+                } else {
+                    // The window was the whole remaining budget: no time is
+                    // left for another packet.
+                    if window == budget {
+                        return Err(UploadFailure::Fatal(DeviceError::UploadTimeout {
+                            sent: end,
+                            total: total_bytes,
                         }));
                     }
+                    misses += 1;
+                    if misses >= FRAME_PACED_MISS_LIMIT {
+                        paced = false;
+                        tracing::debug!(
+                            "frame acknowledgements are sparse; switching to tolerant streaming"
+                        );
+                    }
                 }
-                Err(error) => return Err(UploadFailure::Transport(error)),
+            } else {
+                match self.frame_acknowledged(timing.ack_window) {
+                    Ok(true) => {
+                        misses = 0;
+                        seen_ack = true;
+                    }
+                    Ok(false) => {
+                        misses += 1;
+                        if misses >= FRAME_ACK_MISS_LIMIT {
+                            return Err(UploadFailure::Fatal(DeviceError::ProtocolTimeout {
+                                cmd: Command::FrameData.as_u8(),
+                            }));
+                        }
+                    }
+                    Err(error) => return Err(UploadFailure::Transport(error)),
+                }
             }
 
             position = end;
@@ -362,25 +464,25 @@ impl<T: Transport> Session<T> {
                 total_bytes,
             });
 
-            // Pace only once the device has answered at least once: a device
-            // that has never answered is diagnosed quickly by the miss limit
-            // above rather than by burning the whole upload budget on a wait.
-            if seen_ack && misses >= FRAME_ACK_PACING_THRESHOLD {
-                let budget = total_timeout.saturating_sub(started.elapsed());
-                match self.wait_for_frame_ack(cancel, budget) {
-                    Ok(true) => misses = 0,
-                    Ok(false) => {
-                        return Err(UploadFailure::Fatal(DeviceError::UploadTimeout {
-                            sent: position,
-                            total: total_bytes,
-                        }))
-                    }
-                    Err(failure) => return Err(failure),
+            // Tolerant-mode pacing: once the device has answered at least
+            // once, stop queueing after FRAME_ACK_PACING_THRESHOLD misses and
+            // wait for the next acknowledgement inside what is left of the
+            // budget. A device that has never answered is diagnosed by the
+            // miss limit above instead of burning the budget here.
+            if !paced && seen_ack && misses >= FRAME_ACK_PACING_THRESHOLD {
+                let budget = timing.total.saturating_sub(started.elapsed());
+                if self.wait_for_frame_ack(cancel, budget, timing.cancel_poll)? {
+                    misses = 0;
+                } else {
+                    return Err(UploadFailure::Fatal(DeviceError::UploadTimeout {
+                        sent: position,
+                        total: total_bytes,
+                    }));
                 }
             }
         }
 
-        if started.elapsed() > total_timeout {
+        if started.elapsed() > timing.total {
             return Err(UploadFailure::Fatal(DeviceError::UploadTimeout {
                 sent: position,
                 total: total_bytes,
@@ -392,14 +494,15 @@ impl<T: Transport> Session<T> {
         Ok(())
     }
 
-    /// Reads for at most [`FRAME_ACK_WINDOW`], returning whether a `FrameData`
+    /// Reads for at most `window`, returning whether a `FrameData`
     /// acknowledgement arrived.
     ///
-    /// A missing acknowledgement is not an error: the dongle acknowledges
-    /// slowly and the final COMMIT confirms the whole transaction. Anything
-    /// that is not a `FrameData` report is noise and is discarded.
-    fn frame_acknowledged(&mut self) -> Result<bool> {
-        match self.transport.read_report(FRAME_ACK_WINDOW)? {
+    /// A missing acknowledgement is not an error in the tolerant mode: the
+    /// dongle acknowledges slowly and the final COMMIT confirms the whole
+    /// transaction. Anything that is not a `FrameData` report is noise and is
+    /// discarded.
+    fn frame_acknowledged(&mut self, window: Duration) -> Result<bool> {
+        match self.transport.read_report(window)? {
             Some(report) if report.len() >= 4 && report[3] == Command::FrameData.as_u8() => {
                 Ok(true)
             }
@@ -407,25 +510,25 @@ impl<T: Transport> Session<T> {
         }
     }
 
-    /// Blocks up to `budget` for a `FrameData` acknowledgement.
+    /// Blocks up to `window` for a `FrameData` acknowledgement.
     ///
-    /// Used to pace a host that is outrunning the device. Returns `Ok(false)`
-    /// only when the whole budget is spent without an acknowledgement; reports
-    /// for other commands cannot confirm the frames, so they are discarded.
+    /// Used for every packet in the paced mode and to resume a tolerant stream
+    /// that has too many writes outstanding. Returns `Ok(false)` only when the
+    /// window is spent without an acknowledgement; reports for other commands
+    /// cannot confirm the frames, so they are discarded.
     ///
-    /// The budget can be the whole remaining upload ceiling, so no single read
-    /// is allowed to run for it: each read is clamped to [`CANCEL_POLL_SLICE`]
-    /// and `cancel` is re-checked between reads. A dongle that acknowledged once
-    /// and then went silent is the documented stuck case, and Ctrl-C must not
-    /// wait minutes for that budget to expire. Cancellation is reported as
+    /// The window can be the whole remaining upload ceiling, so no single read
+    /// is allowed to run for it: each read is clamped to `cancel_poll` and
+    /// `cancel` is re-checked between reads. Cancellation is reported as
     /// [`UploadFailure::Cancelled`] — the same failure the packet loop returns —
     /// so the caller's display repair runs.
     fn wait_for_frame_ack(
         &mut self,
         cancel: &CancelToken,
-        budget: Duration,
+        window: Duration,
+        cancel_poll: Duration,
     ) -> std::result::Result<bool, UploadFailure> {
-        let deadline = Instant::now() + budget;
+        let deadline = Instant::now() + window;
         loop {
             if cancel.is_cancelled() || !self.synced {
                 return Err(UploadFailure::Cancelled);
@@ -434,7 +537,7 @@ impl<T: Transport> Session<T> {
             if remaining.is_zero() {
                 return Ok(false);
             }
-            match self.transport.read_report(remaining.min(CANCEL_POLL_SLICE)) {
+            match self.transport.read_report(remaining.min(cancel_poll)) {
                 Ok(Some(report))
                     if report.len() >= 4 && report[3] == Command::FrameData.as_u8() =>
                 {
