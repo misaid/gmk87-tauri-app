@@ -608,6 +608,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "gmk87-app"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "gmk87-device",
+ "gmk87-protocol",
+ "image",
+ "serde",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tracing",
+]
+
+[[package]]
 name = "gmk87-cli"
 version = "0.1.0"
 dependencies = [

@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/gmk87-protocol", "crates/gmk87-device", "crates/gmk87-cli"]
+members = [
+    "crates/gmk87-protocol",
+    "crates/gmk87-device",
+    "crates/gmk87-app",
+    "crates/gmk87-cli",
+]
 
 [workspace.package]
 version = "0.1.0"

@@ -1,0 +1,7 @@
+//! Application orchestration for the GMK87: session ownership, jobs and presets.
+//!
+//! Tauri-independent so it can be tested against `MockTransport`.
+
+pub mod error;
+pub mod snapshot;
+pub mod state;
