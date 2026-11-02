@@ -1,13 +1,20 @@
-use gmk87_protocol::config::DeviceConfig;
-
 use super::snapshot;
+use super::{load_config_from, ConfigOrigin};
 
-/// Prints the app's default configuration. Performs no device I/O: the
-/// keyboard cannot be read, so there is nothing to query.
+/// Prints the configuration the app would write. Performs no device I/O: the
+/// keyboard cannot be read, so the snapshot is the app's best knowledge of it.
 pub fn run() -> anyhow::Result<()> {
-    let config = DeviceConfig::default_config();
+    let path = snapshot::path();
+    let (config, origin) = load_config_from(&path);
+    match origin {
+        ConfigOrigin::Snapshot => {
+            println!("device     write-only: cannot be read; showing the saved snapshot")
+        }
+        ConfigOrigin::Defaults => {
+            println!("device     write-only: cannot be read; no usable snapshot; showing the app defaults")
+        }
+    }
     let bytes = config.as_bytes();
-    println!("device     write-only: cannot be read; showing the app's config");
     println!(
         "raw: {}",
         bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
@@ -33,6 +40,6 @@ pub fn run() -> anyhow::Result<()> {
         config.frame_delay_ms()
     );
     println!("clock      {:?}", config.time());
-    println!("snapshot   {}", snapshot::path().display());
+    println!("snapshot   {}", path.display());
     Ok(())
 }

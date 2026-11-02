@@ -24,31 +24,43 @@ pub fn open_session() -> anyhow::Result<Session<HidTransport>> {
     Ok(Session::with_config(transport, load_config()))
 }
 
+/// Where a configuration came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigOrigin {
+    /// The snapshot this app wrote on a previous run.
+    Snapshot,
+    /// The reference defaults, because there is no usable snapshot.
+    Defaults,
+}
+
 /// The last configuration this app wrote, or the reference defaults.
 ///
 /// A missing, unreadable or malformed snapshot is never an error: the first
 /// run has no file at all, and a corrupt one must not stop the command.
 pub fn load_config() -> DeviceConfig {
-    load_config_from(&snapshot::path())
+    load_config_from(&snapshot::path()).0
 }
 
-fn load_config_from(path: &Path) -> DeviceConfig {
+/// Reads the snapshot at `path`, reporting where the result came from.
+///
+/// Never fails: an absent, unreadable or malformed file yields the defaults.
+pub(crate) fn load_config_from(path: &Path) -> (DeviceConfig, ConfigOrigin) {
     let hex = match std::fs::read_to_string(path) {
         Ok(hex) => hex,
         Err(error) => {
             tracing::debug!(path = %path.display(), %error, "no config snapshot; using defaults");
-            return DeviceConfig::default_config();
+            return (DeviceConfig::default_config(), ConfigOrigin::Defaults);
         }
     };
     match DeviceConfig::from_hex(&hex) {
-        Ok(config) => config,
+        Ok(config) => (config, ConfigOrigin::Snapshot),
         Err(error) => {
             tracing::warn!(
                 path = %path.display(),
                 %error,
                 "ignoring malformed config snapshot; using defaults"
             );
-            DeviceConfig::default_config()
+            (DeviceConfig::default_config(), ConfigOrigin::Defaults)
         }
     }
 }
@@ -74,7 +86,10 @@ mod tests {
     fn a_missing_snapshot_falls_back_to_defaults() {
         let path = scratch("missing");
         let _ = std::fs::remove_file(&path);
-        assert_eq!(load_config_from(&path), DeviceConfig::default_config());
+        assert_eq!(
+            load_config_from(&path),
+            (DeviceConfig::default_config(), ConfigOrigin::Defaults)
+        );
     }
 
     #[test]
@@ -87,9 +102,10 @@ mod tests {
         let expected = DeviceConfig::from_bytes(&raw).unwrap();
         std::fs::write(&path, format!("{}\n", expected.to_hex())).unwrap();
 
-        let loaded = load_config_from(&path);
+        let (loaded, origin) = load_config_from(&path);
         let _ = std::fs::remove_file(&path);
 
+        assert_eq!(origin, ConfigOrigin::Snapshot);
         assert_eq!(loaded, expected, "the snapshot must survive verbatim");
         assert_eq!(loaded.underglow_effect(), 5);
         assert_eq!(loaded.show_image(), gmk87_protocol::config::ShowSlot::Slot1);
@@ -107,7 +123,7 @@ mod tests {
             std::fs::write(&path, &contents).unwrap();
             assert_eq!(
                 load_config_from(&path),
-                DeviceConfig::default_config(),
+                (DeviceConfig::default_config(), ConfigOrigin::Defaults),
                 "malformed snapshot was not ignored: {contents}"
             );
         }
