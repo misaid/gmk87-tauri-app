@@ -95,7 +95,8 @@ gmk87-cli show-config
 gmk87-cli clock
 gmk87-cli lights --brightness 5
 gmk87-cli lights --effect 5 --brightness 9 --speed 3 --rgb 248,255,0
-gmk87-cli lights --led-mode 2 --led-color 5
+gmk87-cli lights --orientation 1 --underglow-rainbow 1 --winlock true
+gmk87-cli lights --led-mode 2 --led-color 5 --led-saturation 7 --led-rainbow 1
 gmk87-cli upload picture.png --slot 0 --show
 gmk87-cli upload animation.gif --slot 1
 ```
@@ -107,7 +108,7 @@ Run from the source tree with `cargo run -p gmk87-cli -- <args>` instead.
 | `probe` | lists detected keyboards: label, `/dev/hidraw*` path, product ID, whether VIA is present. Read-only. |
 | `show-config` | prints the configuration the app would write, from the saved snapshot. Performs **no device I/O**. |
 | `clock` | syncs the keyboard clock to local time. |
-| `lights` | patches underglow and side-LED fields and writes the block. Options: `--effect`, `--brightness`, `--speed`, `--rgb R,G,B`, `--led-mode`, `--led-color`. |
+| `lights` | patches underglow and side-LED fields and writes the block. Options: `--effect`, `--brightness`, `--speed`, `--orientation` (0–1), `--underglow-rainbow` (0–1), `--rgb R,G,B`, `--winlock true\|false`, `--led-mode`, `--led-saturation` (0–9), `--led-rainbow` (0–1), `--led-color`. |
 | `upload <file>` | uploads an image or animated GIF to `--slot 0` or `--slot 1` (default 0). `--show` switches the display to that slot; without it the upload still happens but the display is switched to the **clock**. |
 
 Notes that surprise people:

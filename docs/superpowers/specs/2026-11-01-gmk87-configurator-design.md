@@ -171,7 +171,7 @@ transport, so the future background service can reuse it unchanged.
 Pure, no I/O, fully unit-testable.
 
 - Packet encoding/decoding, checksum, position tracking.
-- `DeviceConfig`: a fixed 64-byte buffer with typed accessors for the known
+- `DeviceConfig`: a fixed 48-byte buffer with typed accessors for the known
   fields, guaranteeing byte-preserving round-trips.
 - Image preparation: decode, crop/zoom, resize, RGB565 conversion, slot padding.
 - `FramePlan`: validates and lays out frames across slots against the device
@@ -242,7 +242,8 @@ kept afterwards as a scripting and recovery path.
    stop arriving, and confirmed by the final `COMMIT`. Progress is emitted
    roughly every 1%.
 6. On cancel or transport failure mid-upload, send `COMMIT` and rewrite the
-   previous `show_image` so a torn frame is never displayed.
+   previous `show_image` so a torn frame is repaired in-process. The repair is
+   best-effort; `SIGINT`/`SIGTERM` reach it, `SIGKILL` cannot be caught.
 
 ## 6. Lighting and clock
 
@@ -254,26 +255,45 @@ truth and the app keeps a snapshot of the last block it wrote.
 
 ## 7. Failure handling and lifecycle
 
-**Errors** (one `thiserror` enum): `DeviceNotFound`, `PermissionDenied`,
-`Transport(io)`, `ProtocolTimeout{cmd}`, `ChecksumMismatch`, `DeviceDesynced`,
-`InvalidJob(reason)`, `Unsupported(transport)`, `UploadTimeout{sent, total}`,
-`UploadFailed{source}`.
+**Errors** (one `thiserror` enum, plus the protocol crate's error):
+`DeviceNotFound`, `PermissionDenied{path}`, `Transport(io)`, `Hid(String)`,
+`ProtocolTimeout{cmd}`, `UploadTimeout{sent, total}`, `DeviceDesynced`,
+`InvalidJob(reason)`, `UploadFailed{source}`, and `Protocol(ProtocolError)` from
+`gmk87-protocol`. There is no `Unsupported` variant. `ChecksumMismatch` is
+**reserved and never constructed**: an app-framed acknowledgement with a bad
+checksum is discarded and the reader continues (see below), because discarding
+is the only safe action on a write-only device.
 
 **State machine:** `Disconnected → Connected(Idle) → Busy(op) → Connected(Idle)`.
 Operations are serialized; the UI disables controls during an upload. A transport
 error or a vanished hidraw node transitions to `Disconnected`, emits an event,
 and a 2 s poll reconnects while the window is open.
 
-**Recovery rules:**
+**Recovery rules (as implemented):**
 
-- Packet timeout → reopen the handle once, drain stale reports, retry that
-  packet only.
-- Timeout during `CONFIG`/`COMMIT` (device state unknown) → never blind-retry;
-  re-run the config read handshake to resync, then report what landed.
-- Response checksum mismatch → discard and continue reading until the matching
-  command arrives or the timeout expires.
-- Failed upload → restore the previous `show_image` and state that the display
-  was left unchanged.
+- Every wait is bounded. Handshake acknowledgements have `COMMAND_TIMEOUT`
+  (1.5 s), each frame packet is probed for `FRAME_ACK_WINDOW` (25 ms), and the
+  whole upload stream has `UPLOAD_TOTAL_TIMEOUT` (300 s). There is no unbounded
+  read and no packet retry loop.
+- A report whose command byte does not match, or that is shorter than the
+  minimum, is discarded and the reader keeps waiting until the deadline.
+- An app-framed `0x04` report of at least 12 bytes with a checksum mismatch is
+  discarded and reading continues; `ChecksumMismatch` is never returned.
+- `READY (0x23)` is **tolerant/optional**: it is awaited for `COMMAND_TIMEOUT`
+  but its absence is not an error, because the 2.4 GHz dongle never sends it.
+- The upload stream is bounded and paced: after eight consecutive missed frame
+  acknowledgements the host waits instead of queueing more, and 64 consecutive
+  misses fail the upload with `ProtocolTimeout`.
+- There is no reopen-the-handle retry, no stale-report drain-and-retry, no
+  packet-level retry and no config read to resync. None of those is possible:
+  the device cannot be read and reopening it does not reveal its state.
+- An in-process failure or cancellation during streaming sends a bare `COMMIT`
+  and rewrites the complete pre-upload block, falling back to the clock when the
+  shown slot was torn. The repair is **best-effort**: the error text says
+  "display repair attempted — verify or reconnect", never "display left
+  unchanged". `SIGINT`/`SIGTERM` reach this path; `SIGKILL` cannot be caught and
+  leaves the display mid-transaction, so the recovery procedure in
+  `docs/hardware-testing.md` must be run.
 
 **Permissions:** `50-gmk87.rules` uses `TAG+="uaccess"` for `320f:5055` and
 `320f:5088`, so the logged-in seat gets access without root. The `.deb` installs
@@ -347,7 +367,7 @@ step; wired and 2.4 GHz both work.
 | Frame-count or delay limits differ from the reference implementation | M0 validates on hardware before UI work |
 | 2.4 GHz upload timing differs from wired | Retry policy plus M0/M2 testing on both transports |
 | `show_image` does not persist across power cycles | Verified in M0; UI explains the behaviour |
-| Unknown config bytes corrupted by writes | Read-modify-write plus byte-preserving round-trip tests |
+| Unknown config bytes corrupted by writes | Local state and snapshot: the whole 48-byte block is kept in memory and rewritten byte-for-byte from the last snapshot, so bytes this project does not understand are preserved by construction. Read-modify-write is impossible because the device cannot be read (§3.3). |
 | AppImage users hit permission errors | In-app rule display and copy action |
 
 ## 13. Attribution

@@ -20,14 +20,16 @@ The USB protocol was documented by the community. This project ports the packet
 format and command sequence from MIT-licensed work. The `NOTICE` file reads:
 
 ```text
-This project implements the ZUOYA GMK87 USB protocol, documented by the
-community. The packet format and command sequence were ported from the
-following MIT-licensed work:
+This project implements the ZUOYA GMK87 USB protocol, which was documented by
+the community. The packet format and command sequence were derived from the
+following MIT-licensed projects:
 
   - codedgar/gmk87-node (MIT)
   - ikkentim/gmk87-usb-reverse (MIT)
 
-Their copyright notices are reproduced here in accordance with the MIT License.
+Each project is the work of its own authors. This NOTICE records the
+attribution; it does not reproduce their copyright notices or license text.
+The MIT license terms are available in each project's repository.
 ```
 
 The command list, report layout, display geometry and configuration offsets in
@@ -130,7 +132,9 @@ At most 56 bytes. A 64-byte report therefore carries 56 payload bytes plus the
 ## 4. Acknowledgements
 
 Acknowledgements are matched on the **command byte at offset 3**, nothing else.
-The two transports answer with different shapes:
+This assumes hidapi preserves the HID report ID at offset 0 of the input report;
+that assumption has not been confirmed on hardware (see §13). The two transports
+answer with different shapes:
 
 | Transport | Report length | Shape | Usable checksum |
 |---|---|---|---|
@@ -204,7 +208,10 @@ Consequences, which shape the whole design:
 4. **The first write wins.** Anything the user configured with the official
    application is replaced by the app's values the first time this project
    writes a block. Every documented field is therefore exposed in the CLI and
-   the future UI, so the loss is recoverable by setting them again.
+   the future UI, so the loss is recoverable by setting them again. In
+   `gmk87-cli lights` that is `--effect`, `--brightness`, `--speed`,
+   `--orientation`, `--underglow-rainbow`, `--rgb`, `--winlock`, `--led-mode`,
+   `--led-saturation`, `--led-rainbow` and `--led-color`.
 
 There is no `dump-config`. `show-config` prints the snapshot, not the device.
 
@@ -504,5 +511,6 @@ write path's shape.
 | Does `show_image` survive a power cycle? | Never observed |
 | Are the frame-count and delay limits really 36 and 60 ms? | Taken from the references; never tested at the boundary |
 | Does the wired transport finish an upload faster than the dongle? | The wired upload path was never attempted |
+| Does hidapi preserve the report ID at offset 0 of input reports? | Matching reads `report[3]`, which assumes it does. Unconfirmed on hardware; if it does not, every acknowledgement misses and the upload fails after 64 misses with `ProtocolTimeout` |
 | Is interface 2 (`0xFFEF`, report ID 5) a safe alternate transport? | It answers with full-length reports, but is unused and untested for writes |
 | Do GIFs with partial-frame updates render correctly? | Frames are decoded independently, without compositing |

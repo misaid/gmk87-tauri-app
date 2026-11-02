@@ -64,6 +64,10 @@ input and system poweroffs.
    ```bash
    timeout 360 gmk87-cli upload test.png --slot 0 --show
    ```
+   `timeout` sends `SIGTERM`, which the CLI catches and turns into a cancel, so
+   the in-process repair runs. Only `SIGKILL` (`kill -9`) bypasses it and leaves
+   the display mid-transaction; if that happens, run the recovery procedure
+   below.
 4. **Never a bare unattended upload.** Somebody must be watching the keyboard
    and the terminal for the whole run, ready to unplug it.
 5. **Unplug the device if it misbehaves** — spurious typing, a re-enumeration
@@ -184,7 +188,7 @@ exact command and any error text next to the observation.
 | 8 | `gmk87-cli upload static.png --slot 1 --show` | slot 1 shows the image; switch back to slot 0 and it is intact | | | |
 | 9 | `gmk87-cli upload anim.gif --slot 0 --show` | frames animate at the source delay, floored at 60 ms | | | |
 | 10 | `gmk87-cli upload over-budget.gif --slot 0` (37 frames) | refused before any USB traffic, with the frame count in the error | | | |
-| 11 | Cancel an upload mid-stream (`Ctrl-C` at ~50%) | process exits; panel shows the previous slot or the clock, never a torn frame | | | |
+| 11 | Cancel an upload mid-stream (`Ctrl-C` at ~50%) | `SIGINT`/`SIGTERM` cancels the stream and the in-process repair sends `COMMIT` and rewrites the pre-upload block; `SIGKILL` cannot be caught and leaves the display mid-transaction, so the §2 recovery procedure must be run | | | |
 | 12 | Unplug the keyboard mid-upload | CLI reports a transport error; replug re-enumerates; display not torn | | | |
 | 13 | Power-cycle the keyboard after a successful upload | `show_image` and the uploaded frame survive, or the behaviour is recorded | | | |
 | 14 | Repeat steps 7–9 over the **wired** interface | same results, materially faster than the dongle | | | |
@@ -221,6 +225,12 @@ here so a future run can replace it with a finding and a date.
 - **READY is optional.** The dongle never sends `0x23`, the wired interface
   does. Record the wired behaviour, including whether `READY` arrives before or
   after the `COMMIT` acknowledgement.
+- **HID report ID offset.** Acknowledgement matching reads `report[3]`, which
+  assumes hidapi preserves the HID report ID at offset 0 of every input report.
+  That has never been confirmed on this hardware. If it is wrong, every
+  acknowledgement misses and the failure mode is bounded: 64 consecutive missed
+  frame acknowledgements fail the upload with `ProtocolTimeout`, and the repair
+  path runs. Record the raw bytes of the first acknowledgement on each transport.
 - **Slot-1-only uploads.** Record whether writing slot 1 at position 0 leaves
   slot 0's image intact, or whether the frame-count split assumption is wrong.
 - **GIF compositing.** Frames are decoded independently, without disposal or

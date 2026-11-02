@@ -1,6 +1,36 @@
 # GMK87 Rust Core + CLI Implementation Plan
 
+> ## ⛔ SUPERSEDED — historical record, do not implement
+>
+> **This plan is retained only as a record of what was attempted. It no longer
+> describes the device or the code.** The design was corrected on 2026-11-01
+> after testing on the physical keyboard. Do not follow the read path or the
+> hardware-verification steps below.
+>
+> - **The device is write-only.** The `read_config` handshake specified in
+>   Tasks 9 and 10 (`INIT → PREP_READ ×10 → COMMIT → READ_CFG ×13`) is
+>   **forbidden**. `PREP_READ (0x03)` reset and re-enumerated the keyboard
+>   twice, and `READ_CFG (0x05)` only echoes its request payload. **Never send
+>   `0x03` or `0x05`.**
+> - **There is no read-modify-write.** The host keeps the complete 48-byte block
+>   as local state, seeds it from a snapshot, and writes the whole block.
+> - **Hardware verification is deferred.** Do not run the "Verify against
+>   hardware" steps. The only authorised procedure is the one in
+>   [`hardware-testing.md`](../../hardware-testing.md), and it runs only after a
+>   human explicitly re-authorises it.
+>
+> Authority for every corrected detail:
+>
+> - [`../specs/2026-11-01-gmk87-configurator-design.md`](../specs/2026-11-01-gmk87-configurator-design.md)
+>   — especially §3.3 (the device cannot be read) and §3.3a (vendor interface
+>   and acknowledgement shape).
+> - [`../../protocol.md`](../../protocol.md) — the corrected protocol reference,
+>   including the no-read rule (§5, §6) and the upload/repair sequence (§11).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+>
+> *Historical note: the instruction above applied to the original run. This plan
+> is now superseded; use the amended spec and `docs/protocol.md` instead.*
 
 **Goal:** Build the Rust workspace that speaks the GMK87 vendor USB protocol — packet codec, configuration buffer, image/GIF preparation, device session with retry rules — and a `gmk87-cli` that uploads display images, sets lighting and syncs the clock on real hardware.
 
@@ -20,7 +50,7 @@
 - Maximum payload per packet is 56 bytes.
 - Display is 240×135, RGB565 **big-endian** (high byte first).
 - Each display slot is padded to 65536 bytes and streamed with a monotonic 24-bit position.
-- Configuration block is 48 bytes. All writes are read-modify-write; only known fields may change.
+- Configuration block is 48 bytes. ~~All writes are read-modify-write; only known fields may change.~~ **Superseded:** the device cannot be read, so there is no read-modify-write. The host keeps the whole block locally, seeds it from a snapshot, and writes it verbatim (spec §3.3; `docs/protocol.md` §6).
 - Clock fields (second, minute, hour, date, month, year) are packed BCD; day-of-week is raw.
 - Animation budget: at most 36 frames total across both slots; minimum frame delay 60 ms.
 - `show_image`: `0` = clock, `1` = slot 0, `2` = slot 1.
@@ -31,7 +61,7 @@
 2. **Image whose dimensions are enormous (e.g. 20000×20000)** — must be rejected or downscaled within a bounded memory budget, not allocated at full size.
 3. **Animated GIF that exceeds the frame budget** — more than 36 frames, or a frame delay below 60 ms, must fail validation before any packet is sent, with the offending numbers in the message.
 4. **Time values at field boundaries** — minute/hour/date/month at 59/23/31/12 and a two-digit year must encode to correct BCD, and out-of-range values (hour 24, month 13) must be rejected.
-5. **A short or malformed configuration read** — a response shorter than 48 bytes, or a timeout mid-read, must surface a typed error and leave the device marked unsynced rather than writing a truncated buffer back.
+5. **~~A short or malformed configuration read~~ — superseded.** There is no read path; the device cannot be read (spec §3.3). The equivalent live rule is that a malformed local snapshot falls back to the defaults, and a short/failed `CONFIG`/`COMMIT` leaves the session unsynced rather than writing a truncated buffer back.
 
 ---
 
@@ -555,7 +585,9 @@ fn writes_time_as_bcd_and_rejects_bad_values() {
 }
 
 proptest! {
-    /// Any read-then-write round trip must preserve every byte not explicitly changed.
+    /// SUPERSEDED: the name says "read modify write", which does not exist.
+    /// Current test: `untouched_bytes_survive_an_edit`.
+    /// Any edit must preserve every byte not explicitly changed.
     #[test]
     fn untouched_bytes_survive_a_read_modify_write(raw in prop::array::uniform48(any::<u8>())) {
         let original = DeviceConfig::from_bytes(&raw).unwrap();
@@ -587,6 +619,8 @@ Expected: FAIL — `gmk87_protocol::config` does not exist.
 ```rust
 //! The 48-byte device configuration block.
 //!
+//! SUPERSEDED wording: there is no read-modify-write, because the device
+//! cannot be read. The crate carries the whole block verbatim as local state.
 //! Every write is read-modify-write against the raw bytes so that fields this
 //! crate does not understand are preserved exactly.
 
@@ -1762,7 +1796,16 @@ git commit -m "feat(device): Transport trait and hidapi implementation"
 
 ---
 
-### Task 9: Session configuration read and write
+### ~~Task 9: Session configuration read and write~~ — superseded, do not implement
+
+> **Superseded 2026-11-01.** Everything below that reads the device —
+> `Session::read_config`, the `INIT → PREP_READ ×10 → COMMIT → READ_CFG ×13`
+> handshake, and the tests that script it — is forbidden. `0x03` reset and
+> re-enumerated the keyboard twice and `0x05` only echoes its payload. The
+> implemented session has **no read path**: see spec §3.3/§3.3a and
+> `docs/protocol.md` §5–§6. The `write_config` half (INIT → CONFIG → COMMIT) is
+> real; Task 9's hardware-free steps still describe it. Hardware verification is
+> deferred to `docs/hardware-testing.md`.
 
 **Files:**
 - Create: `crates/gmk87-device/src/session.rs`
@@ -1856,6 +1899,10 @@ impl Transport for MockTransport {
 
 - [ ] **Step 2: Write the failing tests**
 
+> **Superseded:** the `read_config` tests below must not be implemented. They
+> send `PREP_READ (0x03)` and `READ_CFG (0x05)`. The current suite instead
+> asserts that no code path emits either command.
+
 `crates/gmk87-device/tests/session_config.rs`:
 
 ```rust
@@ -1927,6 +1974,11 @@ Run: `cargo test -p gmk87-device --test session_config`
 Expected: FAIL — `gmk87_device::session` does not exist.
 
 - [ ] **Step 4: Implement the session handshake**
+
+> **Superseded:** the `read_config` implementation below must not be written.
+> Keep only `write_config` and `send_and_wait` (without `Packet::decode` on a
+> short acknowledgement). See the current `crates/gmk87-device/src/session.rs`
+> and `docs/protocol.md` §4.
 
 `crates/gmk87-device/src/session.rs`:
 
@@ -2057,7 +2109,15 @@ git commit -m "feat(device): session config read/write handshake with mock trans
 
 ---
 
-### Task 10: Display upload, progress, cancellation and restore
+### ~~Task 10: Display upload, progress, cancellation and restore~~ — read path superseded
+
+> **Superseded 2026-11-01.** The upload shape is real, but every `read_config`
+> call below (and the `uploads_one_slot_with_read_modify_write_config` test) is
+> forbidden. The implementation starts from the session's local configuration
+> (seeded from a snapshot), never reads the device, and patches a **local**
+> copy that is published only after the handshake `COMMIT` succeeds. The repair
+> path restores the complete pre-upload block and falls back to the clock if the
+> shown slot was torn. See `docs/protocol.md` §11 and spec §3.3.
 
 **Files:**
 - Modify: `crates/gmk87-device/src/session.rs`
@@ -2099,9 +2159,9 @@ fn frame_data_responses() -> Vec<Vec<u8>> {
 }
 
 #[test]
-fn uploads_one_slot_with_read_modify_write_config() {
+fn uploads_one_slot_with_read_modify_write_config() {  // SUPERSEDED: no read path exists; the config is local state
     let mut mock = MockTransport::new();
-    // read_config handshake
+    // read_config handshake — FORBIDDEN: sends PREP_READ (0x03) and READ_CFG (0x05)
     mock.expect(Command::Init, vec![vec![]]);
     mock.expect(Command::PrepRead, vec![vec![]; 10]);
     mock.expect(Command::Commit, vec![vec![]]);
@@ -2135,7 +2195,7 @@ fn uploads_one_slot_with_read_modify_write_config() {
 #[test]
 fn cancellation_stops_streaming_and_repairs_the_display() {
     let mut mock = MockTransport::new();
-    // read_config handshake
+    // read_config handshake — FORBIDDEN: no code path may send PREP_READ/READ_CFG
     mock.expect(Command::Init, vec![vec![]]);
     mock.expect(Command::PrepRead, vec![vec![]; 10]);
     mock.expect(Command::Commit, vec![vec![]]);
@@ -2224,8 +2284,10 @@ pub struct UploadProgress {
 
 impl<T: Transport> Session<T> {
     /// Reads, applies `edit`, and writes back — never touching unknown bytes.
+    /// SUPERSEDED: there is no read path. The implemented version edits the
+    /// session's local configuration and writes the whole block.
     pub fn set_lighting(&mut self, edit: &dyn Fn(&mut DeviceConfig)) -> Result<()> {
-        let mut config = self.read_config()?;
+        let mut config = self.read_config()?;  // FORBIDDEN (0x03/0x05)
         edit(&mut config);
         self.write_config(&config)
     }
@@ -2250,7 +2312,7 @@ impl<T: Transport> Session<T> {
     ) -> Result<()> {
         plan.validate()?;
 
-        let previous = self.read_config()?;
+        let previous = self.read_config()?;  // FORBIDDEN: read-modify-write is impossible
 
         let mut config = previous.clone();
         config.set_slot0_frames(plan.slot0_frames.len().min(u8::MAX as usize) as u8);
@@ -2501,12 +2563,16 @@ pub fn run() -> anyhow::Result<()> {
 
 `crates/gmk87-cli/src/commands/config.rs`:
 
+> **Superseded:** `read_config` does not exist and `dump-config` is now
+> `show-config`, which prints the snapshot and performs no device I/O. Do not
+> implement the read below.
+
 ```rust
 use super::open_session;
 
 pub fn run() -> anyhow::Result<()> {
     let mut session = open_session()?;
-    let config = session.read_config()?;
+    let config = session.read_config()?;  // FORBIDDEN: no read path
     let bytes = config.as_bytes();
     println!("raw: {}", bytes.iter().map(|b| format!("{b:02x}")).collect::<String>());
     println!("underglow  effect={} brightness={} speed={} color={:?}",
@@ -2527,15 +2593,21 @@ pub fn run() -> anyhow::Result<()> {
 Run: `cargo clippy -p gmk87-cli --all-targets -- -D warnings`
 Expected: PASS, no warnings.
 
-- [ ] **Step 4: Verify against hardware**
+- [ ] **Step 4: Verify without hardware (hardware verification deferred)**
 
-With the keyboard plugged in, run: `cargo run -p gmk87-cli -- probe`
-Expected: prints `GMK87 (wired)  path=/dev/hidraw1  pid=0x5055  via=true` (the hidraw number may differ).
+Do **not** run `probe` or `dump-config` against a keyboard as part of this plan.
+There is no `dump-config` any more: the device cannot be read, so `show-config`
+prints the saved snapshot and performs no device I/O. Run the hardware-free
+checks instead:
 
-Run: `cargo run -p gmk87-cli -- dump-config`
-Expected: prints the raw 48-byte config and the decoded fields. Confirm `show`, frame counts and clock look sane.
+```bash
+cargo test --all
+cargo clippy --all-targets -- -D warnings
+```
 
-If this fails with `PermissionDenied`, install the rule: `sudo cp packaging/50-gmk87.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger`, then replug.
+If and only if a human explicitly re-authorises hardware work, use the
+foreground procedure in [`hardware-testing.md`](../../hardware-testing.md) —
+never a detached process, never `setsid`/`nohup`/`&`, and never `0x03`/`0x05`.
 
 - [ ] **Step 5: Commit**
 
@@ -2722,17 +2794,25 @@ pub mod upload;
 Run: `cargo clippy --all-targets -- -D warnings`
 Expected: PASS.
 
-- [ ] **Step 5: Verify against hardware (the M0 spike)**
+- [ ] **Step 5: Verify without hardware (hardware verification deferred)**
 
-Prepare a 240×135 test PNG. Then, on the real keyboard:
+Do **not** run the M0 spike. It was attempted and then deferred; the incident
+and the safety rules are in [`hardware-testing.md`](../../hardware-testing.md).
+No upload may be launched as part of this plan, and there is no `dump-config`
+command (the device cannot be read; `show-config` prints the snapshot).
 
-1. `cargo run -p gmk87-cli -- dump-config` — record the printed `show` value and raw config.
-2. `cargo run -p gmk87-cli -- upload test-pattern.png --slot 1 --show` — the display should show the test pattern within a few seconds.
-3. `cargo run -p gmk87-cli -- clock` — the display's clock should match system time.
-4. `cargo run -p gmk87-cli -- lights --effect 5 --brightness 9` — underglow should change.
-5. `cargo run -p gmk87-cli -- dump-config` — confirm slot-1 frames = 1 and delay = 60.
+Run only:
 
-Record the results in `docs/hardware-testing.md` (Task 14). If slot 1 shows the image but slot 0 is untouched, the read-modify-write path is proven.
+```bash
+cargo test --all
+cargo fmt --all --check
+cargo clippy --all-targets -- -D warnings
+```
+
+A future authorised run must use the results table in
+`docs/hardware-testing.md` §5, in the foreground, one command at a time. Any
+"read-modify-write path is proven" claim from the original spike is void: there
+is no read path.
 
 - [ ] **Step 6: Commit**
 
