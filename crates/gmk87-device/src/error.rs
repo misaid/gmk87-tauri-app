@@ -13,7 +13,7 @@ pub enum DeviceError {
     Hid(String),
     #[error("timed out waiting for command 0x{cmd:02x}")]
     ProtocolTimeout { cmd: u8 },
-    #[error("upload timed out after sending {sent} of {total} bytes; display left unchanged")]
+    #[error("upload timed out after sending {sent} of {total} bytes; display repair attempted — verify or reconnect")]
     UploadTimeout { sent: usize, total: usize },
     #[error("response checksum mismatch (expected 0x{expected:04x}, got 0x{actual:04x})")]
     ChecksumMismatch { expected: u16, actual: u16 },
@@ -21,7 +21,7 @@ pub enum DeviceError {
     DeviceDesynced,
     #[error("invalid job: {0}")]
     InvalidJob(String),
-    #[error("upload failed: {source}; display left unchanged")]
+    #[error("upload failed: {source}; display repair attempted — verify or reconnect")]
     UploadFailed {
         #[source]
         source: Box<DeviceError>,

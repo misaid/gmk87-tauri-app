@@ -241,26 +241,32 @@ impl<T: Transport> Session<T> {
         // because the CONFIG sent below already overwrites both frame counts
         // and the delay — including the count of the slot not being uploaded.
         let previous = self.config.clone();
-        self.config
-            .set_slot0_frames(plan.slot0_frames.len().min(u8::MAX as usize) as u8);
-        self.config
-            .set_slot1_frames(plan.slot1_frames.len().min(u8::MAX as usize) as u8);
-        self.config.set_frame_delay_ms(plan.delay_ms);
-        self.config.set_show_image(plan.show);
+
+        // Patch a *local* copy, not `self.config`. Until the handshake COMMIT
+        // is acknowledged the device holds nothing that this block describes,
+        // so a `to_memory` or handshake failure must leave the session's
+        // in-memory block untouched. Otherwise the next `set_lighting` or
+        // `sync_clock` would commit frame counts for a slot never written.
+        let mut patched = previous.clone();
+        patched.set_slot0_frames(plan.slot0_frames.len().min(u8::MAX as usize) as u8);
+        patched.set_slot1_frames(plan.slot1_frames.len().min(u8::MAX as usize) as u8);
+        patched.set_frame_delay_ms(plan.delay_ms);
+        patched.set_show_image(plan.show);
 
         let memory = plan.to_memory()?;
-        let config = self.config.clone();
 
         // INIT ×2 → CONFIG → COMMIT → READY
         self.send_and_wait(Command::Init, 0, &[])?;
         self.send_and_wait(Command::Init, 0, &[])?;
-        self.send_and_wait(Command::Config, 0, config.as_bytes())?;
+        self.send_and_wait(Command::Config, 0, patched.as_bytes())?;
         std::thread::sleep(WRITE_SETTLE);
         self.send_and_wait(Command::Commit, 0, &[])?;
         if !self.wait_for_ready(COMMAND_TIMEOUT)? {
             tracing::debug!("device sent no READY; continuing after the COMMIT acknowledgement");
         }
-        // The handshake completed, so streaming may begin.
+        // The handshake completed, so streaming may begin and the device now
+        // holds the patched block; publish it only at this point.
+        self.config = patched;
         self.synced = true;
 
         // The device now holds a partially written slot, so every exit below
@@ -270,9 +276,9 @@ impl<T: Transport> Session<T> {
             let _ = self.repair_display(&previous, plan);
             self.synced = false;
             return Err(match failure {
-                UploadFailure::Cancelled => {
-                    DeviceError::InvalidJob("upload cancelled; display left unchanged".into())
-                }
+                UploadFailure::Cancelled => DeviceError::InvalidJob(
+                    "upload cancelled; display repair attempted — verify or reconnect".into(),
+                ),
                 UploadFailure::Fatal(error) => error,
                 UploadFailure::Transport(error) => DeviceError::UploadFailed {
                     source: Box::new(error),

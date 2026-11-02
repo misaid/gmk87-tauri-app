@@ -84,7 +84,7 @@ fn payload_of(report: &[u8]) -> &[u8] {
 fn assert_cancelled(error: &DeviceError) {
     match error {
         DeviceError::InvalidJob(message) => assert!(
-            message.contains("display left unchanged"),
+            message.contains("display repair attempted"),
             "error does not name the display state: {message}"
         ),
         other => panic!("expected InvalidJob, got {other:?}"),
@@ -419,7 +419,7 @@ fn a_mid_upload_transport_failure_repairs_the_display() {
         other => panic!("expected UploadFailed, got {other:?}"),
     }
     assert!(
-        err.to_string().contains("display left unchanged"),
+        err.to_string().contains("display repair attempted"),
         "error does not name the display state: {err}"
     );
     assert!(
@@ -467,6 +467,76 @@ fn a_frame_budget_violation_never_touches_the_device() {
         DeviceError::Protocol(gmk87_protocol::error::ProtocolError::FrameBudget { .. })
     ));
     assert!(session.transport().writes().is_empty(), "no USB traffic");
+}
+
+#[test]
+fn a_to_memory_failure_leaves_the_in_memory_config_untouched() {
+    // A frame with the wrong length passes `validate` but fails `to_memory`.
+    let previous = previous_config(ShowSlot::Slot1);
+    let plan = FramePlan {
+        slot0_frames: vec![vec![0u8; 10]],
+        slot1_frames: vec![],
+        delay_ms: 100,
+        show: ShowSlot::Slot0,
+    };
+
+    let mut session = Session::with_config(MockTransport::new(), previous.clone());
+    let err = session
+        .upload(&plan, &CancelToken::new(), &mut |_| {})
+        .unwrap_err();
+
+    assert!(matches!(
+        err,
+        DeviceError::Protocol(gmk87_protocol::error::ProtocolError::InvalidJob(_))
+    ));
+    assert_eq!(
+        session.config(),
+        &previous,
+        "a failed memory build must not publish the patched frame counts"
+    );
+    assert!(
+        session.transport().writes().is_empty(),
+        "no USB traffic after a memory failure"
+    );
+}
+
+#[test]
+fn a_failed_handshake_leaves_the_in_memory_config_untouched() {
+    // Seed the session with a successful write so `synced` is true and the
+    // in-memory block is the one the device holds.
+    let previous = previous_config(ShowSlot::Slot1);
+    let plan = one_frame_plan();
+
+    let mut mock = MockTransport::new();
+    mock.expect(Command::Init, vec![vec![]]);
+    mock.expect(Command::Config, vec![vec![]]);
+    mock.expect(Command::Commit, vec![vec![]]);
+    // Upload handshake: both INITs are acknowledged, CONFIG is never answered.
+    mock.expect(Command::Init, vec![vec![]; 2]);
+
+    let mut session = Session::new(mock);
+    session.write_config(&previous).unwrap();
+    assert!(session.is_synced());
+
+    let err = session
+        .upload(&plan, &CancelToken::new(), &mut |_| {})
+        .unwrap_err();
+
+    assert!(matches!(
+        err,
+        DeviceError::ProtocolTimeout { cmd } if cmd == Command::Config.as_u8()
+    ));
+    assert_eq!(
+        session.config(),
+        &previous,
+        "a failed handshake must not publish a block the device never took"
+    );
+    assert_eq!(
+        session.config().show_image(),
+        ShowSlot::Slot1,
+        "the attempted `show` must not leak into the in-memory block"
+    );
+    assert_eq!(session.config().slot0_frames(), previous.slot0_frames());
 }
 
 /// A transport that answers every command immediately, like a healthy wired
