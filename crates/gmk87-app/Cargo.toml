@@ -15,3 +15,5 @@ serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 tempfile = "3"
+gif = "0.13"
+serde_json = "1"

@@ -50,3 +50,14 @@ fn io_errors_have_their_own_kind() {
     assert_eq!(error.kind, ErrorKind::Io);
     assert!(error.message.contains("disk full"));
 }
+
+#[test]
+fn budget_violations_classify_as_invalid_jobs() {
+    let error: AppError = gmk87_protocol::error::ProtocolError::FrameBudget {
+        frames: 40,
+        max: 36,
+    }
+    .into();
+    assert_eq!(error.kind, ErrorKind::InvalidJob);
+    assert!(error.message.contains("40"));
+}

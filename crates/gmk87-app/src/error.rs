@@ -65,8 +65,19 @@ impl From<DeviceError> for AppError {
 
 impl From<gmk87_protocol::error::ProtocolError> for AppError {
     fn from(error: gmk87_protocol::error::ProtocolError) -> Self {
-        let wrapped: DeviceError = error.into();
-        wrapped.into()
+        use gmk87_protocol::error::ProtocolError as P;
+        // A frame-budget or delay violation is a bad job, not a protocol fault:
+        // the UI treats it as user-correctable input.
+        let kind = match &error {
+            P::FrameBudget { .. } | P::FrameDelayTooShort { .. } | P::InvalidJob(_) => {
+                ErrorKind::InvalidJob
+            }
+            _ => ErrorKind::Protocol,
+        };
+        Self {
+            kind,
+            message: error.to_string(),
+        }
     }
 }
 
