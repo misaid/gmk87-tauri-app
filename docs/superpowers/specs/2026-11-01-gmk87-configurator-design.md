@@ -74,14 +74,57 @@ discarded until the timeout expires.
 
 ### 3.3 Configuration buffer
 
-A 64-byte configuration block holding display settings (frame counts, frame
+A 48-byte configuration block holding display settings (frame counts, frame
 delay, which slot is shown), underglow settings, LED settings and clock fields.
-Read with `INIT → PREP_READ ×10 → COMMIT → READ_CFG ×13`; written with
-`INIT → CONFIG → COMMIT`.
+Written with `INIT → CONFIG → COMMIT`.
 
-Because several bytes in the block are undocumented, **all writes are
-read-modify-write against the raw buffer**. Only the fields the app understands
-are changed; every other byte is written back exactly as read.
+**Corrected 2026-11-01 — the device cannot be read.** The originally planned
+read-modify-write is impossible on this hardware, verified on the physical
+keyboard over both wired and 2.4 GHz:
+
+- `READ_CFG 0x05` **echoes the request payload** back (`deadbeef` in → `deadbeef`
+  out); it never returns device memory. Verified wired and wireless.
+- The reference `PREP_READ ×10 → COMMIT` "read mode" preamble reset and
+  re-enumerated the keyboard twice, so it is not a usable read path.
+- A capture of the **official application's own traffic** shows its `0x05`
+  responses also carry zero payloads, while the config it writes contains values
+  it could not have read back (brightness 9, RGB `f8ff00`, and a correct BCD
+  timestamp). The official app keeps configuration state in its UI and never
+  truly reads. Its `0x05` phase is vestigial preamble.
+
+Consequence: settings cannot be read back, so they cannot be preserved by
+read-modify-write. The app maintains the configuration as local state, writes
+the complete 48-byte block, and keeps a snapshot of the last block written. The
+first write sets underglow/LED/time to the app's values.
+
+A validated reference config from that capture, used for defaults:
+
+| Offset | Value | Meaning |
+|---|---|---|
+| 1 | 0 | underglow effect |
+| 2 | 9 | brightness (max) |
+| 6–8 | `f8 ff 00` | underglow RGB |
+| 33 | 0 | show clock |
+| 35–41 | `57 24 14 02 28 10 25` | BCD `2025-10-28 20:24:57`, weekday 2 (Tue) |
+| 43–44 | `ff ff` | frame interval sentinel |
+| 46 | `ff` | sentinel |
+
+This confirms the offset map in §3.3 and the BCD clock encoding in §3.6, and
+shows bytes 43–47 are sentinels rather than plain values.
+
+### 3.3a Vendor interface and report ID (corrected)
+
+Writes go to **report ID `0x04`** on the `0xFF1C` collection, on either the wired
+interface 3 or the 2.4 GHz dongle's vendor interface. Both accept 64-byte writes
+and acknowledge.
+
+The wired interface's **input** report is declared as only **7 bytes** (63-byte
+output, 7-byte input), so its acknowledgements arrive as 8 bytes. The dongle
+declares a 63-byte input and returns full 64-byte acknowledgements. Because
+acknowledgements may therefore be short, the read path must match on the command
+byte and tolerate a truncated or absent payload rather than requiring a full
+64-byte frame. The working community Linux tool reads exactly 8 bytes and checks
+only the command byte.
 
 ### 3.4 Display
 
@@ -141,7 +184,7 @@ Pure, no I/O, fully unit-testable.
   interface chosen by usage page `0xFF1C`, with `0xFF60` recorded separately.
 - `Transport` trait (`write_report`, `read_report`) with a `HidTransport`
   implementation and a `MockTransport` for tests.
-- `Session`: owns the handshake, config read-modify-write, upload streaming,
+- `Session`: owns the handshake, the in-memory configuration, upload streaming,
   retry policy and progress reporting. All device state lives here, not in the UI
   layer.
 - If both the wired keyboard and the 2.4 GHz dongle are present, discovery
@@ -189,8 +232,8 @@ kept afterwards as a scripting and recovery path.
    240×135, converts to big-endian RGB565, pads each slot to 65,536 bytes.
 3. Budget check before touching the device: ≤36 frames total, delay ≥60 ms. On
    violation, fail with a specific message.
-4. Read the current config, patch only frame counts, frame delay and
-   `show_image`, leave every other byte intact.
+4. Take the session's in-memory config, set frame counts, frame delay and
+   `show_image`, and write the complete 48-byte block (no device read).
 5. `INIT ×2 → CONFIG → COMMIT (100 ms) → wait READY(0x23) → FRAME_DATA ×N →
    COMMIT`, waiting for a matching response per packet with a timeout, emitting
    progress roughly every 1%.
@@ -199,9 +242,11 @@ kept afterwards as a scripting and recovery path.
 
 ## 6. Lighting and clock
 
-Both are config read-modify-write operations: read the 64-byte block, patch the
-relevant fields, write it back. No frame streaming. Clock sync patches the
-date/time fields from the system clock and writes the block back.
+Both patch the session's in-memory 48-byte configuration and write the whole
+block with `INIT → CONFIG → COMMIT`. No frame streaming. Clock sync sets the
+date/time fields from the system clock and writes the block. Because the device
+cannot be read (see §3.3), the app's in-memory configuration is the source of
+truth and the app keeps a snapshot of the last block it wrote.
 
 ## 7. Failure handling and lifecycle
 
@@ -248,9 +293,10 @@ diagnostics" action (app version, kernel, device paths, recent log lines).
 4. **Hardware tests** — documented manual checklist plus the `gmk87-cli`,
    opt-in via `GMK87_HW=1`; never run in CI.
 
-The first implementation step is a hardware validation spike: read the config,
-upload a test pattern to **slot 1** (leaving slot 0 untouched), show slot 1, then
-restore the original `show_image` and settings.
+The first implementation step is a hardware validation spike: write a known
+default config, upload a test pattern to **slot 1**, and show slot 1. Because the
+device cannot be read, the spike validates the write path and the display switch
+rather than a config round-trip.
 
 ## 9. Packaging
 
@@ -264,7 +310,7 @@ restore the original `show_image` and settings.
 
 | Milestone | Content | Exit criterion |
 |---|---|---|
-| M0 | Workspace scaffold, CI, `gmk87-cli probe/dump-config` | Config read→write→read is byte-identical; slot-1 test image shows and restores |
+| M0 | Workspace scaffold, CI, `gmk87-cli probe/show-config` | A default config is written and acknowledged; slot-1 test image shows |
 | M1 | Protocol core | Codec, config, RGB565, frame planning; unit tests green |
 | M2 | Device layer | Discovery (wired + 2.4 GHz), session, retry rules, mock tests |
 | M3 | Tauri shell | Commands, events, device screen, connect/reconnect |
