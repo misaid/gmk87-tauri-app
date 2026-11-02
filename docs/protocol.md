@@ -8,7 +8,9 @@ file follows them.
 Every claim below is marked with how it is known:
 
 - **Verified** — observed on the physical GMK87, wired or over the 2.4 GHz
-  dongle, or in a capture of the official application's own traffic.
+  dongle, or in a capture of the official application's own traffic. Where the
+  transport matters the marker names it ("Verified on the wired transport");
+  such a claim says nothing about the other transport.
 - **Reference** — taken from the MIT-licensed community implementations named in
   the attribution section, and consistent with that capture.
 - **Unverified** — plausible from the references but never confirmed on this
@@ -69,10 +71,11 @@ report is declared seven bytes long, so every acknowledgement read from the
 wired keyboard is truncated to **8 bytes** and the payload at offset 8 is lost.
 The write path is unaffected; there is no read path anyway (§6).
 
-Wired writes now have hardware evidence: `clock` and `lights` complete in about
-0.1 s, and a wired frame upload was attempted (it failed on a backlog of
-unacknowledged frames, not on the handshake — see §11 and
-[`hardware-testing.md`](hardware-testing.md)).
+Wired writes are **verified end to end** on the physical keyboard:
+`clock` and `lights` complete in about 0.1 s, and a single-frame display upload
+(1,171 paced `FRAME_DATA` packets) completes in 2.9 s and displays its image. The
+clock was confirmed on the panel; the underglow was not observed. See
+[`hardware-testing.md`](hardware-testing.md).
 
 The 2.4 GHz dongle exposes a vendor collection on usage page `0xFF1C` with a
 63-byte input *and* a 63-byte output report. It therefore returns full 64-byte
@@ -94,8 +97,8 @@ application and the working community Linux tool use.
 
 Every write is a **64-byte HID report on report ID `0x04`**, on either
 transport. **Verified** on both: the dongle acknowledges configuration and
-frame writes, and the wired interface accepts configuration writes and frame
-packets (its first full frame stream timed out; see §11).
+frame writes, and the wired interface completes configuration writes and a full
+single-frame upload (§11).
 
 | Offset | Size | Meaning |
 |---|---|---|
@@ -157,8 +160,10 @@ The read path therefore:
 - reads with a timeout (100 ms slices inside a 1.5 s command deadline);
 - discards any report shorter than 8 bytes, or whose byte 3 is not the command
   it is waiting for;
-- accepts a matching command with an **empty payload** — the wired ack has no
-  payload, and no acknowledgement on this device carries one;
+- accepts a matching command with an **empty payload** — the wired ack has
+  carried no payload in any observation, and its truncation leaves room for one
+  that has never been seen; no acknowledgement on this device has carried one,
+  and the shape of a wired configuration write's ack is still unverified;
 - validates the checksum **only** for reports of at least 12 bytes that begin
   with report ID `0x04`, and discards a mismatch rather than accepting it;
 - gives up after the command deadline with `ProtocolTimeout { cmd }`.
@@ -177,7 +182,7 @@ equally tolerant where it must be (the dongle's framing).
 | `READ_CFG` | `0x05` | — | — | **never send**: it echoes the request payload and never returns device memory (§6) |
 | `CONFIG` | `0x06` | host → device | 48 bytes | the complete configuration block (§7) |
 | `FRAME_DATA` | `0x21` | host → device | ≤ 56 bytes | frame memory at a 24-bit position; acknowledged per packet when the transport is prompt, otherwise paced adaptively (§11) |
-| `READY` / `UPLOAD_START` | `0x23` | host → device | none | the host sends it once, between `COMMIT` and the first `FRAME_DATA`, to open the upload session; its acknowledgement is optional (§11) |
+| `READY` / `UPLOAD_START` | `0x23` | host → device | none | the host sends it once, between `COMMIT` and the first `FRAME_DATA`, to open the upload session; its acknowledgement is optional. **Verified on the wired transport** (§11) |
 
 `PREP_READ` and `READ_CFG` remain in the codec only so that the full command set
 can be decoded; no production path constructs them, and tests assert that
@@ -313,10 +318,11 @@ the block it wrote and marks itself synchronised.
 Lighting and clock changes use exactly this sequence — no settle, no frame
 streaming, no read beforehand. The upload handshake writes the same block but
 does add a 100 ms settle between `CONFIG` and `COMMIT` (see §11); that pause is
-specific to the upload path. **Acknowledged on both transports**: the dongle's
-clock and brightness writes were confirmed at the protocol level (the effect was
-never seen), and the wired `clock` and `lights` writes complete in about 0.1 s
-(see `hardware-testing.md`).
+specific to the upload path. **Verified on the wired transport**: the wired
+`clock` (0.099 s) and `lights` (0.101 s) writes are acknowledged, the panel shows
+the clock that was written, and the clock bytes survive a later lighting write.
+On the dongle only the protocol acknowledgement has been seen, in ~1.02 s (see
+`hardware-testing.md`).
 
 ## 8. Display
 
@@ -330,9 +336,12 @@ never seen), and the wired `clock` and `lights` writes complete in about 0.1 s
 | Slots | 2 |
 | `show_image` | 0 = clock, 1 = slot 0, 2 = slot 1 |
 
-**Reference** for resolution, endianness, padding and the packet count. The panel
-has never been seen displaying an uploaded frame, so nothing about the image
-path is confirmed by eye (see `hardware-testing.md`).
+**Reference** for resolution, endianness, padding and the packet count. **Verified
+on the wired transport** for a single 240 × 135 frame: a slot-1 upload completed
+and the panel displayed the image. That is one image on one transport; it is
+evidence for the geometry and the RGB565 framing but not a full format check.
+Animation and the 2.4 GHz image path remain unverified (see
+`hardware-testing.md`).
 
 RGB565 packing (big-endian on the wire):
 
@@ -388,9 +397,10 @@ wrote to the keyboard:
 | 41 | year | 2026 | `26` |
 
 The tail of the snapshot after that write was
-`… 00 01 19 00 01 11 26 00 ff ff 00 ff 00`. **Verified**: the write was
-acknowledged and the bytes are in the snapshot, but no human saw the panel
-advance (see `hardware-testing.md`).
+`… 00 01 19 00 01 11 26 00 ff ff 00 ff 00`. **Verified on the wired transport**:
+the write was acknowledged in 0.099 s and the panel shows the correct time. On the
+dongle the same bytes were acknowledged but the panel was not observed (see
+`hardware-testing.md`).
 
 ## 11. Upload sequence
 
@@ -422,17 +432,23 @@ with valid checksums) contains exactly one occurrence: length 0, position 0,
 immediately after the configuration `COMMIT` and immediately before the first
 frame packet. Both community references send it the same way. Without it the
 device accepts frame writes for about sixteen seconds and then resets — the
-wired hardware run that exposed this had the kernel log a USB disconnect.
+wired hardware run that exposed this had the kernel log a USB disconnect. With
+`0x23` sent, the same wired upload completes in **2.9 s** (1,171 paced packets)
+and the device stays up.
 
 Its acknowledgement is optional: the wired interface answers within the command
 deadline, while the 2.4 GHz dongle acknowledges sparsely, so a missing
 acknowledgement is logged and the stream proceeds. UPLOAD_START is sent exactly
 once per upload; it is not retried.
 
-**Verified** up to and including individual `FRAME_DATA` acknowledgements on
-the dongle, and the wired handshake plus the start of a frame stream. A first
-wired one-slot upload reset the device after about 16 s because UPLOAD_START was
-never sent; the retry with the corrected handshake is pending (see
+**Provenance.** The whole sequence above —
+`INIT ×2 → CONFIG → COMMIT → UPLOAD_START (0x23) → FRAME_DATA ×N → COMMIT` — and
+the paced frame streaming are **Verified on the wired transport**: a one-slot
+upload ran to completion on 2026-11-01, the final `COMMIT` was acknowledged, the
+device never reset, and the panel displayed the uploaded image. The 2.4 GHz
+upload is **Unverified**: only individual `FRAME_DATA` acknowledgements
+(~1.018 s apart) have been observed there, and no dongle upload has finished.
+Multi-frame and GIF uploads have not been attempted on either transport (see
 `hardware-testing.md`).
 
 ### Frame acknowledgement pacing adapts to the transport
@@ -473,8 +489,10 @@ acknowledgement is the authority that the transaction finished.
 
 The switch is one-way so a single slow packet cannot make the mode flap. Both
 modes check cancellation between packets and at least every `CANCEL_POLL_SLICE`
-inside a wait. Whether a full 65,536-byte frame finishes in 300 s over the
-dongle is still **unverified**.
+inside a wait. **Verified on the wired transport**: a one-slot upload stayed
+paced for all 1,171 packets, never fell back to the tolerant mode, and finished
+in 2.9 s. Whether a full 65,536-byte frame finishes in 300 s over the dongle is
+still **unverified**.
 
 ### Failure and repair
 
@@ -519,10 +537,11 @@ slot 0 intact has not been observed.
 
 All of these are written by patching the in-memory block and sending the whole
 48-byte block with `INIT → CONFIG → COMMIT`. Nothing is read first, and no frame
-streaming is involved. **Reference** for the ranges; on both transports the
-write path is confirmed only to the level of an acknowledged `COMMIT` (the
-underglow was never seen to change — see `hardware-testing.md`). The wired
-`clock` and `lights` commands complete in about 0.1 s.
+streaming is involved. **Reference** for the ranges. The configuration write path
+is **Verified on the wired transport** — `clock` and `lights` both complete in
+about 0.1 s and the clock that was written shows on the panel — but no lighting
+change has been confirmed by eye, and the dongle is confirmed only to an
+acknowledged `COMMIT` (see `hardware-testing.md`).
 
 ## 13. Open questions
 
@@ -531,12 +550,11 @@ write path's shape.
 
 | Question | Why it is open |
 |---|---|
-| Does a full 65,536-byte frame complete within the 300 s ceiling over the dongle? | At ~1.02 s per acknowledgement the stream is heavily paced; no upload has completed |
+| Does a full 65,536-byte frame complete within the 300 s ceiling over the dongle? | At ~1.02 s per acknowledgement the stream is heavily paced; no dongle upload has completed. The wired path does complete (§11) |
 | Does a slot-1-only upload at position 0 leave slot 0 intact? | Assumed from the reference implementation's frame-count split |
 | What do offsets 0, 9–20, 22–27, 30, 42, 45 and 47 mean? | Opaque; carried verbatim from the reference/default block |
 | Does `show_image` survive a power cycle? | Never observed |
 | Are the frame-count and delay limits really 36 and 60 ms? | Taken from the references; never tested at the boundary |
-| Does the wired transport finish an upload now that frames are acknowledged per packet? | The first wired attempt failed after ~17 s with an OUT-transfer timeout; the adaptive-pacing retry is pending |
 | Does hidapi preserve the report ID at offset 0 of input reports? | Matching reads `report[3]`, which assumes it does. Unconfirmed on hardware; if it does not, every acknowledgement misses and the upload fails after 64 misses with `ProtocolTimeout` |
 | Is interface 2 (`0xFFEF`, report ID 5) a safe alternate transport? | It answers with full-length reports, but is unused and untested for writes |
 | Do GIFs with partial-frame updates render correctly? | Frames are decoded independently, without compositing |

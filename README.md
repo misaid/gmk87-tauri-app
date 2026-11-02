@@ -9,12 +9,12 @@ This repository currently contains the **Rust core and a command-line tool**.
 The Tauri desktop application is a follow-on plan; the protocol, device layer and
 CLI are complete enough to build on.
 
-> **Hardware verification is deferred.** The write path is implemented and
-> tested against mock transports, and the keyboard has acknowledged
-> configuration writes, but no display upload has ever been seen to finish and no
-> lighting or clock change has been confirmed by eye. Read
-> [`docs/hardware-testing.md`](docs/hardware-testing.md) before writing to a
-> real keyboard — it explains why, and the safety rules any run must follow.
+> **The wired write path is verified end to end.** On 2026-11-01 the wired
+> keyboard accepted a clock write (the panel shows it), a lighting write, and a
+> single-frame display upload that put its image on the panel. The 2.4 GHz
+> upload, animation, and power-cycle persistence are still unverified. Read
+> [`docs/hardware-testing.md`](docs/hardware-testing.md) before writing to a real
+> keyboard — it records what was seen and the safety rules any run must follow.
 
 ## Supported hardware
 
@@ -57,7 +57,7 @@ crates/
   gmk87-cli/        the gmk87-cli debug and recovery tool
 docs/
   protocol.md               corrected protocol reference
-  hardware-testing.md       deferred verification, safety rules, results table
+  hardware-testing.md       verified results, safety rules, results table
 packaging/
   50-gmk87.rules            udev rule granting seat access without root
 ```
@@ -159,10 +159,13 @@ application. `docs/protocol.md` §6 has the full evidence and consequences.
 
 ## Hardware verification
 
-Deliberately deferred. See [`docs/hardware-testing.md`](docs/hardware-testing.md)
-for the incident that caused it (a detached upload produced spurious keystrokes
-and triggered system poweroffs), the safety rules for any future run, the
-evidence gathered so far, and an empty results table to fill in.
+The wired transport is verified end to end: clock, lighting, and a single-frame
+display upload. The 2.4 GHz dongle upload, multi-frame/GIF animation, the wired
+acknowledgement's payload shape, and `show_image` across a power cycle remain
+unverified. See [`docs/hardware-testing.md`](docs/hardware-testing.md) for the
+results, the incident that shapes the safety rules (a detached upload produced
+spurious keystrokes and triggered system poweroffs), and the empty rows left for
+a future run.
 
 ## Desktop application
 
