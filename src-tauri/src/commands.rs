@@ -182,11 +182,6 @@ pub async fn copy_diagnostics(state: State<'_, AppState>) -> Result<String, AppE
     if let Ok(uname) = std::fs::read_to_string("/proc/sys/kernel/osrelease") {
         report.push_str(&format!("kernel: {}\n", uname.trim()));
     }
-    let log_dir =
-        gmk87_app::snapshot::default_path().and_then(|p| p.parent().map(|d| d.join("logs")));
-    if let Some(dir) = log_dir {
-        report.push_str(&format!("logs: {}\n", dir.display()));
-    }
     Ok(report)
 }
 
@@ -231,19 +226,20 @@ pub fn spawn_reconnect_monitor(app: AppHandle, state: &AppState, path: String) {
     let runtime = state.runtime.clone();
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_secs(2));
-        {
-            let rt = runtime.lock().expect("runtime lock");
-            match &rt.path {
-                Some(current) if current == &path => {}
-                _ => return,
-            }
+        // Hold the lock from the check through the mutation so a concurrent
+        // connect() cannot be clobbered in a gap between them.
+        let mut rt = runtime.lock().expect("runtime lock");
+        match rt.path.as_deref() {
+            Some(current) if current == path.as_str() => {}
+            _ => return,
         }
-        if !std::path::Path::new(&path).exists() {
-            let mut rt = runtime.lock().expect("runtime lock");
-            rt.manager = None;
-            rt.path = None;
-            let _ = app.emit("device://disconnected", path.clone());
-            return;
+        if std::path::Path::new(&path).exists() {
+            continue;
         }
+        rt.manager = None;
+        rt.path = None;
+        drop(rt);
+        let _ = app.emit("device://disconnected", path.clone());
+        return;
     });
 }

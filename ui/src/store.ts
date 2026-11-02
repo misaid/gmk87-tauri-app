@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import * as ipc from "./lib/ipc";
 import { DEFAULT_CROP, type CropParams } from "./lib/crop";
+import { otherSlotFrames } from "./lib/budget";
 
 export type Slot = "slot0" | "slot1";
 
@@ -20,6 +21,7 @@ interface AppStore {
   previewUrl: string | null;
   progress: ipc.UploadProgress | null;
   uploads: number;
+  previewTimer: number | null;
 
   refreshDevices: () => Promise<void>;
   connectTo: (path: string) => Promise<void>;
@@ -29,8 +31,11 @@ interface AppStore {
   loadSource: (bytes: Uint8Array, name: string) => void;
   setDelayMs: (ms: number) => void;
   refreshPreview: () => Promise<void>;
+  schedulePreview: () => void;
   upload: (delayMs: number, showAfter: boolean) => Promise<void>;
   cancel: () => Promise<void>;
+  setProgress: (progress: ipc.UploadProgress) => void;
+  handleDisconnected: () => void;
   applyLighting: (patch: ipc.LightingPatch) => Promise<void>;
   loadPresets: () => Promise<void>;
   applyPreset: (name: string) => Promise<void>;
@@ -69,6 +74,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   previewUrl: null,
   progress: null,
   uploads: 0,
+  previewTimer: null,
 
   refreshDevices: async () => {
     try {
@@ -95,20 +101,40 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
   setCrop: (crop) => {
     set({ crop });
-    void get().refreshPreview();
+    get().schedulePreview();
   },
-  setSlot: (slot) => set({ slot }),
+  setSlot: (slot) => {
+    set({ slot });
+    const { sourceInfo, state } = get();
+    if (sourceInfo) {
+      set({ totalFrames: sourceInfo.frames + otherSlotFrames(state, slot) });
+    }
+  },
   loadSource: async (bytes, name) => {
     set({ source: { bytes, name }, sourceInfo: null });
     void get().refreshPreview();
     try {
       const info = await ipc.inspectSource(bytes, get().crop);
-      set({ sourceInfo: info, delayMs: info.delayMs, totalFrames: info.frames + 1 });
+      set({
+        sourceInfo: info,
+        delayMs: info.delayMs,
+        totalFrames: info.frames + otherSlotFrames(get().state, get().slot),
+      });
     } catch (error) {
       set({ error: message(error), errorKind: kindOf(error) });
     }
   },
   setDelayMs: (delayMs) => set({ delayMs }),
+
+  schedulePreview: () => {
+    const existing = get().previewTimer;
+    if (existing !== null) window.clearTimeout(existing);
+    const id = window.setTimeout(() => {
+      set({ previewTimer: null });
+      void get().refreshPreview();
+    }, 80);
+    set({ previewTimer: id });
+  },
 
   refreshPreview: async () => {
     const { source, crop } = get();
@@ -119,7 +145,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
     try {
       const png = await ipc.previewDisplay(source.bytes, crop);
       const blob = new Blob([new Uint8Array(png)], { type: "image/png" });
-      set({ previewUrl: URL.createObjectURL(blob), error: null, errorKind: null });
+      const url = URL.createObjectURL(blob);
+      set((state) => {
+        if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
+        return { previewUrl: url, error: null, errorKind: null };
+      });
     } catch (error) {
       set({ error: message(error), errorKind: kindOf(error) });
     }
@@ -151,6 +181,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
   cancel: async () => {
     await ipc.cancelUpload();
   },
+
+  setProgress: (progress) => set({ progress }),
+
+  handleDisconnected: () =>
+    set({
+      connected: false,
+      state: null,
+      error: "The keyboard was disconnected. Reconnect from the Device screen.",
+      errorKind: null,
+    }),
 
   applyLighting: async (patch) => {
     try {

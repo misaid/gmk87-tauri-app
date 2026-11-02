@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { budgetError } from "./budget";
+import { budgetError, otherSlotFrames } from "./budget";
 
 describe("budgetError", () => {
   it("accepts a valid animation", () => {
@@ -13,5 +13,15 @@ describe("budgetError", () => {
   });
   it("rejects an empty animation", () => {
     expect(budgetError({ totalFrames: 0, delayMs: 100 })).not.toBeNull();
+  });
+});
+
+describe("otherSlotFrames", () => {
+  it("returns the slot that is not being replaced", () => {
+    expect(otherSlotFrames({ slot0Frames: 10, slot1Frames: 3 }, "slot0")).toBe(3);
+    expect(otherSlotFrames({ slot0Frames: 10, slot1Frames: 3 }, "slot1")).toBe(10);
+  });
+  it("assumes one retained frame before any device state is known", () => {
+    expect(otherSlotFrames(null, "slot0")).toBe(1);
   });
 });

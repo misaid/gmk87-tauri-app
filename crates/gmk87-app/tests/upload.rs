@@ -112,6 +112,21 @@ fn cancelling_mid_stream_repairs_and_reports_it() {
         error.message
     );
     assert!(!manager.is_synced(), "a cancelled session is not synced");
+
+    // The repair must actually be sent: a bare COMMIT to close the frame
+    // transaction, then INIT → CONFIG → COMMIT to rewrite the previous block.
+    let commands = manager.transport().commands_sent();
+    let tail = &commands[commands.len() - 4..];
+    assert_eq!(
+        tail,
+        [
+            Command::Commit.as_u8(),
+            Command::Init.as_u8(),
+            Command::Config.as_u8(),
+            Command::Commit.as_u8(),
+        ],
+        "repair traffic missing; commands sent: {commands:?}"
+    );
 }
 
 #[test]

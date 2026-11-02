@@ -66,6 +66,11 @@ impl<T: Transport> DeviceManager<T> {
         &self.slots
     }
 
+    /// The underlying transport, for tests that inspect what was sent.
+    pub fn transport(&self) -> &T {
+        self.session.transport()
+    }
+
     /// Streams a prepared plan, then persists the block the session committed.
     pub fn upload_plan(
         &mut self,

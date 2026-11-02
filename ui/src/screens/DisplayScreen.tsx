@@ -18,7 +18,7 @@ export default function DisplayScreen() {
   const setDelayMs = useAppStore((s) => s.setDelayMs);
   const loadSource = useAppStore((s) => s.loadSource);
 
-  const problem = budgetError({ totalFrames, delayMs });
+  const problem = source ? budgetError({ totalFrames, delayMs }) : null;
 
   async function onFile(file: File) {
     const bytes = new Uint8Array(await file.arrayBuffer());
@@ -81,8 +81,9 @@ export default function DisplayScreen() {
         <UploadControls />
 
         <p className="text-xs text-white/40">
-          Both display slots are always sent together: the keyboard rewrites all of its image memory
-          on every upload, so the untouched slot is resent as-is.
+          Both display slots are sent together, so the untouched slot is preserved for this session.
+          The keyboard keeps no readable memory: after the app restarts, the first upload resets the
+          other slot to black.
         </p>
       </div>
     </div>

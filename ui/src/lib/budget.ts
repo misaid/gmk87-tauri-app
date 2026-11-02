@@ -16,3 +16,17 @@ export function budgetError({ totalFrames, delayMs }: Budget): string | null {
   }
   return null;
 }
+
+/**
+ * Frames the slot that is *not* being replaced will resend. The device's whole
+ * image memory is rewritten on every upload, so the other slot's frames count
+ * against the budget. Before any device state is known, assume the one black
+ * frame a fresh `SlotStore` holds.
+ */
+export function otherSlotFrames(
+  state: { slot0Frames: number; slot1Frames: number } | null,
+  slot: "slot0" | "slot1",
+): number {
+  if (!state) return 1;
+  return slot === "slot0" ? state.slot1Frames : state.slot0Frames;
+}

@@ -22,6 +22,7 @@ pub struct LedState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DeviceStateDto {
     pub connected: bool,
     pub synced: bool,

@@ -2,12 +2,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { StatusBar } from "@/components/StatusBar";
 import { KeyboardPreview } from "@/components/KeyboardPreview";
+import { useDeviceEvents } from "@/lib/useDeviceEvents";
 import DeviceScreen from "@/screens/DeviceScreen";
 import DisplayScreen from "@/screens/DisplayScreen";
 import LightingScreen from "@/screens/LightingScreen";
 import ClockScreen from "@/screens/ClockScreen";
 
 export default function App() {
+  useDeviceEvents();
+
   return (
     <div className="flex h-full flex-col">
       <StatusBar />

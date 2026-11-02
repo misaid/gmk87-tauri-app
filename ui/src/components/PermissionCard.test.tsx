@@ -7,6 +7,8 @@ describe("PermissionCard", () => {
   it("shows the udev rule and reload commands", () => {
     render(<PermissionCard />);
     expect(screen.getByText(/TAG\+=.uaccess./)).toBeInTheDocument();
+    expect(screen.getByText(/5055/)).toBeInTheDocument();
+    expect(screen.getByText(/5088/)).toBeInTheDocument();
     expect(screen.getByText(/udevadm control --reload-rules/)).toBeInTheDocument();
   });
 

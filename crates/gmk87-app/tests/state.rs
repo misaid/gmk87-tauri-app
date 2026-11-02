@@ -2,6 +2,23 @@ use gmk87_app::state::DeviceStateDto;
 use gmk87_protocol::config::{DeviceConfig, ShowSlot};
 
 #[test]
+fn serializes_to_camel_case_field_names() {
+    let config = DeviceConfig::default_config();
+    let value = serde_json::to_value(DeviceStateDto::from_config(&config, true, false)).unwrap();
+    assert!(
+        value.get("winLock").is_some(),
+        "expected camelCase keys: {value}"
+    );
+    assert!(value.get("slot0Frames").is_some(), "{value}");
+    assert!(value.get("slot1Frames").is_some(), "{value}");
+    assert!(value.get("frameDelayMs").is_some(), "{value}");
+    assert!(
+        value.get("win_lock").is_none(),
+        "snake_case leaked: {value}"
+    );
+}
+
+#[test]
 fn projects_a_config_into_a_serializable_state() {
     let mut raw = [0u8; 48];
     raw[1] = 5;

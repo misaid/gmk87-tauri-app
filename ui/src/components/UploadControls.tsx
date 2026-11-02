@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { budgetError } from "@/lib/budget";
 import { useAppStore } from "@/store";
 
 export function UploadControls() {
@@ -12,6 +13,7 @@ export function UploadControls() {
   const source = useAppStore((s) => s.source);
 
   const busy = uploads > 0;
+  const problem = source ? budgetError({ totalFrames, delayMs }) : null;
   const percent =
     progress && progress.totalBytes > 0
       ? Math.round((progress.bytesSent / progress.totalBytes) * 100)
@@ -19,7 +21,10 @@ export function UploadControls() {
 
   return (
     <div className="flex flex-col gap-2">
-      <Button disabled={busy || !source} onClick={() => void upload(delayMs, true)}>
+      <Button
+        disabled={busy || !source || problem !== null}
+        onClick={() => void upload(delayMs, true)}
+      >
         Upload and show
       </Button>
       <Button variant="outline" disabled={!busy} onClick={() => void cancel()}>
