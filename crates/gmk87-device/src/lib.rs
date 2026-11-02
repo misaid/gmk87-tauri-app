@@ -2,4 +2,6 @@
 
 pub mod discovery;
 pub mod error;
+pub mod mock;
+pub mod session;
 pub mod transport;
