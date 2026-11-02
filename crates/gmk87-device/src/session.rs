@@ -2,7 +2,7 @@
 
 use crate::error::{DeviceError, Result};
 use crate::transport::Transport;
-use gmk87_protocol::config::{DeviceConfig, CONFIG_LEN};
+use gmk87_protocol::config::{DeviceConfig, ShowSlot, CONFIG_LEN};
 use gmk87_protocol::frames::FramePlan;
 use gmk87_protocol::packet::{checksum, Command, Packet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -146,6 +146,12 @@ pub struct UploadProgress {
     pub total_bytes: usize,
 }
 
+/// Why the streaming phase stopped, so `upload` can repair once and report.
+enum UploadFailure {
+    Cancelled,
+    Transport(DeviceError),
+}
+
 impl<T: Transport> Session<T> {
     /// Reads, applies `edit`, and writes back — never touching unknown bytes.
     pub fn set_lighting(&mut self, edit: &dyn Fn(&mut DeviceConfig)) -> Result<()> {
@@ -166,6 +172,10 @@ impl<T: Transport> Session<T> {
     }
 
     /// Full upload: validate, patch config, stream frames, commit.
+    ///
+    /// Any failure below the handshake — cancellation, a transport error while
+    /// streaming, or a failed final COMMIT — first closes the frame transaction
+    /// and puts a safe display target back, then returns the failure.
     pub fn upload(
         &mut self,
         plan: &FramePlan,
@@ -183,7 +193,6 @@ impl<T: Transport> Session<T> {
         config.set_show_image(plan.show);
 
         let memory = plan.to_memory()?;
-        let total_bytes = memory.len();
 
         // INIT ×2 → CONFIG → COMMIT → READY
         self.send_and_wait(Command::Init, 0, &[])?;
@@ -193,17 +202,40 @@ impl<T: Transport> Session<T> {
         self.send_and_wait(Command::Commit, 0, &[])?;
         self.wait_for_ready()?;
 
+        // The device now holds a partially written slot, so every exit below
+        // must leave the display somewhere safe.
+        if let Err(failure) = self.stream_frames(&memory, cancel, progress) {
+            // Best-effort: a failed repair must never mask the real cause.
+            let _ = self.repair_display(&previous, plan.show);
+            self.synced = false;
+            return Err(match failure {
+                UploadFailure::Cancelled => {
+                    DeviceError::InvalidJob("upload cancelled; display left unchanged".into())
+                }
+                UploadFailure::Transport(error) => DeviceError::InvalidJob(format!(
+                    "upload failed: {error}; display left unchanged"
+                )),
+            });
+        }
+        Ok(())
+    }
+
+    /// Streams every frame packet, then commits. Runs only after READY.
+    fn stream_frames(
+        &mut self,
+        memory: &[u8],
+        cancel: &CancelToken,
+        progress: &mut dyn FnMut(UploadProgress),
+    ) -> std::result::Result<(), UploadFailure> {
+        let total_bytes = memory.len();
         let mut position = 0usize;
         while position < total_bytes {
             if cancel.is_cancelled() || !self.synced {
-                // Best-effort: point the display back at the clock so a torn
-                // frame is never shown. Failure here does not mask the cancel.
-                let _ = self.repair_display(&previous);
-                self.synced = false;
-                return Err(DeviceError::InvalidJob("upload cancelled".into()));
+                return Err(UploadFailure::Cancelled);
             }
             let end = (position + gmk87_protocol::packet::MAX_PAYLOAD).min(total_bytes);
-            self.send_and_wait(Command::FrameData, position as u32, &memory[position..end])?;
+            self.send_and_wait(Command::FrameData, position as u32, &memory[position..end])
+                .map_err(UploadFailure::Transport)?;
             position = end;
             progress(UploadProgress {
                 bytes_sent: position,
@@ -211,7 +243,8 @@ impl<T: Transport> Session<T> {
             });
         }
 
-        self.send_and_wait(Command::Commit, 0, &[])?;
+        self.send_and_wait(Command::Commit, 0, &[])
+            .map_err(UploadFailure::Transport)?;
         Ok(())
     }
 
@@ -230,11 +263,25 @@ impl<T: Transport> Session<T> {
         })
     }
 
-    /// After a failed or cancelled upload, point the display back at a known slot.
-    fn repair_display(&mut self, previous: &DeviceConfig) -> Result<()> {
+    /// Puts the display back after an aborted upload.
+    ///
+    /// A bare COMMIT closes the interrupted frame transaction first; only then
+    /// is a config write accepted. The previous `show_image` is restored unless
+    /// it is the slot being uploaded, whose memory is the torn one — that falls
+    /// back to the clock. Both steps are attempted independently so a failed
+    /// commit still gets a rewrite attempt; the commit error is reported first.
+    fn repair_display(&mut self, previous: &DeviceConfig, uploading: ShowSlot) -> Result<()> {
+        let commit = self.send_and_wait(Command::Commit, 0, &[]);
+
         let mut safe = previous.clone();
-        safe.set_show_image(gmk87_protocol::config::ShowSlot::Clock);
-        let _ = self.write_config(&safe);
-        Ok(())
+        let target = match previous.show_image() {
+            shown if shown == uploading => ShowSlot::Clock,
+            shown => shown,
+        };
+        safe.set_show_image(target);
+        let rewrite = self.write_config(&safe);
+
+        commit?;
+        rewrite
     }
 }
