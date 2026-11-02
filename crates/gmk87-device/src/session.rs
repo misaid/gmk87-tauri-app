@@ -206,15 +206,15 @@ impl<T: Transport> Session<T> {
         // must leave the display somewhere safe.
         if let Err(failure) = self.stream_frames(&memory, cancel, progress) {
             // Best-effort: a failed repair must never mask the real cause.
-            let _ = self.repair_display(&previous, plan.show);
+            let _ = self.repair_display(&previous, plan);
             self.synced = false;
             return Err(match failure {
                 UploadFailure::Cancelled => {
                     DeviceError::InvalidJob("upload cancelled; display left unchanged".into())
                 }
-                UploadFailure::Transport(error) => DeviceError::InvalidJob(format!(
-                    "upload failed: {error}; display left unchanged"
-                )),
+                UploadFailure::Transport(error) => DeviceError::UploadFailed {
+                    source: Box::new(error),
+                },
             });
         }
         Ok(())
@@ -267,17 +267,23 @@ impl<T: Transport> Session<T> {
     ///
     /// A bare COMMIT closes the interrupted frame transaction first; only then
     /// is a config write accepted. The previous `show_image` is restored unless
-    /// it is the slot being uploaded, whose memory is the torn one — that falls
+    /// its slot is one the plan wrote, whose memory is the torn one — that falls
     /// back to the clock. Both steps are attempted independently so a failed
     /// commit still gets a rewrite attempt; the commit error is reported first.
-    fn repair_display(&mut self, previous: &DeviceConfig, uploading: ShowSlot) -> Result<()> {
+    fn repair_display(&mut self, previous: &DeviceConfig, plan: &FramePlan) -> Result<()> {
         let commit = self.send_and_wait(Command::Commit, 0, &[]);
 
-        let mut safe = previous.clone();
-        let target = match previous.show_image() {
-            shown if shown == uploading => ShowSlot::Clock,
-            shown => shown,
+        // `to_memory` streams slot 0 and then slot 1, so either slot can be
+        // torn — not just the one `plan.show` selects.
+        let torn = |slot: ShowSlot| match slot {
+            ShowSlot::Slot0 => !plan.slot0_frames.is_empty(),
+            ShowSlot::Slot1 => !plan.slot1_frames.is_empty(),
+            ShowSlot::Clock => false,
         };
+        let shown = previous.show_image();
+        let target = if torn(shown) { ShowSlot::Clock } else { shown };
+
+        let mut safe = previous.clone();
         safe.set_show_image(target);
         let rewrite = self.write_config(&safe);
 

@@ -19,6 +19,11 @@ pub enum DeviceError {
     DeviceDesynced,
     #[error("invalid job: {0}")]
     InvalidJob(String),
+    #[error("upload failed: {source}; display left unchanged")]
+    UploadFailed {
+        #[source]
+        source: Box<DeviceError>,
+    },
     #[error(transparent)]
     Protocol(#[from] ProtocolError),
 }

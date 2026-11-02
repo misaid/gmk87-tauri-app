@@ -79,7 +79,7 @@ fn payload_of(report: &[u8]) -> &[u8] {
     &report[8..8 + report[4] as usize]
 }
 
-fn assert_display_unchanged(error: &DeviceError) {
+fn assert_cancelled(error: &DeviceError) {
     match error {
         DeviceError::InvalidJob(message) => assert!(
             message.contains("display left unchanged"),
@@ -171,7 +171,7 @@ fn cancellation_stops_streaming_and_repairs_the_display() {
     let result = session.upload(&plan, &cancel, &mut |_| {});
 
     let err = result.unwrap_err();
-    assert_display_unchanged(&err);
+    assert_cancelled(&err);
     let commands = session.transport().commands_sent();
     assert_eq!(commands.last(), Some(&0x02), "repair COMMIT was sent");
     assert!(
@@ -198,7 +198,7 @@ fn cancellation_restores_the_previous_slot_instead_of_the_clock() {
     cancel.cancel();
     let err = session.upload(&plan, &cancel, &mut |_| {}).unwrap_err();
 
-    assert_display_unchanged(&err);
+    assert_cancelled(&err);
     let writes = session.transport().writes();
     let config_writes = reports(writes, Command::Config);
     let repair = payload_of(config_writes.last().unwrap());
@@ -240,6 +240,49 @@ fn cancellation_falls_back_to_the_clock_when_the_target_slot_is_on_screen() {
     expected[33] = ShowSlot::Clock.as_u8();
     assert_eq!(repair, expected.as_slice());
     assert_eq!(repair[33], ShowSlot::Clock.as_u8());
+}
+
+#[test]
+fn a_plan_that_writes_both_slots_never_repairs_onto_a_torn_slot() {
+    // Both slots carry frames, so `to_memory` overwrites both; displaying slot 1
+    // instead does not make the previous slot 0 safe.
+    let previous = previous_config(ShowSlot::Slot0);
+    let plan = FramePlan {
+        slot0_frames: vec![vec![0u8; (240 * 135 * 3) as usize]],
+        slot1_frames: vec![vec![0u8; (240 * 135 * 3) as usize]],
+        delay_ms: 100,
+        show: ShowSlot::Slot1,
+    };
+
+    let mut mock = MockTransport::new();
+    expect_read_config(&mut mock, &previous);
+    expect_upload_handshake(&mut mock);
+    expect_repair(&mut mock);
+
+    let mut session = Session::new(mock);
+    let cancel = CancelToken::new();
+    cancel.cancel();
+    let err = session.upload(&plan, &cancel, &mut |_| {}).unwrap_err();
+
+    assert_cancelled(&err);
+    let writes = session.transport().writes();
+    let config_writes = reports(writes, Command::Config);
+    let repair = payload_of(config_writes.last().unwrap());
+
+    assert_ne!(
+        repair[33],
+        ShowSlot::Slot0.as_u8(),
+        "slot 0 was torn by the plan and must not be re-shown"
+    );
+    assert_eq!(
+        repair[33],
+        ShowSlot::Clock.as_u8(),
+        "the repair falls back to the clock"
+    );
+    let mut expected = previous.as_bytes().to_vec();
+    expected[33] = ShowSlot::Clock.as_u8();
+    assert_eq!(repair, expected.as_slice());
+    assert!(!session.is_synced());
 }
 
 /// Fails exactly one `write_report` by ordinal, passing everything else through
@@ -297,14 +340,29 @@ fn a_mid_upload_transport_failure_repairs_the_display() {
         .upload(&plan, &CancelToken::new(), &mut |_| {})
         .unwrap_err();
 
-    assert_display_unchanged(&err);
     match &err {
-        DeviceError::InvalidJob(message) => assert!(
-            message.contains("injected mid-upload write failure"),
-            "the transport cause was lost: {message}"
-        ),
-        other => panic!("expected InvalidJob, got {other:?}"),
+        DeviceError::UploadFailed { source } => {
+            assert!(
+                matches!(**source, DeviceError::Hid(_)),
+                "the original transport variant was lost: {source:?}"
+            );
+            assert!(
+                source
+                    .to_string()
+                    .contains("injected mid-upload write failure"),
+                "the transport cause was lost: {source}"
+            );
+        }
+        other => panic!("expected UploadFailed, got {other:?}"),
     }
+    assert!(
+        err.to_string().contains("display left unchanged"),
+        "error does not name the display state: {err}"
+    );
+    assert!(
+        std::error::Error::source(&err).is_some(),
+        "UploadFailed must preserve its source"
+    );
 
     let writes = session.transport().inner().writes();
     let commands = session.transport().inner().commands_sent();
