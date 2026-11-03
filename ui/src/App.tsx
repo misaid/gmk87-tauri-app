@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { StatusBar } from "@/components/StatusBar";
@@ -17,9 +17,17 @@ const KeyboardPreview = lazy(() =>
   })),
 );
 
+const NAV_ITEMS = [
+  { value: "device", label: "Device" },
+  { value: "display", label: "Display" },
+  { value: "lighting", label: "Lighting" },
+  { value: "clock", label: "Clock" },
+] as const;
+
 export default function App() {
   useDeviceEvents();
   const loadStoredDisplay = useAppStore((s) => s.loadStoredDisplay);
+  const [tab, setTab] = useState<(typeof NAV_ITEMS)[number]["value"]>("device");
 
   useEffect(() => {
     void loadStoredDisplay();
@@ -31,37 +39,46 @@ export default function App() {
       <div className="px-4 pt-3">
         <ErrorBanner />
       </div>
-      <div className="flex min-h-0 flex-1 gap-4 px-4 py-3">
-        <Tabs defaultValue="device" className="flex min-h-0 flex-1 flex-col">
-          <TabsList>
-            <TabsTrigger value="device">Device</TabsTrigger>
-            <TabsTrigger value="display">Display</TabsTrigger>
-            <TabsTrigger value="lighting">Lighting</TabsTrigger>
-            <TabsTrigger value="clock">Clock</TabsTrigger>
-          </TabsList>
-          <TabsContent value="device" className="min-h-0 flex-1">
-            <DeviceScreen />
-          </TabsContent>
-          <TabsContent value="display" className="min-h-0 flex-1">
-            <DisplayScreen />
-          </TabsContent>
-          <TabsContent value="lighting" className="min-h-0 flex-1">
-            <LightingScreen />
-          </TabsContent>
-          <TabsContent value="clock" className="min-h-0 flex-1">
-            <ClockScreen />
-          </TabsContent>
-        </Tabs>
-        <aside className="w-[360px] shrink-0">
-          <Suspense
-            fallback={
-              <div className="h-[320px] w-full rounded-lg border border-white/10 bg-gradient-to-b from-black to-neutral-900" />
-            }
-          >
-            <KeyboardPreview />
-          </Suspense>
-        </aside>
-      </div>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)} className="flex min-h-0 flex-1">
+        <TabsList className="h-auto w-[180px] shrink-0 flex-col items-stretch justify-start gap-1 rounded-none bg-transparent p-3">
+          {NAV_ITEMS.map((item) => (
+            <TabsTrigger
+              key={item.value}
+              value={item.value}
+              className="justify-start rounded-md px-3 py-2 text-left data-[state=active]:bg-white/10"
+            >
+              {item.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+
+        <div className="flex min-h-0 flex-1 flex-col items-center gap-4 overflow-y-auto px-6 py-4">
+          <div className="w-full max-w-3xl">
+            <Suspense
+              fallback={
+                <div className="h-[380px] w-full rounded-lg border border-white/10 bg-gradient-to-b from-black to-neutral-900" />
+              }
+            >
+              <KeyboardPreview zoomed={tab === "display"} className="h-[380px] w-full" />
+            </Suspense>
+          </div>
+
+          <div className="w-full max-w-3xl">
+            <TabsContent value="device" className="min-h-0">
+              <DeviceScreen />
+            </TabsContent>
+            <TabsContent value="display" className="min-h-0">
+              <DisplayScreen />
+            </TabsContent>
+            <TabsContent value="lighting" className="min-h-0">
+              <LightingScreen />
+            </TabsContent>
+            <TabsContent value="clock" className="min-h-0">
+              <ClockScreen />
+            </TabsContent>
+          </div>
+        </div>
+      </Tabs>
     </div>
   );
 }
