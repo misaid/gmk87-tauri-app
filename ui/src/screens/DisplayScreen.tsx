@@ -5,20 +5,19 @@ import { Slider } from "@/components/ui/slider";
 import { CropEditor } from "@/components/CropEditor";
 import { UploadControls } from "@/components/UploadControls";
 import { budgetError } from "@/lib/budget";
-import { useAppStore } from "@/store";
+import { selectTotalFrames, useAppStore } from "@/store";
 
 export default function DisplayScreen() {
   const fileInput = useRef<HTMLInputElement>(null);
   const slot = useAppStore((s) => s.slot);
   const setSlot = useAppStore((s) => s.setSlot);
-  const source = useAppStore((s) => s.source);
-  const sourceInfo = useAppStore((s) => s.sourceInfo);
-  const totalFrames = useAppStore((s) => s.totalFrames);
-  const delayMs = useAppStore((s) => s.delayMs);
-  const setDelayMs = useAppStore((s) => s.setDelayMs);
+  const entry = useAppStore((s) => s.entries[s.slot]);
+  const totalFrames = useAppStore(selectTotalFrames);
   const loadSource = useAppStore((s) => s.loadSource);
+  const setDelayMs = useAppStore((s) => s.setDelayMs);
 
-  const problem = source ? budgetError({ totalFrames, delayMs }) : null;
+  const problem = entry.info ? budgetError({ totalFrames, delayMs: entry.delayMs }) : null;
+  const compressed = entry.info && entry.info.dropped.length > 0;
 
   async function onFile(file: File) {
     const bytes = new Uint8Array(await file.arrayBuffer());
@@ -58,13 +57,13 @@ export default function DisplayScreen() {
         <div>
           <div className="mb-1 flex justify-between text-white/60">
             <span>Frame delay</span>
-            <span>{delayMs} ms</span>
+            <span>{entry.delayMs} ms</span>
           </div>
           <Slider
             min={60}
             max={500}
             step={10}
-            value={[delayMs]}
+            value={[entry.delayMs]}
             onValueChange={([value]) => setDelayMs(value)}
           />
         </div>
@@ -74,16 +73,20 @@ export default function DisplayScreen() {
             <span className="text-white/60">Frames across both slots</span>
             <span>{`${totalFrames} / 36`}</span>
           </div>
-          {sourceInfo && <p className="mt-1 text-xs text-white/40">{source?.name}</p>}
+          {entry.name && <p className="mt-1 text-xs text-white/40">{entry.name}</p>}
+          {compressed && entry.info && (
+            <p className="mt-1 text-xs text-sky-300">
+              {`Compressed from ${entry.info.sourceFrames} to ${entry.info.frames} frames to fit the budget.`}
+            </p>
+          )}
           {problem && <p className="mt-2 text-xs text-amber-300">{problem}</p>}
         </div>
 
         <UploadControls />
 
         <p className="text-xs text-white/40">
-          Both display slots are sent together, so the untouched slot is preserved for this session.
-          The keyboard keeps no readable memory: after the app restarts, the first upload resets the
-          other slot to black.
+          Each slot keeps its own image or GIF. Both display slots are sent together, so the untouched
+          slot is preserved across restarts.
         </p>
       </div>
     </div>

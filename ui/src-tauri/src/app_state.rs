@@ -1,5 +1,6 @@
 //! Shared state: one device manager behind a mutex, and the live cancel token.
 
+use crate::preview_cache::PreviewCache;
 use gmk87_app::manager::DeviceManager;
 use gmk87_device::session::CancelToken;
 use gmk87_device::transport::HidTransport;
@@ -18,6 +19,8 @@ pub struct AppState {
     /// Wired up by `cancel_upload`; the token is stored so a cancel command can
     /// reach the running upload without taking the runtime mutex.
     pub cancel: Arc<Mutex<Option<CancelToken>>>,
+    /// Decoded sources and rendered previews for the Display screen.
+    pub preview: Arc<PreviewCache>,
 }
 
 impl AppState {
@@ -25,6 +28,7 @@ impl AppState {
         Self {
             runtime: Arc::new(Mutex::new(Runtime::default())),
             cancel: Arc::new(Mutex::new(None)),
+            preview: Arc::new(PreviewCache::new()),
         }
     }
 }

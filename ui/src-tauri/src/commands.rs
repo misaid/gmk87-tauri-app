@@ -3,18 +3,49 @@
 //! device operations are serialized (the keyboard has one state machine).
 
 use crate::app_state::{AppState, Manager};
-use crate::dto::{preview_bytes, DeviceInfoDto, PresetDto, PreviewJob, UploadProgressDto};
+use crate::dto::{DeviceInfoDto, PresetDto, PreviewMeta, UploadMeta, UploadProgressDto};
 use gmk87_app::error::{AppError, ErrorKind};
+use gmk87_app::job::{DisplayJob, SlotTarget};
 use gmk87_app::lighting::LightingPatch;
 use gmk87_app::state::DeviceStateDto;
 use gmk87_device::session::CancelToken;
+use tauri::ipc::{InvokeBody, Request};
 use tauri::{AppHandle, Emitter, State};
+
+/// Header carrying the JSON metadata that accompanies a raw IPC payload.
+const JOB_HEADER: &str = "x-gmk87-job";
 
 fn not_connected() -> AppError {
     AppError {
         kind: ErrorKind::DeviceNotFound,
         message: "no keyboard is connected; connect from the Device screen".into(),
     }
+}
+
+fn invalid_job(message: impl Into<String>) -> AppError {
+    AppError {
+        kind: ErrorKind::InvalidJob,
+        message: message.into(),
+    }
+}
+
+/// The raw request body, used so image bytes never travel as a JSON number
+/// array (which costs roughly an order of magnitude more to serialise).
+fn raw_bytes(request: &Request<'_>) -> Result<Vec<u8>, AppError> {
+    match request.body() {
+        InvokeBody::Raw(bytes) => Ok(bytes.clone()),
+        InvokeBody::Json(_) => Err(invalid_job("expected a raw byte payload")),
+    }
+}
+
+fn job_header<T: serde::de::DeserializeOwned>(request: &Request<'_>) -> Result<T, AppError> {
+    let value = request
+        .headers()
+        .get(JOB_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| invalid_job(format!("missing {JOB_HEADER} header")))?;
+    serde_json::from_str(value)
+        .map_err(|error| invalid_job(format!("invalid {JOB_HEADER} header: {error}")))
 }
 
 fn join_error(error: tauri::Error) -> AppError {
@@ -46,7 +77,13 @@ pub async fn connect(
     let connect_path = path.clone();
     let state_dto = tauri::async_runtime::spawn_blocking(move || {
         let transport = gmk87_device::transport::HidTransport::open(&connect_path)?;
-        let manager = Manager::new(transport, snapshot_path);
+        let mut manager = Manager::new(transport, snapshot_path);
+        // The device's image memory cannot be read back, so an upload resends
+        // whatever the manager holds for the untouched slot. Restore both
+        // slots from disk before the first upload can use the store.
+        if let Some(dir) = gmk87_app::snapshot::data_dir() {
+            manager.restore_slots(&dir);
+        }
         let state_dto = manager.read_state();
         let mut rt = runtime.lock().expect("runtime lock");
         rt.manager = Some(manager);
@@ -134,18 +171,61 @@ pub async fn apply_preset(
     .await
 }
 
+/// Renders a 240×135 preview PNG. The source bytes arrive as the raw request
+/// body; the crop rides in a header.
 #[tauri::command]
-pub async fn preview_display(job: PreviewJob) -> Result<Vec<u8>, AppError> {
-    tauri::async_runtime::spawn_blocking(move || preview_bytes(&job))
-        .await
-        .map_err(join_error)?
+pub async fn preview_display(
+    state: State<'_, AppState>,
+    request: Request<'_>,
+) -> Result<tauri::ipc::Response, AppError> {
+    let meta: PreviewMeta = job_header(&request)?;
+    let bytes = raw_bytes(&request)?;
+    if bytes.is_empty() {
+        return Err(invalid_job("no image bytes were provided"));
+    }
+    let cache = state.preview.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        cache
+            .preview(&bytes, &meta.crop.to_spec())
+            .map(|png| tauri::ipc::Response::new(png.as_ref().clone()))
+            .map_err(AppError::from)
+    })
+    .await
+    .map_err(join_error)?
 }
 
 #[tauri::command]
-pub async fn inspect_source(job: PreviewJob) -> Result<crate::dto::SourceInfoDto, AppError> {
+pub async fn inspect_source(request: Request<'_>) -> Result<crate::dto::SourceInfoDto, AppError> {
+    use gmk87_protocol::frames::MAX_TOTAL_FRAMES;
+    let meta: PreviewMeta = job_header(&request)?;
+    let bytes = raw_bytes(&request)?;
+    let max_frames = meta.max_frames.unwrap_or(MAX_TOTAL_FRAMES);
+    let crop = meta.crop.to_spec();
     tauri::async_runtime::spawn_blocking(move || {
-        gmk87_app::inspect::inspect(&job.bytes, &job.crop.to_spec(), 0)
+        gmk87_app::inspect::inspect(&bytes, &crop, 0, max_frames)
             .map(crate::dto::SourceInfoDto::from)
+    })
+    .await
+    .map_err(join_error)?
+}
+
+#[tauri::command]
+pub fn load_display_store() -> crate::dto::StoredDisplayDto {
+    let Some(dir) = gmk87_app::snapshot::data_dir() else {
+        return crate::dto::StoredDisplayDto::default();
+    };
+    crate::dto::StoredDisplayDto::from(gmk87_app::display_store::load_store(&dir))
+}
+
+/// One slot's stored source bytes, as a raw response. An empty buffer means
+/// there is no stored source (a zero-byte image is not a valid source anyway).
+#[tauri::command]
+pub async fn load_display_source(target: SlotTarget) -> Result<tauri::ipc::Response, AppError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let bytes = gmk87_app::snapshot::data_dir()
+            .and_then(|dir| gmk87_app::display_store::load_source(&dir, target))
+            .unwrap_or_default();
+        Ok::<_, AppError>(tauri::ipc::Response::new(bytes))
     })
     .await
     .map_err(join_error)?
@@ -182,6 +262,28 @@ pub async fn copy_diagnostics(state: State<'_, AppState>) -> Result<String, AppE
     if let Ok(uname) = std::fs::read_to_string("/proc/sys/kernel/osrelease") {
         report.push_str(&format!("kernel: {}\n", uname.trim()));
     }
+    if let Some(dir) = gmk87_app::snapshot::data_dir() {
+        let stored = gmk87_app::display_store::load_store(&dir);
+        for (label, record) in [
+            ("slot 0", stored.slot0.as_ref()),
+            ("slot 1", stored.slot1.as_ref()),
+        ] {
+            match record {
+                Some(r) => report.push_str(&format!(
+                    "{label}: {} ({} frame(s), delay {} ms, offset {:.2},{:.2} zoom {:.2}, \
+                     {} dropped)\n",
+                    r.name,
+                    r.frames,
+                    r.delay_ms,
+                    r.crop.offset_x,
+                    r.crop.offset_y,
+                    r.crop.zoom,
+                    r.dropped.len(),
+                )),
+                None => report.push_str(&format!("{label}: (empty)\n")),
+            }
+        }
+    }
     Ok(report)
 }
 
@@ -189,8 +291,17 @@ pub async fn copy_diagnostics(state: State<'_, AppState>) -> Result<String, AppE
 pub async fn upload_display(
     app: AppHandle,
     state: State<'_, AppState>,
-    job: gmk87_app::job::DisplayJob,
+    request: Request<'_>,
 ) -> Result<(), AppError> {
+    let meta: UploadMeta = job_header(&request)?;
+    let job = DisplayJob {
+        slot: meta.slot,
+        name: meta.name,
+        bytes: raw_bytes(&request)?,
+        crop: meta.crop,
+        delay_ms: meta.delay_ms,
+        show_after: meta.show_after,
+    };
     let runtime = state.runtime.clone();
     let cancel_handle = state.cancel.clone();
     let token = CancelToken::new();
@@ -201,13 +312,51 @@ pub async fn upload_display(
         let manager = rt.manager.as_mut().ok_or_else(not_connected)?;
         manager.upload(&job, &token, &mut |progress| {
             let _ = app.emit("upload://progress", UploadProgressDto::from(progress));
-        })
+        })?;
+        persist_slot(&job, manager);
+        Ok::<_, AppError>(())
     })
     .await
     .map_err(join_error);
 
     *cancel_handle.lock().expect("cancel lock") = None;
-    result?
+    result??;
+    Ok(())
+}
+
+/// Records what the just-uploaded slot holds, and its bytes, so both slots
+/// survive an app restart. Persistence failures are logged, not surfaced: the
+/// upload itself already succeeded.
+fn persist_slot(job: &gmk87_app::job::DisplayJob, manager: &Manager) {
+    let Some(dir) = gmk87_app::snapshot::data_dir() else {
+        return;
+    };
+    let meta = manager.slots().meta(job.slot).cloned().unwrap_or_default();
+    let crop = job.crop.to_spec();
+    match gmk87_app::display_store::save_source(&dir, job.slot, &job.bytes) {
+        Ok(has_bytes) => {
+            let mut store = gmk87_app::display_store::load_store(&dir);
+            store.set(
+                job.slot,
+                gmk87_app::display_store::SlotRecord::from_parts(&meta, &crop, has_bytes),
+            );
+            if let Err(error) = gmk87_app::display_store::save(&dir, &store) {
+                tracing::warn!(%error, "could not store the display record");
+            }
+            tracing::info!(
+                slot = job.slot.label(),
+                name = %job.name,
+                frames = meta.frames,
+                source_frames = meta.source_frames,
+                dropped = meta.dropped.len(),
+                offset_x = crop.offset_x,
+                offset_y = crop.offset_y,
+                zoom = crop.zoom,
+                "stored display slot"
+            );
+        }
+        Err(error) => tracing::warn!(%error, "could not store the display source"),
+    }
 }
 
 #[tauri::command]

@@ -1,25 +1,30 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { DEFAULT_CROP } from "@/lib/crop";
 
+const entry = {
+  source: new Uint8Array(),
+  name: "cat.png",
+  info: { isGif: false, frames: 1, delayMs: 100, sourceFrames: 1, dropped: [] },
+  crop: DEFAULT_CROP,
+  delayMs: 100,
+};
+const state = {
+  slot: "slot0",
+  setSlot: vi.fn(),
+  entries: { slot0: entry, slot1: { ...entry, source: null } },
+  previewUrl: null,
+  loadSource: vi.fn(),
+  setDelayMs: vi.fn(),
+  uploads: 0,
+  progress: null,
+  upload: vi.fn(),
+  cancel: vi.fn(),
+  setCrop: vi.fn(),
+};
 vi.mock("@/store", () => ({
-  useAppStore: (selector: (s: unknown) => unknown) =>
-    selector({
-      slot: "slot0",
-      setSlot: vi.fn(),
-      source: { bytes: new Uint8Array(), name: "cat.png" },
-      sourceInfo: { isGif: false, frames: 1, delayMs: 100 },
-      previewUrl: null,
-      totalFrames: 2,
-      delayMs: 100,
-      setDelayMs: vi.fn(),
-      loadSource: vi.fn(),
-      crop: { offsetX: 0, offsetY: 0, zoom: 1, fit: "cover" },
-      setCrop: vi.fn(),
-      uploads: 0,
-      progress: null,
-      upload: vi.fn(),
-      cancel: vi.fn(),
-    }),
+  useAppStore: (selector: (s: unknown) => unknown) => selector(state),
+  selectTotalFrames: () => 2,
 }));
 
 import DisplayScreen from "./DisplayScreen";

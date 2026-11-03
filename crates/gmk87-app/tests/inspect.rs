@@ -25,16 +25,29 @@ fn gif(frames: usize, delay_centisec: u16) -> Vec<u8> {
 
 #[test]
 fn reports_a_static_image_as_one_frame() {
-    let info = inspect(&png(), &CropSpec::default(), 0).unwrap();
+    let info = inspect(&png(), &CropSpec::default(), 0, 36).unwrap();
     assert!(!info.is_gif);
     assert_eq!(info.frames, 1);
     assert_eq!(info.delay_ms, 100);
+    assert_eq!(info.source_frames, 1);
+    assert!(info.dropped.is_empty());
 }
 
 #[test]
 fn reports_a_gifs_frame_count_and_delay() {
-    let info = inspect(&gif(4, 8), &CropSpec::default(), 0).unwrap();
+    let info = inspect(&gif(4, 8), &CropSpec::default(), 0, 36).unwrap();
     assert!(info.is_gif);
     assert_eq!(info.frames, 4);
     assert_eq!(info.delay_ms, 80);
+    assert_eq!(info.source_frames, 4);
+    assert!(info.dropped.is_empty());
+}
+
+#[test]
+fn reports_a_compressed_gifs_final_count_and_dropped_frames() {
+    let info = inspect(&gif(40, 10), &CropSpec::default(), 0, 36).unwrap();
+    assert_eq!(info.frames, 36);
+    assert_eq!(info.source_frames, 40);
+    assert_eq!(info.delay_ms, 111);
+    assert_eq!(info.dropped.len(), 4);
 }

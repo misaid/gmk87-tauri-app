@@ -10,8 +10,8 @@ pub fn run(path: &Path, slot: u8, show: bool) -> anyhow::Result<()> {
     let crop = CropSpec::default();
 
     let (frames, delay_ms) = if bytes.starts_with(b"GIF8") {
-        let (frames, source_delay) = extract_gif_frames(&bytes, &crop, MAX_TOTAL_FRAMES)?;
-        (frames, source_delay.max(MIN_FRAME_DELAY_MS))
+        let decoded = extract_gif_frames(&bytes, &crop, MAX_TOTAL_FRAMES)?;
+        (decoded.frames, decoded.delay_ms.max(MIN_FRAME_DELAY_MS))
     } else {
         (vec![prepare_static(&bytes, &crop)?], MIN_FRAME_DELAY_MS)
     };

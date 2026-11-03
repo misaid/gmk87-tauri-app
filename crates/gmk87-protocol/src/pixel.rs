@@ -13,6 +13,14 @@ pub fn rgb565_be(r: u8, g: u8, b: u8) -> u16 {
 
 /// Encodes `DISPLAY_WIDTH * DISPLAY_HEIGHT * 3` RGB8 bytes into a padded slot.
 pub fn encode_slot(rgb: &[u8]) -> Result<Vec<u8>, ProtocolError> {
+    let mut out = Vec::with_capacity(SLOT_BYTES);
+    encode_slot_into(rgb, &mut out)?;
+    Ok(out)
+}
+
+/// Appends one padded slot to `out`, so callers can build the multi-frame
+/// memory image with a single allocation instead of one buffer per frame.
+pub fn encode_slot_into(rgb: &[u8], out: &mut Vec<u8>) -> Result<(), ProtocolError> {
     let expected = (DISPLAY_WIDTH * DISPLAY_HEIGHT * 3) as usize;
     if rgb.len() != expected {
         return Err(ProtocolError::InvalidJob(format!(
@@ -20,11 +28,13 @@ pub fn encode_slot(rgb: &[u8]) -> Result<Vec<u8>, ProtocolError> {
             rgb.len()
         )));
     }
-    let mut out = vec![0u8; SLOT_BYTES];
+    let start = out.len();
+    out.resize(start + SLOT_BYTES, 0);
+    let slot = &mut out[start..];
     for (i, px) in rgb.as_chunks::<3>().0.iter().enumerate() {
         let packed = rgb565_be(px[0], px[1], px[2]);
-        out[i * 2] = (packed >> 8) as u8;
-        out[i * 2 + 1] = (packed & 0xff) as u8;
+        slot[i * 2] = (packed >> 8) as u8;
+        slot[i * 2 + 1] = (packed & 0xff) as u8;
     }
-    Ok(out)
+    Ok(())
 }

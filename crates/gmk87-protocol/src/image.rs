@@ -2,7 +2,7 @@
 
 use crate::error::ProtocolError;
 use crate::pixel::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
-use image::imageops::FilterType;
+use fast_image_resize::{FilterType, ResizeAlg, ResizeOptions, Resizer};
 use image::{DynamicImage, GenericImageView, ImageReader, Limits};
 
 /// Refuse sources larger than this before decoding.
@@ -37,22 +37,159 @@ impl Default for CropSpec {
     }
 }
 
-/// Decodes `bytes` and returns `DISPLAY_WIDTH * DISPLAY_HEIGHT * 3` RGB8 bytes.
-pub fn prepare_static(bytes: &[u8], crop: &CropSpec) -> Result<Vec<u8>, ProtocolError> {
-    let image = decode(bytes)?;
-    Ok(render(&image, crop))
+/// A decoded source prepared for previewing, kept so a crop change does not
+/// read and decompress the file again.
+///
+/// Only the preview-resolution image is retained. Uploads decode the source
+/// afresh at full resolution, so the cache cannot pin a multi-megapixel buffer.
+#[derive(Debug, Clone)]
+pub struct DecodedSource {
+    /// The image previews render from: a downscaled proxy when the source is
+    /// large, otherwise the source itself.
+    preview: DynamicImage,
+    dimensions: (u32, u32),
 }
 
-fn decode(bytes: &[u8]) -> Result<DynamicImage, ProtocolError> {
-    // Read only the header first so oversized sources are refused before any
-    // pixel buffer is allocated. `into_dimensions` consumes its reader, so a
-    // second reader is built from the same bytes for the actual decode.
+/// Longest edge of the proxy used for interactive previews.
+///
+/// The preview is only 240×135, so a 960 px proxy still has more detail than
+/// the display can show for zooms up to 4×, while keeping each pan/zoom render
+/// cheap regardless of how large the original is.
+const PREVIEW_PROXY_EDGE: u32 = 960;
+
+impl DecodedSource {
+    /// The source's dimensions before any preview downscaling.
+    pub fn dimensions(&self) -> (u32, u32) {
+        self.dimensions
+    }
+}
+
+/// Decodes `bytes` once into a reusable preview source.
+pub fn decode_source(bytes: &[u8]) -> Result<DecodedSource, ProtocolError> {
+    let image = decode(bytes)?;
+    let dimensions = image.dimensions();
+    let preview = build_proxy(&image).unwrap_or(image);
+    Ok(DecodedSource {
+        preview,
+        dimensions,
+    })
+}
+
+/// Downscales a large source once, so pan/zoom never resizes megapixels.
+fn build_proxy(image: &DynamicImage) -> Option<DynamicImage> {
+    let (width, height) = image.dimensions();
+    let longest = width.max(height);
+    if longest <= PREVIEW_PROXY_EDGE {
+        return None;
+    }
+    let scale = f64::from(PREVIEW_PROXY_EDGE) / f64::from(longest);
+    let dst_w = ((f64::from(width) * scale).round() as u32).max(1);
+    let dst_h = ((f64::from(height) * scale).round() as u32).max(1);
+    Some(resize_to(image, dst_w, dst_h, FilterType::Lanczos3))
+}
+
+/// Resizes with the SIMD-accelerated resizer.
+///
+/// Falls back to the `image` crate if the SIMD path rejects the buffer (for
+/// example an unusual pixel type), so a frame is never dropped over resampling.
+fn resize_to(image: &DynamicImage, width: u32, height: u32, filter: FilterType) -> DynamicImage {
+    let mut out = DynamicImage::new(width.max(1), height.max(1), image.color());
+    let options = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(filter));
+    match Resizer::new().resize(image, &mut out, &options) {
+        Ok(()) => out,
+        Err(_) => image.resize_exact(
+            width.max(1),
+            height.max(1),
+            image::imageops::FilterType::Lanczos3,
+        ),
+    }
+}
+
+/// Decodes `bytes` and returns `DISPLAY_WIDTH * DISPLAY_HEIGHT * 3` RGB8 bytes.
+///
+/// Uploads decode at full resolution every time: they are one-off, and keeping
+/// megapixel buffers alive between previews would dominate memory use.
+pub fn prepare_static(bytes: &[u8], crop: &CropSpec) -> Result<Vec<u8>, ProtocolError> {
+    let image = decode(bytes)?;
+    Ok(render(&image, crop, FilterType::Lanczos3))
+}
+
+/// Renders a decoded source for a live preview.
+///
+/// Previews are re-rendered on every pan/zoom tick, so they render from the
+/// downscaled proxy with the cheaper bilinear filter; the upload path keeps the
+/// full-resolution, sharper result.
+pub fn render_preview(source: &DecodedSource, crop: &CropSpec) -> Vec<u8> {
+    render(&source.preview, crop, FilterType::Bilinear)
+}
+
+/// Renders and PNG-encodes a preview from an already-decoded source.
+pub fn preview_png(source: &DecodedSource, crop: &CropSpec) -> Result<Vec<u8>, ProtocolError> {
+    encode_rgb_png(render_preview(source, crop))
+}
+
+/// Renders an already-decoded RGBA buffer (such as a GIF frame) without a
+/// re-encode/decode round trip through PNG.
+pub fn prepare_rgba(
+    width: u16,
+    height: u16,
+    rgba: Vec<u8>,
+    crop: &CropSpec,
+) -> Result<Vec<u8>, ProtocolError> {
+    let pixels = u64::from(width) * u64::from(height);
+    if pixels > MAX_SOURCE_PIXELS {
+        return Err(too_large(u32::from(width), u32::from(height)));
+    }
+    let expected = pixels as usize * 4;
+    if rgba.len() != expected {
+        return Err(ProtocolError::ImageDecode(format!(
+            "frame buffer has {} bytes, expected {expected}",
+            rgba.len()
+        )));
+    }
+    let image = image::RgbaImage::from_raw(u32::from(width), u32::from(height), rgba)
+        .ok_or_else(|| ProtocolError::ImageDecode("frame buffer size mismatch".into()))?;
+    Ok(render(
+        &DynamicImage::ImageRgba8(image),
+        crop,
+        FilterType::Lanczos3,
+    ))
+}
+
+/// PNG-encodes an RGB8 buffer already at display size.
+pub fn encode_rgb_png(rgb: Vec<u8>) -> Result<Vec<u8>, ProtocolError> {
+    let expected = (DISPLAY_WIDTH * DISPLAY_HEIGHT * 3) as usize;
+    if rgb.len() != expected {
+        return Err(ProtocolError::InvalidJob(format!(
+            "expected {expected} RGB bytes, received {}",
+            rgb.len()
+        )));
+    }
+    let image = image::RgbImage::from_raw(DISPLAY_WIDTH, DISPLAY_HEIGHT, rgb)
+        .ok_or_else(|| ProtocolError::ImageDecode("frame buffer size mismatch".into()))?;
+    let mut out = std::io::Cursor::new(Vec::new());
+    DynamicImage::ImageRgb8(image)
+        .write_to(&mut out, image::ImageFormat::Png)
+        .map_err(|e| ProtocolError::ImageDecode(e.to_string()))?;
+    Ok(out.into_inner())
+}
+
+/// Validates that `bytes` is a decodable image within the source budget,
+/// without decoding its pixels.
+pub fn probe(bytes: &[u8]) -> Result<(u32, u32), ProtocolError> {
     let (w, h) = open_reader(bytes)?
         .into_dimensions()
         .map_err(|e| ProtocolError::ImageDecode(e.to_string()))?;
     if u64::from(w) * u64::from(h) > MAX_SOURCE_PIXELS {
         return Err(too_large(w, h));
     }
+    Ok((w, h))
+}
+
+fn decode(bytes: &[u8]) -> Result<DynamicImage, ProtocolError> {
+    // Read only the header first so oversized sources are refused before any
+    // pixel buffer is allocated.
+    probe(bytes)?;
 
     let image = open_reader(bytes)?
         .decode()
@@ -87,7 +224,7 @@ fn too_large(width: u32, height: u32) -> ProtocolError {
     ))
 }
 
-fn render(image: &DynamicImage, crop: &CropSpec) -> Vec<u8> {
+fn render(image: &DynamicImage, crop: &CropSpec, filter: FilterType) -> Vec<u8> {
     let (src_w, src_h) = image.dimensions();
     let target_ratio = DISPLAY_WIDTH as f32 / DISPLAY_HEIGHT as f32;
     let src_ratio = src_w as f32 / src_h.max(1) as f32;
@@ -127,8 +264,15 @@ fn render(image: &DynamicImage, crop: &CropSpec) -> Vec<u8> {
     );
 
     let resized = match crop.fit {
-        Fit::Cover => visible.resize_exact(DISPLAY_WIDTH, DISPLAY_HEIGHT, FilterType::Lanczos3),
-        Fit::Contain => visible.resize(DISPLAY_WIDTH, DISPLAY_HEIGHT, FilterType::Lanczos3),
+        Fit::Cover => resize_to(&visible, DISPLAY_WIDTH, DISPLAY_HEIGHT, filter),
+        Fit::Contain => {
+            let (width, height) = visible.dimensions();
+            let scale = (f64::from(DISPLAY_WIDTH) / f64::from(width.max(1)))
+                .min(f64::from(DISPLAY_HEIGHT) / f64::from(height.max(1)));
+            let dst_w = ((f64::from(width) * scale).round() as u32).clamp(1, DISPLAY_WIDTH);
+            let dst_h = ((f64::from(height) * scale).round() as u32).clamp(1, DISPLAY_HEIGHT);
+            resize_to(&visible, dst_w, dst_h, filter)
+        }
     };
 
     let mut canvas =

@@ -1,15 +1,29 @@
+import { lazy, Suspense, useEffect } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { StatusBar } from "@/components/StatusBar";
-import { KeyboardPreview } from "@/components/KeyboardPreview";
 import { useDeviceEvents } from "@/lib/useDeviceEvents";
 import DeviceScreen from "@/screens/DeviceScreen";
 import DisplayScreen from "@/screens/DisplayScreen";
 import LightingScreen from "@/screens/LightingScreen";
 import ClockScreen from "@/screens/ClockScreen";
+import { useAppStore } from "@/store";
+
+// Three.js and the preview scene are a large chunk that the first screen does
+// not need; load them after the shell paints.
+const KeyboardPreview = lazy(() =>
+  import("@/components/KeyboardPreview").then((module) => ({
+    default: module.KeyboardPreview,
+  })),
+);
 
 export default function App() {
   useDeviceEvents();
+  const loadStoredDisplay = useAppStore((s) => s.loadStoredDisplay);
+
+  useEffect(() => {
+    void loadStoredDisplay();
+  }, [loadStoredDisplay]);
 
   return (
     <div className="flex h-full flex-col">
@@ -39,7 +53,13 @@ export default function App() {
           </TabsContent>
         </Tabs>
         <aside className="w-[360px] shrink-0">
-          <KeyboardPreview />
+          <Suspense
+            fallback={
+              <div className="h-[320px] w-full rounded-lg border border-white/10 bg-gradient-to-b from-black to-neutral-900" />
+            }
+          >
+            <KeyboardPreview />
+          </Suspense>
         </aside>
       </div>
     </div>

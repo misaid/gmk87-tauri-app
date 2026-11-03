@@ -69,21 +69,64 @@ fn rejects_a_delay_below_sixty_ms() {
 
 #[test]
 fn extracts_gif_frames_and_reads_their_delay() {
-    let (frames, delay) = extract_gif_frames(&gif_with(4, 100), &CropSpec::default(), 36).unwrap();
-    assert_eq!(frames.len(), 4);
-    assert_eq!(delay, 100);
-    assert_eq!(frames[0].len(), (240 * 135 * 3) as usize);
+    let decoded = extract_gif_frames(&gif_with(4, 100), &CropSpec::default(), 36).unwrap();
+    assert_eq!(decoded.frames.len(), 4);
+    assert_eq!(decoded.delay_ms, 100);
+    assert_eq!(decoded.source_frames, 4);
+    assert!(decoded.dropped.is_empty());
+    assert_eq!(decoded.frames[0].len(), (240 * 135 * 3) as usize);
 }
 
 #[test]
-fn refuses_a_gif_that_exceeds_the_frame_budget() {
-    let err = extract_gif_frames(&gif_with(40, 100), &CropSpec::default(), 36).unwrap_err();
+fn a_gif_at_the_budget_is_left_untouched() {
+    let decoded = extract_gif_frames(&gif_with(36, 100), &CropSpec::default(), 36).unwrap();
+    assert_eq!(decoded.frames.len(), 36);
+    assert_eq!(decoded.delay_ms, 100);
+    assert!(decoded.dropped.is_empty());
+}
+
+#[test]
+fn compresses_an_over_budget_gif_by_sampling_evenly() {
+    let decoded = extract_gif_frames(&gif_with(5, 100), &CropSpec::default(), 3).unwrap();
+    assert_eq!(decoded.frames.len(), 3);
+    assert_eq!(decoded.source_frames, 5);
+    // Frames 1 and 3 are dropped, keeping 0, 2 and 4.
+    assert_eq!(decoded.dropped, vec![1, 3]);
+}
+
+#[test]
+fn compressed_gifs_keep_their_total_duration() {
+    let decoded = extract_gif_frames(&gif_with(40, 100), &CropSpec::default(), 36).unwrap();
+    assert_eq!(decoded.frames.len(), 36);
+    // 40 frames at 100 ms -> 36 frames at ~111 ms:
+    assert_eq!(decoded.delay_ms, 111);
+    assert_eq!(decoded.dropped.len(), 4);
+}
+
+#[test]
+fn the_scaled_delay_is_clamped_to_500_ms() {
+    let decoded = extract_gif_frames(&gif_with(100, 100), &CropSpec::default(), 5).unwrap();
+    assert_eq!(decoded.frames.len(), 5);
+    assert_eq!(decoded.delay_ms, 500);
+}
+
+#[test]
+fn inspecting_a_gif_matches_the_extracted_plan() {
+    let bytes = gif_with(40, 100);
+    let info = inspect_gif_frames(&bytes, 36).unwrap();
+    let extracted = extract_gif_frames(&bytes, &CropSpec::default(), 36).unwrap();
+    assert_eq!(info.frames, extracted.frames.len() as u32);
+    assert_eq!(info.source_frames, extracted.source_frames);
+    assert_eq!(info.delay_ms, extracted.delay_ms);
+    assert_eq!(info.dropped, extracted.dropped);
+}
+
+#[test]
+fn a_gif_with_no_budget_left_is_rejected() {
+    let err = extract_gif_frames(&gif_with(40, 100), &CropSpec::default(), 0).unwrap_err();
     assert!(matches!(
         err,
-        ProtocolError::FrameBudget {
-            frames: 40,
-            max: 36
-        }
+        ProtocolError::FrameBudget { frames: 40, max: 0 }
     ));
 }
 

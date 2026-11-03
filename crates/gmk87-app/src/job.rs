@@ -2,7 +2,7 @@
 
 use crate::error::AppError;
 use gmk87_protocol::config::ShowSlot;
-use gmk87_protocol::frames::{extract_gif_frames, MAX_TOTAL_FRAMES};
+use gmk87_protocol::frames::extract_gif_frames;
 use gmk87_protocol::image::{prepare_static, CropSpec, Fit};
 use gmk87_protocol::pixel::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use serde::{Deserialize, Serialize};
@@ -78,6 +78,9 @@ impl CropDto {
 #[serde(rename_all = "camelCase")]
 pub struct DisplayJob {
     pub slot: SlotTarget,
+    /// The source's display name, kept for the stored slot record.
+    #[serde(default)]
+    pub name: String,
     pub bytes: Vec<u8>,
     pub crop: CropDto,
     /// 0 means "use the GIF's own delay"; static images use 100 ms.
@@ -91,30 +94,64 @@ pub fn is_gif(bytes: &[u8]) -> bool {
     bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a")
 }
 
-const DEFAULT_STATIC_DELAY_MS: u16 = 100;
+pub const DEFAULT_STATIC_DELAY_MS: u16 = 100;
+
+/// A decoded source: the prepared frames plus what was needed to fit them into
+/// the slot's share of the frame budget.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodedSource {
+    pub frames: Vec<Vec<u8>>,
+    pub delay_ms: u16,
+    pub is_gif: bool,
+    /// Frames the source held before any compression.
+    pub source_frames: u32,
+    /// Source frame indices dropped to fit `max_frames`.
+    pub dropped: Vec<u32>,
+}
 
 /// Decodes a source into per-frame RGB8 at display size, with the delay to use.
+///
+/// `max_frames` is the room this slot has left in the combined budget; a GIF
+/// longer than that is sampled down to fit rather than rejected.
 pub fn decode_frames(
     bytes: &[u8],
     crop: &CropSpec,
     delay_ms: u16,
-) -> Result<(Vec<Vec<u8>>, u16), AppError> {
+    max_frames: u32,
+) -> Result<DecodedSource, AppError> {
     if is_gif(bytes) {
-        let (frames, source_delay) = extract_gif_frames(bytes, crop, MAX_TOTAL_FRAMES)?;
+        let decoded = extract_gif_frames(bytes, crop, max_frames)?;
         let delay = if delay_ms == 0 {
-            source_delay
+            decoded.delay_ms
         } else {
             delay_ms
         };
-        Ok((frames, delay))
+        Ok(DecodedSource {
+            frames: decoded.frames,
+            delay_ms: delay,
+            is_gif: true,
+            source_frames: decoded.source_frames,
+            dropped: decoded.dropped,
+        })
     } else {
+        if max_frames == 0 {
+            return Err(
+                gmk87_protocol::error::ProtocolError::FrameBudget { frames: 1, max: 0 }.into(),
+            );
+        }
         let frame = prepare_static(bytes, crop)?;
         let delay = if delay_ms == 0 {
             DEFAULT_STATIC_DELAY_MS
         } else {
             delay_ms
         };
-        Ok((vec![frame], delay))
+        Ok(DecodedSource {
+            frames: vec![frame],
+            delay_ms: delay,
+            is_gif: false,
+            source_frames: 1,
+            dropped: Vec::new(),
+        })
     }
 }
 

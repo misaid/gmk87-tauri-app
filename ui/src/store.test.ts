@@ -17,14 +17,26 @@ vi.mock("./lib/ipc", () => ({
   syncClock: vi.fn(),
   listPresets: vi.fn(async () => []),
   applyPreset: vi.fn(),
-  previewDisplay: vi.fn(async () => [137, 80, 78, 71]),
-  inspectSource: vi.fn(async () => ({ isGif: false, frames: 1, delayMs: 100 })),
+  previewDisplay: vi.fn(async () => new Uint8Array([137, 80, 78, 71])),
+  inspectSource: vi.fn(async () => ({
+    isGif: false,
+    frames: 1,
+    delayMs: 100,
+    sourceFrames: 1,
+    dropped: [],
+  })),
+  loadDisplayStore: vi.fn(async () => ({ slot0: null, slot1: null })),
   uploadDisplay: vi.fn(async () => {}),
   cancelUpload: vi.fn(async () => {}),
   copyDiagnostics: vi.fn(),
 }));
 
-import { useAppStore } from "./store";
+import { DEFAULT_CROP } from "./lib/crop";
+import { useAppStore, type SlotEntry } from "./store";
+
+function emptyEntry(): SlotEntry {
+  return { source: null, name: "", info: null, crop: { ...DEFAULT_CROP }, delayMs: 100 };
+}
 
 describe("store", () => {
   beforeEach(() => {
@@ -32,7 +44,8 @@ describe("store", () => {
       devices: [],
       connected: false,
       error: null,
-      source: null,
+      slot: "slot0",
+      entries: { slot0: emptyEntry(), slot1: emptyEntry() },
       previewUrl: null,
     });
   });
@@ -52,6 +65,55 @@ describe("store", () => {
     await vi.waitFor(() => expect(useAppStore.getState().previewUrl).not.toBeNull());
   });
 
+  it("keeps a separate source and crop per slot", async () => {
+    useAppStore.getState().loadSource(new Uint8Array([1]), "a.png");
+    useAppStore.getState().setSlot("slot1");
+    useAppStore.getState().loadSource(new Uint8Array([2]), "b.png");
+    await vi.waitFor(() => expect(useAppStore.getState().entries.slot1.info).not.toBeNull());
+
+    const { entries } = useAppStore.getState();
+    expect(entries.slot0.name).toBe("a.png");
+    expect(entries.slot1.name).toBe("b.png");
+    expect(Array.from(entries.slot0.source!)).toEqual([1]);
+    expect(Array.from(entries.slot1.source!)).toEqual([2]);
+  });
+
+  it("inspects with the other slot's frames subtracted", async () => {
+    const ipc = await import("./lib/ipc");
+    vi.mocked(ipc.inspectSource).mockClear();
+    useAppStore.setState({
+      state: { connected: true, slot0Frames: 1, slot1Frames: 10 } as never,
+      slot: "slot0",
+    });
+    useAppStore.getState().loadSource(new Uint8Array([9]), "x.gif");
+    await vi.waitFor(() => expect(vi.mocked(ipc.inspectSource)).toHaveBeenCalled());
+    const call = vi.mocked(ipc.inspectSource).mock.calls.at(-1)!;
+    expect(call[2]).toBe(26);
+  });
+
+  it("rehydrates both slots from the stored display", async () => {
+    const ipc = await import("./lib/ipc");
+    vi.mocked(ipc.loadDisplayStore).mockResolvedValueOnce({
+      slot0: {
+        name: "a.gif",
+        isGif: true,
+        frames: 5,
+        sourceFrames: 40,
+        dropped: [1, 2],
+        delayMs: 111,
+        crop: { offsetX: 0.1, offsetY: 0, zoom: 1, fit: "cover" },
+        bytes: new Uint8Array([1, 2, 3]),
+      },
+      slot1: null,
+    });
+    await useAppStore.getState().loadStoredDisplay();
+    const entry = useAppStore.getState().entries.slot0;
+    expect(entry.name).toBe("a.gif");
+    expect(entry.info?.frames).toBe(5);
+    expect(entry.delayMs).toBe(111);
+    expect(Array.from(entry.source!)).toEqual([1, 2, 3]);
+  });
+
   it("records upload progress from the event", () => {
     useAppStore.getState().setProgress({ bytesSent: 50, totalBytes: 100 });
     expect(useAppStore.getState().progress).toEqual({ bytesSent: 50, totalBytes: 100 });
@@ -66,7 +128,12 @@ describe("store", () => {
 
   it("revokes the previous preview URL", async () => {
     const revoke = vi.spyOn(URL, "revokeObjectURL");
-    useAppStore.setState({ source: { bytes: new Uint8Array([1]), name: "x.png" } });
+    useAppStore.setState((s) => ({
+      entries: {
+        ...s.entries,
+        slot0: { ...s.entries.slot0, source: new Uint8Array([1]), name: "x.png" },
+      },
+    }));
     await useAppStore.getState().refreshPreview();
     const first = useAppStore.getState().previewUrl;
     await useAppStore.getState().refreshPreview();
@@ -74,15 +141,25 @@ describe("store", () => {
     revoke.mockRestore();
   });
 
-  it("debounces the preview while dragging", async () => {
+  it("throttles the preview during a continuous drag", async () => {
     vi.useFakeTimers();
     const ipc = await import("./lib/ipc");
     vi.mocked(ipc.previewDisplay).mockClear();
-    useAppStore.setState({ source: { bytes: new Uint8Array([1]), name: "x.png" } });
+    useAppStore.setState((s) => ({
+      entries: {
+        ...s.entries,
+        slot0: { ...s.entries.slot0, source: new Uint8Array([1]), name: "x.png" },
+      },
+    }));
+    // A stream of pointer moves must still refresh while the drag continues,
+    // rather than only after the pointer stops.
     useAppStore.getState().setCrop({ offsetX: 0.1, offsetY: 0, zoom: 1, fit: "cover" });
     useAppStore.getState().setCrop({ offsetX: 0.2, offsetY: 0, zoom: 1, fit: "cover" });
-    await vi.advanceTimersByTimeAsync(120);
+    await vi.advanceTimersByTimeAsync(40);
     expect(vi.mocked(ipc.previewDisplay)).toHaveBeenCalledTimes(1);
+    useAppStore.getState().setCrop({ offsetX: 0.3, offsetY: 0, zoom: 1, fit: "cover" });
+    await vi.advanceTimersByTimeAsync(40);
+    expect(vi.mocked(ipc.previewDisplay)).toHaveBeenCalledTimes(2);
     vi.useRealTimers();
   });
 });

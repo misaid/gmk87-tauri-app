@@ -1,14 +1,13 @@
-import { useRef, useState } from "react";
+import { useRef } from "react";
 import { panBy, zoomBy, type CropParams } from "@/lib/crop";
 import { useAppStore } from "@/store";
 
 export function CropEditor() {
-  const crop = useAppStore((s) => s.crop);
+  const crop = useAppStore((s) => s.entries[s.slot].crop);
   const setCrop = useAppStore((s) => s.setCrop);
   const previewUrl = useAppStore((s) => s.previewUrl);
   const surface = useRef<HTMLDivElement>(null);
   const drag = useRef<{ x: number; y: number } | null>(null);
-  const [, force] = useState(0);
 
   function box() {
     const rect = surface.current?.getBoundingClientRect();
@@ -22,7 +21,6 @@ export function CropEditor() {
     drag.current = { x: event.clientX, y: event.clientY };
     const { width, height } = box();
     setCrop(panBy(crop, dx, dy, width, height));
-    force((n) => n + 1);
   }
 
   function nextZoom(delta: number): CropParams {

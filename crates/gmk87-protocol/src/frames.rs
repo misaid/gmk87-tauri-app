@@ -7,71 +7,196 @@
 
 use crate::config::ShowSlot;
 use crate::error::ProtocolError;
-use crate::image::{prepare_static, CropSpec};
-use crate::pixel::encode_slot;
+use crate::image::{prepare_rgba, CropSpec};
+use crate::pixel::{encode_slot_into, SLOT_BYTES};
 
 /// Total frames allowed across both display slots.
 pub const MAX_TOTAL_FRAMES: u32 = 36;
 /// The device refuses frame delays shorter than this.
 pub const MIN_FRAME_DELAY_MS: u16 = 60;
+/// The longest frame delay the app will ask the device for. A GIF compressed
+/// into fewer frames keeps its total duration by stretching the delay, but the
+/// stretch stops here.
+pub const MAX_FRAME_DELAY_MS: u16 = 500;
 
-/// Decodes a GIF into display frames (RGB8), returning the source frame delay.
-pub fn extract_gif_frames(
-    bytes: &[u8],
-    crop: &CropSpec,
-    max_frames: u32,
-) -> Result<(Vec<Vec<u8>>, u16), ProtocolError> {
+/// Frames decoded from a source, plus the timing and sampling record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodedFrames {
+    /// The prepared RGB8 frames, already fitted to the display.
+    pub frames: Vec<Vec<u8>>,
+    /// The per-frame delay to use, in milliseconds.
+    pub delay_ms: u16,
+    /// How many frames the source held before any compression.
+    pub source_frames: u32,
+    /// Source frame indices dropped to fit the budget, in ascending order.
+    pub dropped: Vec<u32>,
+}
+
+impl DecodedFrames {
+    /// Whether the source had to be compressed to fit the budget.
+    pub fn compressed(&self) -> bool {
+        !self.dropped.is_empty()
+    }
+}
+
+fn read_decoder(bytes: &[u8]) -> Result<gif::Decoder<std::io::Cursor<&[u8]>>, ProtocolError> {
     let mut options = gif::DecodeOptions::new();
     options.set_color_output(gif::ColorOutput::RGBA);
-    let mut decoder = options
+    options
         .read_info(std::io::Cursor::new(bytes))
-        .map_err(|e| ProtocolError::ImageDecode(e.to_string()))?;
+        .map_err(|e| ProtocolError::ImageDecode(e.to_string()))
+}
 
-    let mut frames = Vec::new();
+/// The frame-budget decision for one GIF, before any pixels are prepared.
+///
+/// Counting and sampling happen in one decode pass, so [`inspect_gif_frames`]
+/// can answer the budget meter without paying for crop/scale work.
+struct GifPlan {
+    total: u32,
+    delay_ms: u16,
+    keep: Vec<u32>,
+    dropped: Vec<u32>,
+}
+
+/// What the budget meter needs from a GIF.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GifInfo {
+    /// Frames the source held before any compression.
+    pub source_frames: u32,
+    /// Frames that will actually be uploaded.
+    pub frames: u32,
+    pub delay_ms: u16,
+    /// Source frame indices dropped to fit the budget, in ascending order.
+    pub dropped: Vec<u32>,
+}
+
+fn plan_gif(bytes: &[u8], max_frames: u32) -> Result<GifPlan, ProtocolError> {
+    let mut decoder = read_decoder(bytes)?;
+    let mut total = 0u32;
     let mut delay_centisec = 10u16; // 100 ms default
     while let Some(frame) = decoder
         .read_next_frame()
         .map_err(|e| ProtocolError::ImageDecode(e.to_string()))?
     {
-        if frames.len() as u32 >= max_frames {
-            // Stop paying for crop/scale work, but keep reading so the error
-            // reports the real frame count rather than just the first one over
-            // the limit.
-            let mut total = frames.len() as u32 + 1;
-            while decoder
-                .read_next_frame()
-                .map_err(|e| ProtocolError::ImageDecode(e.to_string()))?
-                .is_some()
-            {
-                total += 1;
-            }
-            return Err(ProtocolError::FrameBudget {
-                frames: total,
-                max: max_frames,
-            });
-        }
+        total += 1;
         if frame.delay > 0 {
             delay_centisec = frame.delay;
         }
-        let rgba = frame.buffer.to_vec();
-        let png = encode_rgba_png(frame.width, frame.height, &rgba)?;
-        frames.push(prepare_static(&png, crop)?);
     }
 
-    if frames.is_empty() {
+    if total == 0 {
         return Err(ProtocolError::InvalidJob("GIF contains no frames".into()));
     }
-    Ok((frames, delay_centisec.saturating_mul(10)))
+    if max_frames == 0 {
+        return Err(ProtocolError::FrameBudget {
+            frames: total,
+            max: 0,
+        });
+    }
+
+    let keep = if total <= max_frames {
+        (0..total).collect::<Vec<_>>()
+    } else {
+        sample_indices(total, max_frames)
+    };
+
+    let source_delay_ms = delay_centisec.saturating_mul(10);
+    let delay_ms = if total <= max_frames {
+        source_delay_ms
+    } else {
+        let scaled = (u64::from(source_delay_ms) * u64::from(total) + u64::from(max_frames) / 2)
+            / u64::from(max_frames);
+        (scaled as u16).clamp(MIN_FRAME_DELAY_MS, MAX_FRAME_DELAY_MS)
+    };
+
+    // `keep` is ascending (a full range or an even sample), so the complement
+    // is one linear merge rather than a set and a scan.
+    let mut dropped = Vec::with_capacity(total.saturating_sub(keep.len() as u32) as usize);
+    let mut next_keep = 0usize;
+    for index in 0..total {
+        if next_keep < keep.len() && keep[next_keep] == index {
+            next_keep += 1;
+        } else {
+            dropped.push(index);
+        }
+    }
+
+    Ok(GifPlan {
+        total,
+        delay_ms,
+        keep,
+        dropped,
+    })
 }
 
-fn encode_rgba_png(width: u16, height: u16, rgba: &[u8]) -> Result<Vec<u8>, ProtocolError> {
-    let buffer = image::RgbaImage::from_raw(u32::from(width), u32::from(height), rgba.to_vec())
-        .ok_or_else(|| ProtocolError::ImageDecode("frame buffer size mismatch".into()))?;
-    let mut out = std::io::Cursor::new(Vec::new());
-    image::DynamicImage::ImageRgba8(buffer)
-        .write_to(&mut out, image::ImageFormat::Png)
-        .map_err(|e| ProtocolError::ImageDecode(e.to_string()))?;
-    Ok(out.into_inner())
+/// Counts a GIF's frames and computes its upload delay without preparing any
+/// pixels. Used by the budget meter.
+pub fn inspect_gif_frames(bytes: &[u8], max_frames: u32) -> Result<GifInfo, ProtocolError> {
+    let plan = plan_gif(bytes, max_frames)?;
+    Ok(GifInfo {
+        source_frames: plan.total,
+        frames: plan.keep.len() as u32,
+        delay_ms: plan.delay_ms,
+        dropped: plan.dropped,
+    })
+}
+
+/// Decodes a GIF into at most `max_frames` display frames (RGB8), sampling
+/// evenly and stretching the delay to keep the overall duration when the source
+/// is longer than the budget allows.
+pub fn extract_gif_frames(
+    bytes: &[u8],
+    crop: &CropSpec,
+    max_frames: u32,
+) -> Result<DecodedFrames, ProtocolError> {
+    // First pass: count frames and find the source delay, so we know which
+    // frames to keep before paying for crop/scale work.
+    let plan = plan_gif(bytes, max_frames)?;
+
+    // Second pass: prepare only the frames we keep. The decoder yields RGBA
+    // straight from the source, so the frame goes to the resizer without an
+    // encode/decode round trip through PNG.
+    let mut decoder = read_decoder(bytes)?;
+    let mut frames = Vec::with_capacity(plan.keep.len());
+    let mut index = 0u32;
+    let mut next_keep = 0usize;
+    while let Some(frame) = decoder
+        .read_next_frame()
+        .map_err(|e| ProtocolError::ImageDecode(e.to_string()))?
+    {
+        if next_keep < plan.keep.len() && plan.keep[next_keep] == index {
+            frames.push(prepare_rgba(
+                frame.width,
+                frame.height,
+                frame.buffer.to_vec(),
+                crop,
+            )?);
+            next_keep += 1;
+        }
+        index += 1;
+    }
+
+    Ok(DecodedFrames {
+        frames,
+        delay_ms: plan.delay_ms,
+        source_frames: plan.total,
+        dropped: plan.dropped,
+    })
+}
+
+/// `max_frames` indices spread evenly across `total` frames, always including
+/// the first and last. Only called when `total > max_frames > 0`.
+fn sample_indices(total: u32, max_frames: u32) -> Vec<u32> {
+    if max_frames == 1 {
+        return vec![0];
+    }
+    let last = total - 1;
+    let steps = max_frames - 1;
+    (0..max_frames)
+        .map(|i| {
+            ((u64::from(i) * u64::from(last) + u64::from(steps) / 2) / u64::from(steps)) as u32
+        })
+        .collect()
 }
 
 /// A validated set of frames for both display slots plus the device timing.
@@ -119,16 +244,19 @@ impl FramePlan {
     /// allocates the (potentially multi-megabyte) upload buffer.
     pub fn to_memory(&self) -> Result<Vec<u8>, ProtocolError> {
         self.validate()?;
-        let mut out = self.slot0_memory()?;
-        out.extend_from_slice(&self.slot1_memory()?);
+        let frame_count = self.slot0_frames.len() + self.slot1_frames.len();
+        let mut out = Vec::with_capacity(frame_count * SLOT_BYTES);
+        for frame in self.slot0_frames.iter().chain(&self.slot1_frames) {
+            encode_slot_into(frame, &mut out)?;
+        }
         Ok(out)
     }
 }
 
 fn encode_frames(frames: &[Vec<u8>]) -> Result<Vec<u8>, ProtocolError> {
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(frames.len() * SLOT_BYTES);
     for frame in frames {
-        out.extend_from_slice(&encode_slot(frame)?);
+        encode_slot_into(frame, &mut out)?;
     }
     Ok(out)
 }

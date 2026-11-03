@@ -1,9 +1,28 @@
 import { create } from "zustand";
 import * as ipc from "./lib/ipc";
 import { DEFAULT_CROP, type CropParams } from "./lib/crop";
-import { otherSlotFrames } from "./lib/budget";
+import { MAX_TOTAL_FRAMES } from "./lib/budget";
+
+/** Orders async preview renders so a slow, stale one cannot overwrite a newer. */
+let previewSequence = 0;
 
 export type Slot = "slot0" | "slot1";
+
+export const SLOTS: Slot[] = ["slot0", "slot1"];
+
+/** One display slot's in-progress source: the file, its framing and framing. */
+export interface SlotEntry {
+  /** The source bytes, or null when only a stored record is known. */
+  source: Uint8Array | null;
+  name: string;
+  info: ipc.SourceInfo | null;
+  crop: CropParams;
+  delayMs: number;
+}
+
+function emptyEntry(): SlotEntry {
+  return { source: null, name: "", info: null, crop: { ...DEFAULT_CROP }, delayMs: 100 };
+}
 
 interface AppStore {
   devices: ipc.DeviceInfo[];
@@ -12,12 +31,8 @@ interface AppStore {
   error: string | null;
   errorKind: string | null;
   presets: ipc.Preset[];
-  crop: CropParams;
+  entries: Record<Slot, SlotEntry>;
   slot: Slot;
-  source: { bytes: Uint8Array; name: string } | null;
-  sourceInfo: ipc.SourceInfo | null;
-  totalFrames: number;
-  delayMs: number;
   previewUrl: string | null;
   progress: ipc.UploadProgress | null;
   uploads: number;
@@ -29,6 +44,7 @@ interface AppStore {
   setCrop: (crop: CropParams) => void;
   setSlot: (slot: Slot) => void;
   loadSource: (bytes: Uint8Array, name: string) => void;
+  loadStoredDisplay: () => Promise<void>;
   setDelayMs: (ms: number) => void;
   refreshPreview: () => Promise<void>;
   schedulePreview: () => void;
@@ -58,6 +74,39 @@ function message(error: unknown): string {
   return String(error);
 }
 
+function other(slot: Slot): Slot {
+  return slot === "slot0" ? "slot1" : "slot0";
+}
+
+/** Frames the device reports for a slot, or the one black frame it starts with. */
+function deviceFrames(state: ipc.DeviceState | null, slot: Slot): number {
+  if (!state) return 1;
+  return slot === "slot0" ? state.slot0Frames : state.slot1Frames;
+}
+
+/** Frames a slot will send: the loaded source's count, else what the device holds. */
+function slotFrames(entries: Record<Slot, SlotEntry>, state: ipc.DeviceState | null, slot: Slot) {
+  return entries[slot].info?.frames ?? deviceFrames(state, slot);
+}
+
+/** Frames across both slots, the number the budget is measured against. */
+export function selectTotalFrames(store: AppStore): number {
+  return slotFrames(store.entries, store.state, "slot0") + slotFrames(store.entries, store.state, "slot1");
+}
+
+/** Frames a slot still has room for, given what the other slot will send. */
+export function selectRemainingFor(store: AppStore, slot: Slot): number {
+  return MAX_TOTAL_FRAMES - slotFrames(store.entries, store.state, other(slot));
+}
+
+function withEntry(
+  state: AppStore,
+  slot: Slot,
+  patch: Partial<SlotEntry>,
+): Pick<AppStore, "entries"> {
+  return { entries: { ...state.entries, [slot]: { ...state.entries[slot], ...patch } } };
+}
+
 export const useAppStore = create<AppStore>((set, get) => ({
   devices: [],
   state: null,
@@ -65,12 +114,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
   error: null,
   errorKind: null,
   presets: [],
-  crop: { ...DEFAULT_CROP },
+  entries: { slot0: emptyEntry(), slot1: emptyEntry() },
   slot: "slot0",
-  source: null,
-  sourceInfo: null,
-  totalFrames: 0,
-  delayMs: 100,
   previewUrl: null,
   progress: null,
   uploads: 0,
@@ -100,64 +145,94 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   setCrop: (crop) => {
-    set({ crop });
+    set((state) => withEntry(state, state.slot, { crop }));
     get().schedulePreview();
   },
   setSlot: (slot) => {
     set({ slot });
-    const { sourceInfo, state } = get();
-    if (sourceInfo) {
-      set({ totalFrames: sourceInfo.frames + otherSlotFrames(state, slot) });
-    }
+    void get().refreshPreview();
   },
   loadSource: async (bytes, name) => {
-    set({ source: { bytes, name }, sourceInfo: null });
+    const { slot } = get();
+    set((state) => withEntry(state, slot, { source: bytes, name, info: null }));
     void get().refreshPreview();
     try {
-      const info = await ipc.inspectSource(bytes, get().crop);
-      set({
-        sourceInfo: info,
-        delayMs: info.delayMs,
-        totalFrames: info.frames + otherSlotFrames(get().state, get().slot),
-      });
+      const maxFrames = Math.max(0, selectRemainingFor(get(), slot));
+      const info = await ipc.inspectSource(bytes, get().entries[slot].crop, maxFrames);
+      set((state) => withEntry(state, slot, { info, delayMs: info.delayMs }));
     } catch (error) {
       set({ error: message(error), errorKind: kindOf(error) });
     }
   },
-  setDelayMs: (delayMs) => set({ delayMs }),
+  loadStoredDisplay: async () => {
+    try {
+      const stored = await ipc.loadDisplayStore();
+      for (const slot of SLOTS) {
+        const record = stored[slot];
+        if (!record) continue;
+        set((state) =>
+          withEntry(state, slot, {
+            source: record.bytes,
+            name: record.name,
+            info: {
+              isGif: record.isGif,
+              frames: record.frames,
+              delayMs: record.delayMs,
+              sourceFrames: record.sourceFrames,
+              dropped: record.dropped,
+            },
+            crop: { ...record.crop },
+            delayMs: record.delayMs,
+          }),
+        );
+      }
+      await get().refreshPreview();
+    } catch (error) {
+      set({ error: message(error), errorKind: kindOf(error) });
+    }
+  },
+  setDelayMs: (delayMs) => set((state) => withEntry(state, state.slot, { delayMs })),
 
   schedulePreview: () => {
-    const existing = get().previewTimer;
-    if (existing !== null) window.clearTimeout(existing);
+    // Coalesce renders to one per frame-ish interval. This is a throttle, not
+    // a trailing debounce: a debounce reset the timer on every pointer move,
+    // so a continuous drag showed nothing until the pointer stopped.
+    if (get().previewTimer !== null) return;
     const id = window.setTimeout(() => {
       set({ previewTimer: null });
       void get().refreshPreview();
-    }, 80);
+    }, 33);
     set({ previewTimer: id });
   },
 
   refreshPreview: async () => {
-    const { source, crop } = get();
-    if (!source) {
+    const sequence = ++previewSequence;
+    const { entries, slot } = get();
+    const entry = entries[slot];
+    if (!entry.source) {
       set({ previewUrl: null });
       return;
     }
     try {
-      const png = await ipc.previewDisplay(source.bytes, crop);
-      const blob = new Blob([new Uint8Array(png)], { type: "image/png" });
+      const png = await ipc.previewDisplay(entry.source, entry.crop);
+      // A newer crop or slot switch has already started; its result wins.
+      if (sequence !== previewSequence) return;
+      const blob = new Blob([png], { type: "image/png" });
       const url = URL.createObjectURL(blob);
       set((state) => {
         if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
         return { previewUrl: url, error: null, errorKind: null };
       });
     } catch (error) {
+      if (sequence !== previewSequence) return;
       set({ error: message(error), errorKind: kindOf(error) });
     }
   },
 
   upload: async (delayMs, showAfter) => {
-    const { source, crop, slot } = get();
-    if (!source) {
+    const { entries, slot } = get();
+    const entry = entries[slot];
+    if (!entry.source) {
       set({ error: "Choose an image or GIF first." });
       return;
     }
@@ -165,8 +240,9 @@ export const useAppStore = create<AppStore>((set, get) => ({
     try {
       await ipc.uploadDisplay({
         slot,
-        bytes: Array.from(source.bytes),
-        crop,
+        name: entry.name,
+        bytes: entry.source,
+        crop: entry.crop,
         delayMs,
         showAfter,
       });

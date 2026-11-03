@@ -5,7 +5,12 @@ import { DEFAULT_CROP } from "@/lib/crop";
 const setCrop = vi.fn();
 vi.mock("@/store", () => ({
   useAppStore: (selector: (s: unknown) => unknown) =>
-    selector({ crop: DEFAULT_CROP, setCrop, previewUrl: null }),
+    selector({
+      slot: "slot0",
+      entries: { slot0: { crop: DEFAULT_CROP }, slot1: { crop: DEFAULT_CROP } },
+      setCrop,
+      previewUrl: null,
+    }),
 }));
 
 import { CropEditor } from "./CropEditor";

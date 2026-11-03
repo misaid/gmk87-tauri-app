@@ -1,16 +1,16 @@
 //! Owns the device session and serializes every operation against it.
 
 use crate::error::AppError;
-use crate::job::{decode_frames, DisplayJob};
+use crate::job::{decode_frames, DisplayJob, SlotTarget};
 use crate::lighting::LightingPatch;
-use crate::slots::SlotStore;
+use crate::slots::{SlotMeta, SlotStore};
 use crate::snapshot;
 use crate::state::DeviceStateDto;
 use gmk87_device::session::{CancelToken, Session, UploadProgress};
 use gmk87_device::transport::Transport;
 use gmk87_protocol::config::DeviceConfig;
 use gmk87_protocol::frames::FramePlan;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub struct DeviceManager<T: Transport> {
     session: Session<T>,
@@ -66,6 +66,64 @@ impl<T: Transport> DeviceManager<T> {
         &self.slots
     }
 
+    /// Rebuilds both slots from the stored display record and sources.
+    ///
+    /// The device's image memory cannot be read back, so an upload of one slot
+    /// resends whatever this store holds for the other. Without this the store
+    /// starts with a black frame and the first upload after a restart would
+    /// blank the slot the user did not touch.
+    ///
+    /// A stored source that no longer decodes, or that no longer fits the
+    /// budget, is skipped with a warning: a corrupt record must not make the
+    /// app unable to connect.
+    pub fn restore_slots(&mut self, dir: &Path) {
+        let loaded = crate::display_store::load(dir);
+        for (target, record, source) in [
+            (
+                SlotTarget::Slot0,
+                loaded.store.slot0.as_ref(),
+                loaded.sources[0].as_ref(),
+            ),
+            (
+                SlotTarget::Slot1,
+                loaded.store.slot1.as_ref(),
+                loaded.sources[1].as_ref(),
+            ),
+        ] {
+            let (Some(record), Some(bytes)) = (record, source) else {
+                continue;
+            };
+            match self.restore_slot(target, record, bytes) {
+                Ok(()) => {}
+                Err(error) => tracing::warn!(
+                    slot = target.label(),
+                    %error,
+                    "could not restore the stored display slot"
+                ),
+            }
+        }
+    }
+
+    fn restore_slot(
+        &mut self,
+        target: SlotTarget,
+        record: &crate::display_store::SlotRecord,
+        bytes: &[u8],
+    ) -> Result<(), AppError> {
+        let crop = record.crop.to_spec();
+        let limit = self.slots.remaining(target);
+        let decoded = decode_frames(bytes, &crop, record.delay_ms, limit)?;
+        let meta = SlotMeta {
+            name: record.name.clone(),
+            is_gif: decoded.is_gif,
+            frames: decoded.frames.len() as u32,
+            source_frames: decoded.source_frames,
+            dropped: decoded.dropped.clone(),
+            delay_ms: decoded.delay_ms,
+        };
+        self.slots.set(target, decoded.frames, meta)
+    }
+
     /// The underlying transport, for tests that inspect what was sent.
     pub fn transport(&self) -> &T {
         self.session.transport()
@@ -90,14 +148,23 @@ impl<T: Transport> DeviceManager<T> {
         on_progress: &mut dyn FnMut(UploadProgress),
     ) -> Result<(), AppError> {
         let crop = job.crop.to_spec();
-        let (frames, delay) = decode_frames(&job.bytes, &crop, job.delay_ms)?;
-        self.slots.set(job.slot, frames)?;
+        let limit = self.slots.remaining(job.slot);
+        let decoded = decode_frames(&job.bytes, &crop, job.delay_ms, limit)?;
+        let meta = SlotMeta {
+            name: job.name.clone(),
+            is_gif: decoded.is_gif,
+            frames: decoded.frames.len() as u32,
+            source_frames: decoded.source_frames,
+            dropped: decoded.dropped.clone(),
+            delay_ms: decoded.delay_ms,
+        };
+        self.slots.set(job.slot, decoded.frames, meta)?;
         let show = if job.show_after {
             job.slot.as_show()
         } else {
             self.session.config().show_image()
         };
-        let plan = self.slots.build_plan(delay, show);
+        let plan = self.slots.build_plan(decoded.delay_ms, show);
         self.upload_plan(&plan, cancel, on_progress)
     }
 

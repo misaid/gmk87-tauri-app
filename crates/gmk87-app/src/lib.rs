@@ -2,6 +2,7 @@
 //!
 //! Tauri-independent so it can be tested against `MockTransport`.
 
+pub mod display_store;
 pub mod error;
 pub mod inspect;
 pub mod job;

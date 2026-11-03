@@ -1,7 +1,6 @@
 //! Wire shapes crossing the command boundary.
 
-use gmk87_app::error::AppError;
-use gmk87_app::job::{preview_png, CropDto};
+use gmk87_app::job::{CropDto, SlotTarget};
 use gmk87_device::discovery::{DeviceInfo, TransportKind};
 use serde::{Deserialize, Serialize};
 
@@ -38,22 +37,25 @@ pub struct PresetDto {
     pub description: String,
 }
 
+/// Metadata that travels in an IPC header beside a raw image payload.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PreviewJob {
-    pub bytes: Vec<u8>,
+pub struct PreviewMeta {
     pub crop: CropDto,
+    #[serde(default)]
+    pub max_frames: Option<u32>,
 }
 
-/// Renders a preview PNG, mapping an empty buffer to a named fault.
-pub fn preview_bytes(job: &PreviewJob) -> Result<Vec<u8>, AppError> {
-    if job.bytes.is_empty() {
-        return Err(AppError {
-            kind: gmk87_app::error::ErrorKind::Protocol,
-            message: "no image bytes were provided".into(),
-        });
-    }
-    preview_png(&job.bytes, &job.crop.to_spec())
+/// Metadata that travels in an IPC header beside a raw upload payload.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UploadMeta {
+    pub slot: SlotTarget,
+    #[serde(default)]
+    pub name: String,
+    pub crop: CropDto,
+    pub delay_ms: u16,
+    pub show_after: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -78,6 +80,8 @@ pub struct SourceInfoDto {
     pub is_gif: bool,
     pub frames: u32,
     pub delay_ms: u16,
+    pub source_frames: u32,
+    pub dropped: Vec<u32>,
 }
 
 impl From<gmk87_app::inspect::SourceInfo> for SourceInfoDto {
@@ -86,6 +90,50 @@ impl From<gmk87_app::inspect::SourceInfo> for SourceInfoDto {
             is_gif: info.is_gif,
             frames: info.frames,
             delay_ms: info.delay_ms,
+            source_frames: info.source_frames,
+            dropped: info.dropped,
+        }
+    }
+}
+
+/// One slot's persisted display record. Source bytes are fetched separately as
+/// a raw response so a 25 MiB image never becomes a JSON number array.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredSlotDto {
+    pub name: String,
+    pub is_gif: bool,
+    pub frames: u32,
+    pub source_frames: u32,
+    pub dropped: Vec<u32>,
+    pub delay_ms: u16,
+    pub crop: gmk87_app::display_store::CropRecord,
+}
+
+/// The persisted record of both display slots, restored on startup.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredDisplayDto {
+    pub slot0: Option<StoredSlotDto>,
+    pub slot1: Option<StoredSlotDto>,
+}
+
+impl From<gmk87_app::display_store::DisplayStore> for StoredDisplayDto {
+    fn from(store: gmk87_app::display_store::DisplayStore) -> Self {
+        let record = |stored: Option<&gmk87_app::display_store::SlotRecord>| {
+            stored.map(|r| StoredSlotDto {
+                name: r.name.clone(),
+                is_gif: r.is_gif,
+                frames: r.frames,
+                source_frames: r.source_frames,
+                dropped: r.dropped.clone(),
+                delay_ms: r.delay_ms,
+                crop: r.crop.clone(),
+            })
+        };
+        Self {
+            slot0: record(store.slot0.as_ref()),
+            slot1: record(store.slot1.as_ref()),
         }
     }
 }
@@ -139,20 +187,5 @@ mod tests {
         let dto = DeviceInfoDto::from(info);
         assert_eq!(dto.label, "GMK87 (2.4 GHz)");
         assert_eq!(dto.transport, "wireless24g");
-    }
-
-    #[test]
-    fn a_preview_job_without_bytes_names_the_fault() {
-        let job = PreviewJob {
-            bytes: Vec::new(),
-            crop: CropDto {
-                offset_x: 0.0,
-                offset_y: 0.0,
-                zoom: 1.0,
-                fit: gmk87_app::job::FitDto::Cover,
-            },
-        };
-        let error = super::preview_bytes(&job).unwrap_err();
-        assert_eq!(error.kind, gmk87_app::error::ErrorKind::Protocol);
     }
 }

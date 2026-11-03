@@ -3,6 +3,7 @@
 mod app_state;
 mod commands;
 mod dto;
+mod preview_cache;
 
 use app_state::AppState;
 
@@ -28,6 +29,8 @@ pub fn run() {
             commands::apply_preset,
             commands::preview_display,
             commands::inspect_source,
+            commands::load_display_store,
+            commands::load_display_source,
             commands::copy_diagnostics,
             commands::upload_display,
             commands::cancel_upload,

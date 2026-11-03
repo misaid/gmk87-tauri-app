@@ -37,31 +37,43 @@ fn detects_gif_by_header() {
 
 #[test]
 fn a_static_image_is_one_frame() {
-    let (frames, delay) = decode_frames(&png(500, 400), &CropSpec::default(), 120).unwrap();
-    assert_eq!(frames.len(), 1);
-    assert_eq!(delay, 120);
+    let decoded = decode_frames(&png(500, 400), &CropSpec::default(), 120, 36).unwrap();
+    assert_eq!(decoded.frames.len(), 1);
+    assert_eq!(decoded.delay_ms, 120);
+    assert!(!decoded.is_gif);
+    assert_eq!(decoded.source_frames, 1);
+    assert!(decoded.dropped.is_empty());
     assert_eq!(
-        frames[0].len(),
+        decoded.frames[0].len(),
         (DISPLAY_WIDTH * DISPLAY_HEIGHT * 3) as usize
     );
 }
 
 #[test]
 fn a_gif_uses_its_own_delay_when_none_is_given() {
-    let (frames, delay) = decode_frames(&gif(3, 7), &CropSpec::default(), 0).unwrap();
-    assert_eq!(frames.len(), 3);
-    assert_eq!(delay, 70, "7 centiseconds is 70 ms");
+    let decoded = decode_frames(&gif(3, 7), &CropSpec::default(), 0, 36).unwrap();
+    assert_eq!(decoded.frames.len(), 3);
+    assert_eq!(decoded.delay_ms, 70, "7 centiseconds is 70 ms");
+    assert!(decoded.is_gif);
+    assert_eq!(decoded.source_frames, 3);
 }
 
 #[test]
-fn a_gif_over_the_budget_is_rejected_before_any_streaming() {
-    let error = decode_frames(&gif(40, 5), &CropSpec::default(), 0).unwrap_err();
-    assert_eq!(error.kind, ErrorKind::InvalidJob);
-    assert!(
-        error.message.contains("40"),
-        "names the frame count: {}",
-        error.message
+fn a_gif_over_the_budget_is_compressed_to_fit() {
+    let decoded = decode_frames(&gif(40, 10), &CropSpec::default(), 0, 36).unwrap();
+    assert_eq!(decoded.frames.len(), 36);
+    assert_eq!(decoded.source_frames, 40);
+    assert_eq!(decoded.dropped.len(), 4);
+    assert_eq!(
+        decoded.delay_ms, 111,
+        "duration preserved: 40x100ms -> 36x111ms"
     );
+}
+
+#[test]
+fn a_static_image_with_no_budget_left_is_rejected() {
+    let error = decode_frames(&png(4, 4), &CropSpec::default(), 120, 0).unwrap_err();
+    assert_eq!(error.kind, ErrorKind::InvalidJob);
 }
 
 #[test]
@@ -82,6 +94,7 @@ fn preview_of_a_non_image_is_an_error_not_a_panic() {
 fn a_display_job_deserializes_from_camel_case() {
     let json = r#"{
         "slot": "slot1",
+        "name": "cat.gif",
         "bytes": [1, 2, 3],
         "crop": { "offsetX": 0.5, "offsetY": -0.5, "zoom": 2.0, "fit": "contain" },
         "delayMs": 80,
@@ -89,6 +102,7 @@ fn a_display_job_deserializes_from_camel_case() {
     }"#;
     let job: DisplayJob = serde_json::from_str(json).unwrap();
     assert_eq!(job.slot, SlotTarget::Slot1);
+    assert_eq!(job.name, "cat.gif");
     assert_eq!(job.bytes, vec![1, 2, 3]);
     assert_eq!(job.crop.to_spec().zoom, 2.0);
     assert!(job.show_after);

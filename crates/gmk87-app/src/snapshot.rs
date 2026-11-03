@@ -8,14 +8,19 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// `~/.local/share/gmk87/snapshot`, honouring `XDG_DATA_HOME`.
-pub fn default_path() -> Option<PathBuf> {
+/// `~/.local/share/gmk87`, honouring `XDG_DATA_HOME`.
+pub fn data_dir() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .or_else(|| {
             std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local").join("share"))
         })?;
-    Some(base.join("gmk87").join("snapshot"))
+    Some(base.join("gmk87"))
+}
+
+/// `~/.local/share/gmk87/snapshot`.
+pub fn default_path() -> Option<PathBuf> {
+    data_dir().map(|dir| dir.join("snapshot"))
 }
 
 /// Loads a snapshot, or `None` when it is missing or malformed.

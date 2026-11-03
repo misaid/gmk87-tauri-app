@@ -8,6 +8,7 @@ license.workspace = true
 thiserror.workspace = true
 image = "0.25"
 gif = "0.13"
+fast_image_resize = { version = "5", features = ["image"] }
 
 [dev-dependencies]
 crc32fast = "1"

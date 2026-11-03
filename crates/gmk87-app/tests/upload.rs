@@ -3,6 +3,7 @@ use gmk87_app::job::{CropDto, DisplayJob, FitDto, SlotTarget};
 use gmk87_app::manager::DeviceManager;
 use gmk87_device::mock::MockTransport;
 use gmk87_device::session::{CancelToken, UploadProgress};
+use gmk87_protocol::image::{prepare_static, CropSpec};
 use gmk87_protocol::packet::Command;
 use gmk87_protocol::pixel::SLOT_BYTES;
 
@@ -20,6 +21,7 @@ fn png(width: u32, height: u32) -> Vec<u8> {
 fn job(slot: SlotTarget) -> DisplayJob {
     DisplayJob {
         slot,
+        name: "test.png".into(),
         bytes: png(240, 135),
         crop: CropDto {
             offset_x: 0.0,
@@ -130,10 +132,53 @@ fn cancelling_mid_stream_repairs_and_reports_it() {
 }
 
 #[test]
+fn restores_the_untouched_slot_from_the_display_store() {
+    use gmk87_app::display_store::{self, CropRecord, DisplayStore, SlotRecord};
+
+    let dir = tempfile::tempdir().unwrap();
+    let bytes = png(240, 135);
+    let mut store = DisplayStore::default();
+    store.set(
+        SlotTarget::Slot0,
+        SlotRecord {
+            name: "stored.png".into(),
+            is_gif: false,
+            frames: 1,
+            source_frames: 1,
+            dropped: Vec::new(),
+            delay_ms: 90,
+            crop: CropRecord::from_spec(&CropSpec::default()),
+            has_bytes: true,
+        },
+    );
+    display_store::save(dir.path(), &store).unwrap();
+    display_store::save_source(dir.path(), SlotTarget::Slot0, &bytes).unwrap();
+
+    let mut manager = DeviceManager::new(MockTransport::new(), None);
+    manager.restore_slots(dir.path());
+
+    let expected = prepare_static(&bytes, &CropSpec::default()).unwrap();
+    assert_eq!(
+        manager.slots().frames(SlotTarget::Slot0),
+        &[expected],
+        "the stored source is rebuilt, not a black frame"
+    );
+    let meta = manager.slots().meta(SlotTarget::Slot0).unwrap();
+    assert_eq!(meta.name, "stored.png");
+    assert_eq!(meta.delay_ms, 90);
+}
+
+#[test]
 fn a_plan_over_budget_fails_before_any_traffic() {
     use gmk87_app::slots::{SlotStore, BLACK_FRAME_BYTES};
     let mut store = SlotStore::default();
     let frames: Vec<Vec<u8>> = (0..36).map(|_| vec![0u8; BLACK_FRAME_BYTES]).collect();
-    let error = store.set(SlotTarget::Slot1, frames).unwrap_err();
+    let error = store
+        .set(
+            SlotTarget::Slot1,
+            frames,
+            gmk87_app::slots::SlotMeta::default(),
+        )
+        .unwrap_err();
     assert_eq!(error.kind, ErrorKind::InvalidJob);
 }

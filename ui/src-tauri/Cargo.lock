@@ -793,6 +793,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "document-features"
+version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d4b8a88685455ed29a21542a33abd9cb6510b6b129abadabdcef0f4c55bc8f61"
+dependencies = [
+ "litrs",
+]
+
+[[package]]
 name = "dom_query"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -921,6 +930,20 @@ dependencies = [
  "rayon-core",
  "smallvec",
  "zune-inflate",
+]
+
+[[package]]
+name = "fast_image_resize"
+version = "5.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fbc7fe45cf92b43817ff62a3723e862b85bd1d06288f63007f7645d1d2f7a060"
+dependencies = [
+ "bytemuck",
+ "cfg-if",
+ "document-features",
+ "image",
+ "num-traits",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1336,6 +1359,7 @@ dependencies = [
  "gmk87-protocol",
  "image",
  "serde",
+ "serde_json",
  "thiserror 1.0.69",
  "tracing",
 ]
@@ -1345,9 +1369,11 @@ name = "gmk87-desktop"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "crc32fast",
  "gmk87-app",
  "gmk87-device",
  "gmk87-protocol",
+ "image",
  "serde",
  "serde_json",
  "tauri",
@@ -1372,6 +1398,7 @@ dependencies = [
 name = "gmk87-protocol"
 version = "0.1.0"
 dependencies = [
+ "fast_image_resize",
  "gif 0.13.3",
  "image",
  "thiserror 1.0.69",
@@ -2099,6 +2126,12 @@ name = "litemap"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
+
+[[package]]
+name = "litrs"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4744e383959f0db86ede514b809b1c53251889093803c05267acc7d4e7030d70"
 
 [[package]]
 name = "lock_api"

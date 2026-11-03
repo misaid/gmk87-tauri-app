@@ -33,9 +33,11 @@ scope.
 
 ## What it does
 
-- **Display:** two slots; a static image or animated GIF is cropped, scaled,
-  converted to big-endian RGB565 and uploaded to either slot. Choose whether the
-  display shows the clock, slot 0 or slot 1.
+- **Display:** two independent slots, each holding its own static image or
+  animated GIF. A source is cropped, scaled, converted to big-endian RGB565 and
+  uploaded to its slot; a GIF with more frames than the budget allows is
+  compressed to fit by sampling evenly and stretching the delay. Choose whether
+  the display shows the clock, slot 0 or slot 1.
 - **Lighting:** underglow effect, brightness, speed, orientation, rainbow toggle
   and RGB colour; side LED mode, colour and saturation; win-lock.
 - **Clock:** writes the system time to the keyboard in the device's packed-BCD
@@ -180,10 +182,11 @@ covers the whole feature set with a live preview:
 
 - **Device** — lists the wired keyboard and the 2.4 GHz dongle, connects and
   disconnects, flags the VIA interface, and copies a short diagnostics report.
-- **Display** — slot tabs, a file picker for images and GIFs, a crop/zoom/pan
-  editor, a frame-budget meter (36 frames across both slots, 60 ms minimum
-  delay), and an upload button with live progress and cancel. The Rust side
-  renders the preview; the UI only sends crop parameters.
+- **Display** — slot tabs, each with its own file picker for images and GIFs, a
+  crop/zoom/pan editor, a frame-budget meter (36 frames across both slots, 60 ms
+  minimum delay) that reports when a GIF was compressed to fit, and an upload
+  button with live progress and cancel. The Rust side renders the preview; the
+  UI only sends crop parameters.
 - **Lighting** — the 19 named underglow effects with brightness, speed,
   orientation, rainbow and RGB colour; side-LED mode, colour and saturation;
   win-lock; and eight one-click presets (gaming, relaxed, party, minimal,
@@ -194,9 +197,13 @@ covers the whole feature set with a live preview:
   colour.
 
 Every upload streams **both** display slots, because the keyboard rewrites all
-of its image memory in one session; the slot you did not change is resent from
-the app's in-memory copy, so it is preserved for the session. (The device cannot
-be read back, so after a restart the first upload resets the other slot.)
+of its image memory in one session. The slot you did not change is resent from
+the app's copy of what it last uploaded — rebuilt from disk when the app
+connects — so it is preserved across restarts too, not just for the session.
+Each slot's name, crop position and source bytes are stored under the app data
+directory; a source over 25 MB keeps its metadata but not its bytes, so that
+slot cannot be restored. (The device cannot be read back, so the saved copy is
+the only record of what each slot holds.)
 
 ### Run it
 

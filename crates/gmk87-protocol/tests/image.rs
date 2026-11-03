@@ -1,5 +1,7 @@
 use gmk87_protocol::error::ProtocolError;
-use gmk87_protocol::image::{prepare_static, CropSpec, Fit};
+use gmk87_protocol::image::{
+    decode_source, prepare_static, preview_png, render_preview, CropSpec, Fit,
+};
 use gmk87_protocol::pixel::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 
 fn png(width: u32, height: u32) -> Vec<u8> {
@@ -41,6 +43,36 @@ fn cover_and_contain_both_fill_the_frame() {
         let out = prepare_static(&wide, &crop).unwrap();
         assert_eq!(out.len(), (DISPLAY_WIDTH * DISPLAY_HEIGHT * 3) as usize);
     }
+}
+
+#[test]
+fn a_preview_of_a_large_source_matches_the_upload_geometry() {
+    // 4000x100 is much wider than the 16:9 display, so `Contain` letterboxes it
+    // into a thin strip in the middle. The preview renders from a downscaled
+    // proxy; its geometry must still match the full-resolution upload.
+    let source = decode_source(&png(4000, 100)).unwrap();
+    let crop = CropSpec {
+        fit: Fit::Contain,
+        ..CropSpec::default()
+    };
+    let preview = render_preview(&source, &crop);
+    let upload = prepare_static(&png(4000, 100), &crop).unwrap();
+    fn row(frame: &[u8], y: u32) -> &[u8] {
+        let start = (y * DISPLAY_WIDTH * 3) as usize;
+        &frame[start..start + (DISPLAY_WIDTH * 3) as usize]
+    }
+    let mid = DISPLAY_HEIGHT / 2;
+    assert!(
+        row(&preview, 0).iter().all(|b| *b == 0),
+        "top is letterboxed"
+    );
+    assert!(row(&upload, 0).iter().all(|b| *b == 0), "upload matches");
+    assert!(
+        row(&preview, mid).iter().any(|b| *b != 0),
+        "the image is visible in the middle"
+    );
+    assert!(row(&upload, mid).iter().any(|b| *b != 0));
+    assert!(preview_png(&source, &crop).unwrap().starts_with(b"\x89PNG"));
 }
 
 #[test]
