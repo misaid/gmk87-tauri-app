@@ -7,10 +7,11 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}) })
 import App from "./App";
 
 describe("App shell", () => {
-  it("renders the four screens", () => {
+  it("renders the three screens", () => {
     render(<App />);
-    for (const label of ["Device", "Display", "Lighting", "Clock"]) {
+    for (const label of ["Device", "Display", "Lighting"]) {
       expect(screen.getByRole("tab", { name: label })).toBeInTheDocument();
     }
+    expect(screen.queryByRole("tab", { name: "Clock" })).not.toBeInTheDocument();
   });
 });

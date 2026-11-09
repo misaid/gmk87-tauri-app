@@ -1,0 +1,56 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            args: --target x86_64-unknown-linux-gnu --bundles appimage
+          - os: windows-latest
+            args: --target x86_64-pc-windows-msvc --bundles nsis
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: >
+          sudo apt-get update && sudo apt-get install -y
+          libudev-dev pkg-config
+          libwebkit2gtk-4.1-dev build-essential curl wget file
+          libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ui/src-tauri
+
+      - name: Build Tauri bundle
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: ui
+          tagName: ${{ github.ref_name }}
+          releaseName: GMK87 Configurator ${{ github.ref_name }}
+          releaseBody: "Desktop release. Linux: AppImage. Windows: NSIS installer."
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}

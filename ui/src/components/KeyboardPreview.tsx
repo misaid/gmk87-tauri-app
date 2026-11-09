@@ -1,270 +1,302 @@
-import { Suspense, useEffect, useLayoutEffect, useMemo, useRef, type RefObject } from "react";
-import { Canvas, useThree } from "@react-three/fiber";
-import { Cylinder, OrbitControls, RoundedBox, useTexture } from "@react-three/drei";
-import { CanvasTexture, Matrix4, Quaternion, SRGBColorSpace, Vector3, type InstancedMesh } from "three";
-import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
-import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
+import { useMemo } from "react";
+import { motion, useReducedMotion } from "framer-motion";
 import {
-  BOARD_TILT,
   displayLayout,
+  displayPlateLayout,
   fieldSize,
-  keyboardLayout,
+  ledBarLayout,
+  KEY_GAP,
   knobLayout,
   labeledKeys,
-  legendY,
   plateLayout,
-  toWorld,
-  underglowColor,
-  webglAvailable,
+  type LabeledKey,
 } from "./keyboard";
+import {
+  ledAnimation,
+  perKeyUnderglow,
+  underglowAnimation,
+  underglowCategory,
+  type GlowAnimation,
+  type KeyPos,
+} from "./lighting";
 import { cn } from "@/lib/utils";
-import { useAppStore } from "@/store";
+import { selectEffectiveState, useAppStore } from "@/store";
 
-// A unit cube with rounded edges, shared by every keycap instance: real
-// keycaps aren't sharp-edged blocks, and the bevel reads even at this scale.
-const keycapGeometry = new RoundedBoxGeometry(1, 1, 1, 2, 0.08);
+const IDLE_UNDERGLOW: GlowAnimation = { colors: ["transparent"], opacity: [0], durationSec: 1, loop: false };
+const IDLE_LED: GlowAnimation = { colors: ["transparent"], opacity: [0], durationSec: 1, loop: false };
+const IDLE_KEY: GlowAnimation = { colors: ["transparent"], opacity: [0], durationSec: 1, loop: false };
 
-/**
- * All keycaps share one geometry and material; each instance is scaled to
- * its own key size. Drawing them as one instanced mesh keeps the preview at
- * a single draw call instead of ~98.
- */
-function Keys() {
-  const keys = useMemo(keyboardLayout, []);
-  const mesh = useRef<InstancedMesh>(null);
-
-  useLayoutEffect(() => {
-    const instances = mesh.current;
-    if (!instances) return;
-    const matrix = new Matrix4();
-    const position = new Vector3();
-    const rotation = new Quaternion();
-    const scale = new Vector3();
-    keys.forEach((key, index) => {
-      position.set(key.position[0], key.position[1], key.position[2]);
-      scale.set(key.size[0], key.size[1], key.size[2]);
-      matrix.compose(position, rotation, scale);
-      instances.setMatrixAt(index, matrix);
-    });
-    instances.instanceMatrix.needsUpdate = true;
-  }, [keys]);
-
-  return (
-    <instancedMesh ref={mesh} args={[keycapGeometry, undefined, keys.length]} castShadow>
-      <meshStandardMaterial color="#eef0f3" roughness={0.55} />
-    </instancedMesh>
-  );
+/** Converts a board-space box into a percentage rect relative to the plate. */
+function toPercentRect(plateSize: [number, number], position: [number, number], size: [number, number]) {
+  const [plateW, plateH] = plateSize;
+  return {
+    left: (((position[0] - size[0] / 2) + plateW / 2) / plateW) * 100,
+    top: (((position[1] - size[1] / 2) + plateH / 2) / plateH) * 100,
+    width: (size[0] / plateW) * 100,
+    height: (size[1] / plateH) * 100,
+  };
 }
 
-const LEGEND_CANVAS_WIDTH = 1600;
+/** A key's board-centred position as normalised 0..1 left→right / top→bottom coordinates. */
+function keyPosOf(field: [number, number], keyBox: LabeledKey, index: number): KeyPos {
+  const [fieldW, fieldH] = field;
+  return {
+    x: (keyBox.position[0] + fieldW / 2) / fieldW,
+    y: (keyBox.position[1] + fieldH / 2) / fieldH,
+    index,
+  };
+}
 
-/** Bakes every key's legend into one texture, so the label layer stays a single draw call. */
-function buildLegendTexture(): CanvasTexture {
-  const [fieldWidth, fieldDepth] = fieldSize();
-  const canvas = document.createElement("canvas");
-  canvas.width = LEGEND_CANVAS_WIDTH;
-  canvas.height = Math.round((LEGEND_CANVAS_WIDTH * fieldDepth) / fieldWidth);
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return new CanvasTexture(canvas);
+/** Font size as a percentage of the key's own width (container query units). */
+function legendScale(label: string): number {
+  if (label.length <= 1) return 42;
+  if (label.length <= 4) return 24;
+  return Math.max(11, 24 - (label.length - 4) * 2);
+}
 
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillStyle = "#2a2d33";
-
-  for (const key of labeledKeys()) {
-    if (!key.label) continue;
-    const cellPxW = (key.size[0] / fieldWidth) * canvas.width;
-    const cellPxH = (key.size[2] / fieldDepth) * canvas.height;
-    const px = ((key.position[0] / fieldWidth) + 0.5) * canvas.width;
-    const py = ((key.position[2] / fieldDepth) + 0.5) * canvas.height;
-
-    let fontSize = Math.min(cellPxH * 0.46, key.label.length > 1 ? cellPxW * 0.26 : cellPxW * 0.46);
-    ctx.font = `600 ${fontSize}px system-ui, sans-serif`;
-    while (fontSize > 8 && ctx.measureText(key.label).width > cellPxW * 0.82) {
-      fontSize -= 1;
-      ctx.font = `600 ${fontSize}px system-ui, sans-serif`;
-    }
-    ctx.fillText(key.label, px, py + fontSize * 0.04);
+function Keycap({ plateSize, keyBox }: { plateSize: [number, number]; keyBox: LabeledKey }) {
+  const rect = toPercentRect(plateSize, keyBox.position, keyBox.size);
+  if (!keyBox.label) {
+    // The space bar and other blank keys still occupy the grid, just unlabeled.
+    return (
+      <div
+        className="absolute rounded-[0.35cqw] border border-white/15 bg-[#ece9df]"
+        style={{
+          left: `${rect.left}%`,
+          top: `${rect.top}%`,
+          width: `${rect.width}%`,
+          height: `${rect.height}%`,
+          backgroundImage: "linear-gradient(145deg, #f4f1e9 0%, #e6e2d9 55%, #d9d5cb 100%)",
+          boxShadow: "inset 0 1px 0 rgba(255,255,255,0.75), inset 0 -1px 0 rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.4)",
+        }}
+      />
+    );
   }
-
-  const texture = new CanvasTexture(canvas);
-  texture.colorSpace = SRGBColorSpace;
-  return texture;
-}
-
-/** A flat, transparent overlay sitting just above the keycap tops with every legend baked in. */
-function KeyLegends() {
-  const texture = useMemo(buildLegendTexture, []);
-  const [fieldWidth, fieldDepth] = useMemo(fieldSize, []);
   return (
-    <mesh position={[0, legendY(), 0]} rotation={[-Math.PI / 2, 0, 0]}>
-      <planeGeometry args={[fieldWidth, fieldDepth]} />
-      <meshBasicMaterial map={texture} transparent toneMapped={false} />
-    </mesh>
+    <div
+      className="absolute flex items-center justify-center rounded-[14%] border border-white/15 text-[#252a32] [container-type:inline-size]"
+      style={{
+        left: `${rect.left}%`,
+        top: `${rect.top}%`,
+        width: `${rect.width}%`,
+        height: `${rect.height}%`,
+        backgroundImage: "linear-gradient(145deg, #f4f1e9 0%, #e6e2d9 55%, #d9d5cb 100%)",
+        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.75), inset 0 -1px 0 rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.4)",
+      }}
+    >
+      <span className="whitespace-nowrap text-center font-semibold leading-none" style={{ fontSize: `clamp(3px, ${legendScale(keyBox.label)}cqw, 20px)` }}>
+        {keyBox.label}
+      </span>
+    </div>
   );
-}
-
-/** Demand rendering only repaints when React state or the texture changes. */
-function InvalidateOnChange({ value }: { value: string }) {
-  const invalidate = useThree((state) => state.invalidate);
-  useEffect(() => {
-    invalidate();
-  }, [invalidate, value]);
-  return null;
-}
-
-function TexturedDisplay({ url }: { url: string }) {
-  const texture = useTexture(url);
-  const { position, size } = useMemo(displayLayout, []);
-  return (
-    <mesh position={position}>
-      <planeGeometry args={size} />
-      <meshBasicMaterial map={texture} toneMapped={false} />
-    </mesh>
-  );
-}
-
-function BlankDisplay() {
-  const { position, size } = useMemo(displayLayout, []);
-  return (
-    <mesh position={position}>
-      <planeGeometry args={size} />
-      <meshBasicMaterial color="#0b0c10" />
-    </mesh>
-  );
-}
-
-function Knob() {
-  const { position, radius, height } = useMemo(knobLayout, []);
-  return (
-    <Cylinder args={[radius, radius, height, 24]} position={position} castShadow>
-      <meshStandardMaterial color="#111317" metalness={0.6} roughness={0.35} />
-    </Cylinder>
-  );
-}
-
-function Keyboard({ url, tint }: { url: string | null; tint: string }) {
-  const plate = useMemo(plateLayout, []);
-  return (
-    <group rotation={[BOARD_TILT, 0, 0]}>
-      <RoundedBox args={[plate.size[0], plate.height, plate.size[1]]} radius={0.06} position={plate.position}>
-        <meshStandardMaterial color="#1b1c20" metalness={0.4} roughness={0.6} />
-      </RoundedBox>
-      <Keys />
-      <KeyLegends />
-      <Knob />
-      <Suspense fallback={<BlankDisplay />}>
-        {url ? <TexturedDisplay url={url} /> : <BlankDisplay />}
-      </Suspense>
-      <pointLight position={[0, -0.4, 0.75]} color={tint} intensity={6} distance={3.5} />
-      <pointLight position={[0, -0.4, -0.75]} color={tint} intensity={6} distance={3.5} />
-    </group>
-  );
-}
-
-const DEFAULT_CAMERA: [number, number, number] = [0, 2.75, 4.3];
-const DEFAULT_TARGET: [number, number, number] = [0, -0.22, 0];
-
-/** Frames the display + knob tightly, for screens where that's what's being edited. */
-function zoomFraming(): { camera: [number, number, number]; target: [number, number, number] } {
-  const display = displayLayout().position;
-  const knob = knobLayout().position;
-  // Weighted toward the display (what's being edited on this screen), with
-  // just enough pull toward the knob to keep it in frame alongside it.
-  const knobWeight = 0.3;
-  const localTarget: [number, number, number] = [
-    display[0] + (knob[0] - display[0]) * knobWeight,
-    display[1] + (knob[1] - display[1]) * knobWeight,
-    display[2] + (knob[2] - display[2]) * knobWeight,
-  ];
-  const target = toWorld(localTarget);
-
-  const [dx, dy, dz] = DEFAULT_CAMERA;
-  const [tx, ty, tz] = DEFAULT_TARGET;
-  const dirLength = Math.hypot(dx - tx, dy - ty, dz - tz);
-  const dir: [number, number, number] = [
-    (dx - tx) / dirLength,
-    (dy - ty) / dirLength,
-    (dz - tz) / dirLength,
-  ];
-  const zoomDistance = 1.6;
-  const camera: [number, number, number] = [
-    target[0] + dir[0] * zoomDistance,
-    target[1] + dir[1] * zoomDistance,
-    target[2] + dir[2] * zoomDistance,
-  ];
-  return { camera, target };
-}
-
-/** Imperatively snaps the camera and OrbitControls target when `zoomed` changes. */
-function CameraRig({
-  zoomed,
-  controlsRef,
-}: {
-  zoomed: boolean;
-  controlsRef: RefObject<OrbitControlsImpl | null>;
-}) {
-  const { camera, invalidate } = useThree();
-  const zoom = useMemo(zoomFraming, []);
-
-  useEffect(() => {
-    const [px, py, pz] = zoomed ? zoom.camera : DEFAULT_CAMERA;
-    camera.position.set(px, py, pz);
-    const controls = controlsRef.current;
-    if (controls) {
-      const [tx, ty, tz] = zoomed ? zoom.target : DEFAULT_TARGET;
-      controls.target.set(tx, ty, tz);
-      controls.update();
-    }
-    invalidate();
-  }, [zoomed, camera, invalidate, controlsRef, zoom]);
-
-  return null;
 }
 
 export function KeyboardPreview({ zoomed = false, className }: { zoomed?: boolean; className?: string }) {
-  const state = useAppStore((s) => s.state);
+  const state = useAppStore(selectEffectiveState);
   const previewUrl = useAppStore((s) => s.previewUrl);
-  const tint = state ? underglowColor(state) : "#8b5cf6";
-  const controlsRef = useRef<OrbitControlsImpl>(null);
+  const paused = useAppStore((s) => s.animationsPaused);
+  const draftDirty = useAppStore((s) => s.draftDirty);
+  const reduceMotion = useReducedMotion();
+  const motionPaused = reduceMotion || paused;
 
-  if (!webglAvailable()) {
-    return (
-      <div
-        className={cn(
-          "flex h-[320px] w-full items-center justify-center rounded-lg border border-white/10 bg-gradient-to-b from-black to-neutral-900 text-xs text-white/40",
-          className,
-        )}
-      >
-        Keyboard preview needs WebGL
-      </div>
-    );
-  }
+  const glow = useMemo(() => (state ? underglowAnimation(state.underglow) : IDLE_UNDERGLOW), [state]);
+  const sideGlow = useMemo(() => (state ? ledAnimation(state.led) : IDLE_LED), [state]);
+  const wave = state ? underglowCategory(state.underglow.effect) === "wave" && state.underglow.rainbow === 0 : false;
+  const waveReversed = state?.underglow.orientation === 1;
+
+  const plate = useMemo(plateLayout, []);
+  const keys = useMemo(labeledKeys, []);
+  const field = useMemo(fieldSize, []);
+  const display = useMemo(displayLayout, []);
+  const displayPlate = useMemo(displayPlateLayout, []);
+  const knob = useMemo(knobLayout, []);
+  const ledBar = useMemo(ledBarLayout, []);
+  // Each key gets its own glow so waves/rainbows travel across the board
+  // instead of washing the whole field in one colour.
+  const perKeyGlows = useMemo(
+    () =>
+      keys.map((key, index) =>
+        state ? perKeyUnderglow(state.underglow, keyPosOf(field, key, index)) : IDLE_KEY,
+      ),
+    [state, keys, field],
+  );
+
+  const displayRect = toPercentRect(plate.size, display.position, display.size);
+  const displayPlateRect = toPercentRect(plate.size, displayPlate.position, displayPlate.size);
+  const knobRect = toPercentRect(plate.size, knob.position, [knob.radius * 2, knob.radius * 2]);
+  const ledBarRect = toPercentRect(plate.size, ledBar.position, ledBar.size);
+
+  // The zoom target sits mostly on the display (what the Display screen
+  // edits), with a slight pull toward the knob so both stay in frame.
+  const zoomOrigin = useMemo(() => {
+    const knobWeight = 0.3;
+    const x = display.position[0] + (knob.position[0] - display.position[0]) * knobWeight;
+    const y = display.position[1] + (knob.position[1] - display.position[1]) * knobWeight;
+    return {
+      xPct: ((x + plate.size[0] / 2) / plate.size[0]) * 100,
+      yPct: ((y + plate.size[1] / 2) / plate.size[1]) * 100,
+    };
+  }, [display, knob, plate]);
 
   return (
     <div
+      role="group"
+      aria-label={
+        state
+          ? `Keyboard preview: underglow effect ${state.underglow.effect}, brightness ${state.underglow.brightness} of 9${draftDirty ? ", draft not yet on board" : ""}. Knob controls brightness.`
+          : "Keyboard preview: disconnected. Knob controls brightness."
+      }
       className={cn(
-        "relative h-[320px] w-full overflow-hidden rounded-lg border border-white/10 bg-gradient-to-b from-black to-neutral-900",
+        "relative h-[320px] w-full overflow-hidden rounded-lg border border-white/10 bg-gradient-to-b from-neutral-950 to-black",
         className,
       )}
     >
-      <Canvas camera={{ position: DEFAULT_CAMERA, fov: 46 }} dpr={[1, 1.5]} frameloop="demand">
-        <ambientLight intensity={0.9} />
-        <directionalLight position={[2, 4, 3]} intensity={1.6} />
-        <Keyboard url={previewUrl} tint={tint} />
-        <OrbitControls
-          ref={controlsRef}
-          enablePan={false}
-          target={DEFAULT_TARGET}
-          minDistance={zoomed ? 0.8 : 3.5}
-          maxDistance={zoomed ? 2.5 : 9}
-        />
-        <CameraRig zoomed={zoomed} controlsRef={controlsRef} />
-        <InvalidateOnChange value={`${previewUrl ?? ""}|${tint}|${zoomed}`} />
-      </Canvas>
-      <span className="pointer-events-none absolute bottom-2 left-3 text-[10px] text-white/40">
-        Preview · drag to orbit
-      </span>
+      <div className="absolute inset-0 flex items-center justify-center p-8">
+        <motion.div
+          className="relative w-full max-w-full rounded-[4%] bg-[#17181c] shadow-[0_20px_45px_rgba(0,0,0,0.6)]"
+          style={{
+            aspectRatio: `${plate.size[0]} / ${plate.size[1]}`,
+            transformOrigin: `${zoomOrigin.xPct}% ${zoomOrigin.yPct}%`,
+          }}
+          animate={{
+            scale: zoomed ? 2.3 : 1,
+            x: zoomed ? `${50 - zoomOrigin.xPct}%` : "0%",
+            y: zoomed ? `${50 - zoomOrigin.yPct}%` : "0%",
+          }}
+          transition={{ type: "spring", stiffness: 160, damping: 22 }}
+        >
+          {/* Underglow: a soft radial glow hugging the bottom edge, not a solid bar — the
+              gradient fades to transparent on its own, so no hard-edged shape to get wrong. */}
+          <div className="pointer-events-none absolute inset-x-[12%] -bottom-[7%] h-[14%] overflow-visible">
+            <motion.div
+              className="absolute inset-0"
+              style={{
+                backgroundImage: "radial-gradient(ellipse 60% 100% at center, currentColor 0%, transparent 75%)",
+                filter: "blur(6px)",
+              }}
+              animate={{ color: glow.colors, opacity: glow.opacity }}
+              transition={{ duration: glow.durationSec, repeat: motionPaused ? 0 : glow.loop ? Infinity : 0, ease: "easeInOut" }}
+            />
+            {wave && !motionPaused && (
+              <motion.div
+                className="absolute inset-y-0 w-1/4"
+                style={{
+                  backgroundImage: "radial-gradient(ellipse 60% 100% at center, white 0%, transparent 75%)",
+                  filter: "blur(4px)",
+                }}
+                animate={{ x: waveReversed ? ["130%", "-130%"] : ["-130%", "130%"], opacity: [0, 0.8, 0] }}
+                transition={{ duration: glow.durationSec, repeat: Infinity, ease: "linear" }}
+              />
+            )}
+          </div>
+
+          {/* Horizontal side LED strip directly below PgDn, matching the schematic. */}
+          <motion.div
+            className="pointer-events-none absolute rounded-full"
+            style={{
+              left: `${ledBarRect.left}%`,
+              top: `${ledBarRect.top}%`,
+              width: `${ledBarRect.width}%`,
+              height: `${ledBarRect.height}%`,
+              boxShadow: "0 0 10px 1px rgba(255,255,255,0.5)",
+            }}
+            animate={{ backgroundColor: sideGlow.colors, opacity: sideGlow.opacity }}
+            transition={{ duration: sideGlow.durationSec, repeat: motionPaused ? 0 : sideGlow.loop ? Infinity : 0, ease: "easeInOut" }}
+          />
+
+          {/* Per-key under-key glow: one pitch cell behind each keycap, expanded
+              by the inter-key gap so its colour bleeds into the gap around that
+              key — like real backlighting through the switch plate. Neighbouring
+              keys carry phase-shifted colours/brightness for spatial effects. */}
+          {keys.map((key, index) => {
+            const keyGlow = perKeyGlows[index];
+            const cell = toPercentRect(plate.size, key.position, [
+              key.size[0] + KEY_GAP,
+              key.size[1] + KEY_GAP,
+            ]);
+            return (
+              <motion.div
+                key={`glow-${index}`}
+                className="pointer-events-none absolute"
+                style={{
+                  left: `${cell.left}%`,
+                  top: `${cell.top}%`,
+                  width: `${cell.width}%`,
+                  height: `${cell.height}%`,
+                }}
+                animate={{ backgroundColor: keyGlow.colors, opacity: keyGlow.opacity.map((o) => o * 0.4) }}
+                transition={{
+                  duration: keyGlow.durationSec,
+                  repeat: motionPaused ? 0 : keyGlow.loop ? Infinity : 0,
+                  ease: "easeInOut",
+                }}
+              />
+            );
+          })}
+
+          {keys.map((key, index) => (
+            <Keycap key={index} plateSize={plate.size} keyBox={key} />
+          ))}
+
+          <div
+            aria-hidden
+            className="pointer-events-none absolute rounded-[6%] border border-white/15 bg-[#05070a]"
+            style={{
+              left: `${displayPlateRect.left}%`,
+              top: `${displayPlateRect.top}%`,
+              width: `${displayPlateRect.width}%`,
+              height: `${displayPlateRect.height}%`,
+              boxShadow: "inset 0 1px 0 rgba(255,255,255,0.10), 0 1px 2px rgba(0,0,0,0.5)",
+            }}
+          />
+
+          <div
+            className="absolute flex overflow-hidden rounded-[5%] border border-white/15 bg-[#05070a]"
+            style={{
+              left: `${displayRect.left}%`,
+              top: `${displayRect.top}%`,
+              width: `${displayRect.width}%`,
+              height: `${displayRect.height}%`,
+              boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.12), 0 0 18px rgba(190,230,255,0.35)",
+            }}
+          >
+            {previewUrl ? (
+              <img src={previewUrl} alt="" className="h-full w-full object-cover" draggable={false} />
+            ) : state ? (
+              <span className="flex h-full w-full items-center justify-center bg-[#eef8ff] font-semibold text-[#111827]" style={{ fontSize: "clamp(7px, 2.2cqw, 12px)", boxShadow: "inset 0 0 18px rgba(120,190,255,0.55)" }}>
+                {(() => {
+                  const t = state.time as unknown as [number, number, number, number, number, number, number];
+                  return `${t[4]}:${String(t[5]).padStart(2, "0")}:${String(t[6]).padStart(2, "0")}`;
+                })()}
+              </span>
+            ) : null}
+          </div>
+
+          <div
+            aria-hidden
+            className="pointer-events-none absolute rounded-full border border-black/60 shadow-[inset_0_1px_2px_rgba(255,255,255,0.35),0_2px_6px_rgba(0,0,0,0.6)]"
+            style={{
+              left: `${knobRect.left}%`,
+              top: `${knobRect.top}%`,
+              width: `${knobRect.width}%`,
+              height: `${knobRect.height}%`,
+              backgroundImage: "radial-gradient(circle at 35% 30%, rgba(255,255,255,0.75) 0 18%, transparent 42%), conic-gradient(from 20deg, #6b7280, #d1d5db, #4b5563, #e5e7eb, #374151, #9ca3af, #6b7280)",
+            }}
+          >
+            {/* Tick marks on the knob — tactile affordance, not just a disc. */}
+            <span className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-[1px]" aria-hidden>
+              <span className="text-[8px] leading-none text-white/50">▲</span>
+              <span className="block h-[2px] w-[60%] bg-white/25" />
+              <span className="text-[8px] leading-none text-white/50">▼</span>
+            </span>
+          </div>
+        </motion.div>
+      </div>
+      {draftDirty && (
+        <span className="absolute left-2 top-2 rounded bg-sky-400/20 px-2 py-0.5 text-xs font-semibold uppercase tracking-wide text-sky-300">
+          Draft — not on board
+        </span>
+      )}
     </div>
   );
 }

@@ -16,6 +16,8 @@ const state = {
   previewUrl: null,
   loadSource: vi.fn(),
   setDelayMs: vi.fn(),
+  connected: true,
+  setActiveTab: vi.fn(),
   uploads: 0,
   progress: null,
   upload: vi.fn(),

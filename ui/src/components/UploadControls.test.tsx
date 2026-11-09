@@ -14,6 +14,8 @@ const state = {
   progress: null,
   upload: vi.fn(),
   cancel: vi.fn(),
+  connected: true,
+  setActiveTab: vi.fn(),
   slot: "slot0",
   entries: { slot0: entry, slot1: entry },
 };
@@ -27,6 +29,6 @@ import { UploadControls } from "./UploadControls";
 describe("UploadControls", () => {
   it("disables upload when the combined frames exceed the budget", () => {
     render(<UploadControls />);
-    expect(screen.getByRole("button", { name: /upload and show/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /write image to board/i })).toHaveAttribute("aria-disabled", "true");
   });
 });

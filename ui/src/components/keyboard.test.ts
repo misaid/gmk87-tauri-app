@@ -7,7 +7,7 @@ describe("keyboardLayout", () => {
     expect(keys.length).toBeGreaterThan(80);
     for (const key of keys) {
       expect(key.size[0]).toBeGreaterThan(0);
-      expect(key.position[1]).toBeGreaterThanOrEqual(0);
+      expect(key.size[1]).toBeGreaterThan(0);
     }
   });
   it("is deterministic", () => {

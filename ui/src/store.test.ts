@@ -43,10 +43,18 @@ describe("store", () => {
     useAppStore.setState({
       devices: [],
       connected: false,
+      connectingPath: null,
+      activeTab: "device",
       error: null,
       slot: "slot0",
       entries: { slot0: emptyEntry(), slot1: emptyEntry() },
       previewUrl: null,
+      draft: null,
+      draftDirty: false,
+      lightingHistory: [],
+      displayHistory: [],
+      lastUploaded: null,
+      state: null,
     });
   });
 
@@ -161,5 +169,139 @@ describe("store", () => {
     await vi.advanceTimersByTimeAsync(40);
     expect(vi.mocked(ipc.previewDisplay)).toHaveBeenCalledTimes(2);
     vi.useRealTimers();
+  });
+
+  it("tracks connectingPath while a connect is in flight and clears it on success", async () => {
+    const ipc = await import("./lib/ipc");
+    let resolveConnect: (value: { connected: true }) => void = () => {};
+    vi.mocked(ipc.connect).mockImplementationOnce(
+      () => new Promise((resolve) => { resolveConnect = resolve as never; }),
+    );
+    const pending = useAppStore.getState().connectTo("/dev/hidraw12");
+    expect(useAppStore.getState().connectingPath).toBe("/dev/hidraw12");
+    resolveConnect({ connected: true });
+    await pending;
+    expect(useAppStore.getState().connectingPath).toBeNull();
+  });
+
+  it("clears connectingPath when connect fails", async () => {
+    const ipc = await import("./lib/ipc");
+    vi.mocked(ipc.connect).mockRejectedValueOnce(new Error("boom"));
+    await useAppStore.getState().connectTo("/dev/hidraw12");
+    expect(useAppStore.getState().connectingPath).toBeNull();
+  });
+
+  it("stages lighting edits as a draft without writing to the board", async () => {
+    const ipc = await import("./lib/ipc");
+    const boardState = {
+      connected: true,
+      synced: true,
+      underglow: { effect: 6, brightness: 5, speed: 4, orientation: 0, rainbow: 0, color: [0, 0, 255] as [number, number, number] },
+      led: { mode: 3, saturation: 5, rainbow: 0, color: 0 },
+      winLock: false,
+      show: 0,
+      slot0Frames: 1,
+      slot1Frames: 1,
+      frameDelayMs: 100,
+      time: [2026, 11, 9, 0, 12, 0, 0] as [number, number, number, number, number, number, number],
+    };
+    useAppStore.setState({ state: boardState as never, draft: null, draftDirty: false, lightingHistory: [] });
+    vi.mocked(ipc.setLighting).mockClear();
+
+    useAppStore.getState().setLightingDraft({ underglowEffect: 11 });
+    expect(vi.mocked(ipc.setLighting)).not.toHaveBeenCalled();
+    expect(useAppStore.getState().draftDirty).toBe(true);
+    expect(useAppStore.getState().draft?.underglow.effect).toBe(11);
+    // Committed state is untouched until the draft is written.
+    expect(useAppStore.getState().state?.underglow.effect).toBe(6);
+  });
+
+  it("commits a draft and records undo history", async () => {
+    const ipc = await import("./lib/ipc");
+    const boardState = {
+      connected: true,
+      synced: true,
+      underglow: { effect: 6, brightness: 5, speed: 4, orientation: 0, rainbow: 0, color: [0, 0, 255] as [number, number, number] },
+      led: { mode: 3, saturation: 5, rainbow: 0, color: 0 },
+      winLock: false,
+      show: 0,
+      slot0Frames: 1,
+      slot1Frames: 1,
+      frameDelayMs: 100,
+      time: [2026, 11, 9, 0, 12, 0, 0] as [number, number, number, number, number, number, number],
+    };
+    const nextState = { ...boardState, underglow: { ...boardState.underglow, effect: 11 } };
+    vi.mocked(ipc.setLighting).mockResolvedValueOnce(nextState as never);
+    useAppStore.setState({ state: boardState as never, draft: null, draftDirty: false, lightingHistory: [] });
+
+    useAppStore.getState().setLightingDraft({ underglowEffect: 11 });
+    await useAppStore.getState().commitDraft();
+    expect(vi.mocked(ipc.setLighting)).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().draftDirty).toBe(false);
+    expect(useAppStore.getState().draft).toBeNull();
+    expect(useAppStore.getState().lightingHistory).toHaveLength(1);
+    expect(useAppStore.getState().lightingHistory[0].state.underglow.effect).toBe(6);
+  });
+
+  it("undoes a lighting write to the previous board state", async () => {
+    const ipc = await import("./lib/ipc");
+    const prev = {
+      connected: true,
+      synced: true,
+      underglow: { effect: 6, brightness: 5, speed: 4, orientation: 0, rainbow: 0, color: [0, 0, 255] as [number, number, number] },
+      led: { mode: 3, saturation: 5, rainbow: 0, color: 0 },
+      winLock: false,
+      show: 0,
+      slot0Frames: 1,
+      slot1Frames: 1,
+      frameDelayMs: 100,
+      time: [2026, 11, 9, 0, 12, 0, 0] as [number, number, number, number, number, number, number],
+    };
+    const current = { ...prev, underglow: { ...prev.underglow, effect: 11 } };
+    vi.mocked(ipc.setLighting).mockResolvedValueOnce(prev as never);
+    useAppStore.setState({ state: current as never, lightingHistory: [prev as never], draft: null, draftDirty: false });
+
+    await useAppStore.getState().undoLighting();
+    expect(useAppStore.getState().state?.underglow.effect).toBe(6);
+    expect(useAppStore.getState().lightingHistory).toHaveLength(0);
+  });
+
+  it("undoes a display upload by restoring the previous entries", async () => {
+    const ipc = await import("./lib/ipc");
+    vi.mocked(ipc.inspectSource).mockResolvedValue({
+      isGif: false,
+      frames: 1,
+      delayMs: 100,
+      sourceFrames: 1,
+      dropped: [],
+    });
+    vi.mocked(ipc.uploadDisplay).mockResolvedValueOnce(undefined as never);
+    const boardState = {
+      connected: true,
+      slot0Frames: 1,
+      slot1Frames: 1,
+    };
+    useAppStore.setState({ state: boardState as never, entries: { slot0: emptyEntry(), slot1: emptyEntry() }, slot: "slot0", displayHistory: [] });
+    useAppStore.getState().loadSource(new Uint8Array([1]), "first.png");
+    await vi.waitFor(() => expect(useAppStore.getState().entries.slot0.info).not.toBeNull());
+    vi.mocked(ipc.readState).mockResolvedValueOnce(boardState as never);
+    await useAppStore.getState().upload(100, true);
+    expect(useAppStore.getState().displayHistory).toHaveLength(1);
+
+    useAppStore.getState().loadSource(new Uint8Array([2]), "second.png");
+    await vi.waitFor(() => expect(useAppStore.getState().entries.slot0.name).toBe("second.png"));
+    vi.mocked(ipc.uploadDisplay).mockResolvedValueOnce(undefined as never);
+    vi.mocked(ipc.readState).mockResolvedValueOnce(boardState as never);
+    await useAppStore.getState().upload(100, true);
+    expect(useAppStore.getState().displayHistory).toHaveLength(2);
+
+    vi.mocked(ipc.uploadDisplay).mockResolvedValueOnce(undefined as never);
+    vi.mocked(ipc.readState).mockResolvedValueOnce(boardState as never);
+    await useAppStore.getState().undoDisplayUpload();
+    // The second upload's pre-state was the first.png upload, so undo lands there.
+    // First undo: back to first.png (second upload's pre-state).
+    expect(useAppStore.getState().entries.slot0.name).toBe("first.png");
+    expect(Array.from(useAppStore.getState().entries.slot0.source!)).toEqual([1]);
+    expect(useAppStore.getState().displayHistory).toHaveLength(1);
   });
 });

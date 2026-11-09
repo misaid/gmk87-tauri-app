@@ -21,5 +21,11 @@
     ],
     "security": { "csp": null }
   },
-  "bundle": { "active": false }
+  "bundle": {
+    "active": true,
+    "targets": ["appimage", "nsis"],
+    "category": "Utility",
+    "shortDescription": "GMK87 keyboard configurator",
+    "longDescription": "Desktop tool for the ZUOYA GMK87: display images and GIFs, RGB lighting, and clock sync over USB."
+  }
 }
