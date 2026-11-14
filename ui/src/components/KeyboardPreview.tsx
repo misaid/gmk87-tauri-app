@@ -14,7 +14,7 @@ import {
   recessLayout,
   type LabeledKey,
 } from "./keyboard";
-import { ledBarSample } from "./lighting";
+import { ambientFrom, ledBarSample } from "./lighting";
 import { ledSample, type LedLighting } from "@/lib/ledField";
 import { cn } from "@/lib/utils";
 import { OFFLINE_STATE, selectEffectiveState, useAppStore } from "@/store";
@@ -148,7 +148,7 @@ function Keycap({
               // Sized from the key's width in 1u so every legend shares one scale.
               fontSize: `clamp(3px, ${(keyBox.label.length <= 1 ? 29 : 25) / widthU}cqw, 20px)`,
               color: "#3a3f4b",
-              ...(keyBox.label.length > 1 && widthU >= 1.5
+              ...(widthU >= 1.5
                 ? { position: "absolute", left: `${20 / widthU}%`, top: `${18 / widthU}%`, textAlign: "left" }
                 : {}),
             }}
@@ -161,12 +161,14 @@ function Keycap({
   );
 }
 
-export function KeyboardPreview({ className, interactive = true }: { className?: string; interactive?: boolean }) {
+export function KeyboardPreview({ className, interactive = true, hero = false }: { className?: string; interactive?: boolean; hero?: boolean }) {
   const effective = useAppStore(selectEffectiveState);
   const state = effective ?? OFFLINE_STATE;
   const previewUrl = useAppStore((s) => s.previewUrl);
   const paused = useAppStore((s) => s.animationsPaused);
   const draftDirty = useAppStore((s) => s.draftDirty);
+  const previewEffect = useAppStore((s) => s.previewEffect);
+  const setActiveTab = useAppStore((s) => s.setActiveTab);
   const setLightingDraft = useAppStore((s) => s.setLightingDraft);
   const reduceMotion = useReducedMotion();
   const motionPaused = reduceMotion || paused;
@@ -196,14 +198,14 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
 
   const lighting: LedLighting = useMemo(
     () => ({
-      effect: state.underglow.effect,
+      effect: previewEffect ?? state.underglow.effect,
       brightness: state.underglow.brightness,
       speed: state.underglow.speed,
       orientation: state.underglow.orientation,
       rainbow: state.underglow.rainbow,
       color: state.underglow.color,
     }),
-    [state],
+    [state, previewEffect],
   );
 
   const led = state.led;
@@ -224,7 +226,7 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
 
   // The case is sized by the board's aspect ratio; the canvas is the case plus
   // spill margins so the underglow can be drawn outside the board's footprint.
-  const boardMaxWidth = Math.round(300 * (board.size[0] / board.size[1]));
+  const boardMaxWidth = Math.round((hero ? 400 : 300) * (board.size[0] / board.size[1]));
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -320,6 +322,12 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
           aw += inten;
         }
       }
+      const root = document.documentElement.style;
+      if (aw <= 0) {
+        const a = ambientFrom(null, 0);
+        root.setProperty("--board-rgb", a.rgb);
+        root.setProperty("--board-k", a.k);
+      }
       if (aw > 0) {
         const avgR = Math.round(ar / aw);
         const avgG = Math.round(ag / aw);
@@ -327,6 +335,10 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
         const k = Math.min(1, aw / coords.length);
         caseEl.style.setProperty("--rim", `${avgR} ${avgG} ${avgB}`);
         caseEl.style.setProperty("--rimk", String(Math.min(1, k * 1.6)));
+        // Ambient page colour: only touches the DOM when the quantised value changes.
+        const a = ambientFrom({ r: avgR, g: avgG, b: avgB }, Math.min(1, k * 1.6));
+        if (root.getPropertyValue("--board-rgb") !== a.rgb) root.setProperty("--board-rgb", a.rgb);
+        if (root.getPropertyValue("--board-k") !== a.k) root.setProperty("--board-k", a.k);
         const r = cw * 0.55;
         ctx.save();
         ctx.translate(originX + cw / 2, spillY);
@@ -372,6 +384,21 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
   const knobRect = toPercentRect(board.size, knob.position, [knob.radius * 2, knob.radius * 2]);
   const ledRecessRect = toPercentRect(board.size, ledRecess.position, ledRecess.size);
   const ledBarRect = toPercentRect(board.size, ledBar.position, ledBar.size);
+
+  const goToSideBar = () => {
+    const go = () => {
+      const el = document.getElementById("side-light-bar");
+      if (!el) return;
+      el.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+      el.focus({ preventScroll: true });
+    };
+    if (useAppStore.getState().activeTab !== "lighting") {
+      setActiveTab("lighting");
+      window.setTimeout(go, 400);
+    } else {
+      go();
+    }
+  };
 
   const dragStart = useRef<number | null>(null);
   const dragStage = useRef(0);
@@ -652,6 +679,21 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
               boxShadow: "0 0 10px 2px rgb(var(--lc, 0 0 0) / calc(var(--la, 0) * 0.8))",
             }}
           />
+          {interactive && (
+            <button
+              type="button"
+              aria-label="Edit side light bar"
+              title="Edit side light bar"
+              onClick={goToSideBar}
+              className="absolute cursor-pointer rounded-full"
+              style={{
+                left: `calc(${ledBarRect.left}% - 8px)`,
+                top: `calc(${ledBarRect.top}% - 8px)`,
+                width: `calc(${ledBarRect.width}% + 16px)`,
+                height: `calc(${ledBarRect.height}% + 16px)`,
+              }}
+            />
+          )}
         </div>
       </div>
 

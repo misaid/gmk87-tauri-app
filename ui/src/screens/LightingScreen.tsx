@@ -4,25 +4,17 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { EffectGallery } from "@/components/EffectGallery";
-import { underglowCategory } from "@/components/lighting";
+import { brightnessWord, underglowCategory } from "@/components/lighting";
 import { LED_COLORS, LED_COLOR_SWATCHES, LED_MODES, PRESET_VALUES } from "@/lib/effects";
 import { OFFLINE_STATE, selectEffectiveState, useAppStore } from "@/store";
 
-function Panel({ title, children, className }: { title: string; children: ReactNode; className?: string }) {
+function Panel({ title, children, className, id }: { title: string; children: ReactNode; className?: string; id?: string }) {
   return (
-    <section className={`rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4 ${className ?? ""}`}>
+    <section id={id} tabIndex={id ? -1 : undefined} className={`rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4 ${className ?? ""}`}>
       <h2 className="mb-3 text-[13px] font-semibold tracking-[0.01em] text-[var(--text)]">{title}</h2>
       {children}
     </section>
   );
-}
-
-function brightnessWord(v: number): string {
-  if (v === 0) return "Off";
-  if (v <= 3) return "Dim";
-  if (v <= 6) return "Medium";
-  if (v <= 8) return "Bright";
-  return "Vivid";
 }
 
 /** Displayed speed runs slow→fast; the device's 0 is fastest, so invert. */
@@ -123,7 +115,7 @@ export default function LightingScreen() {
         <div className="grid grid-cols-1 gap-5">
           <div>
             <Label htmlFor="lighting-brightness" className="text-[13px] text-[var(--muted)]">
-              Brightness <b className="ml-1 font-semibold text-[var(--text)]">{brightnessWord(underglow.brightness)}</b>
+              Brightness <b className="ml-1 font-semibold text-[var(--text)]">{brightnessWord(underglow.brightness)} · {underglow.brightness}/9</b>
             </Label>
             <Slider
               id="lighting-brightness"
@@ -267,62 +259,63 @@ export default function LightingScreen() {
         </div>
       </Panel>
 
-      <Panel title="Side light bar">
-        <div className="flex flex-col gap-4">
+      <Panel title="Side light bar" id="side-light-bar">
+        <div className="flex flex-col gap-3.5">
           <span
             aria-hidden
-            className="block h-2 w-[120px] rounded-full ring-1 ring-white/10"
+            className="block h-1.5 w-full rounded-full ring-1 ring-white/10"
             style={{ background: LED_COLOR_SWATCHES[led.color], opacity: led.color === 8 ? 0.25 : 1 }}
           />
-        <div className="flex flex-wrap items-center gap-1.5">
-          {LED_MODES.map((mode) => (
-            <button
-              key={mode.value}
-              type="button"
-              aria-pressed={led.mode === mode.value}
-              onClick={() => stage({ ledMode: mode.value })}
-              className={
-                led.mode === mode.value
-                  ? "rounded-[7px] bg-[var(--accent)]/20 px-2.5 py-1 text-xs font-medium text-[var(--text)] shadow-[inset_0_0_0_1px_var(--accent)]"
-                  : "rounded-[7px] bg-[var(--panel-2)] px-2.5 py-1 text-xs text-[var(--muted)] transition-colors hover:text-[var(--text)]"
-              }
-            >
-              {mode.name}
-            </button>
-          ))}
-        </div>
-        <div className="flex flex-wrap items-center gap-2.5">
-          {LED_COLORS.map((color) => (
-            <button
-              key={color.value}
-              type="button"
-              aria-label={color.name}
-              aria-pressed={led.color === color.value}
-              title={color.name}
-              onClick={() => stage({ ledColor: color.value })}
-              className={
-                led.color === color.value
-                  ? "size-8 rounded-full ring-2 ring-white ring-offset-2 ring-offset-[#0c0e13]"
-                  : "size-8 rounded-full ring-1 ring-white/20 transition-transform duration-150 hover:scale-110"
-              }
-              style={{ background: LED_COLOR_SWATCHES[color.value] }}
+          <div className="grid grid-cols-2 gap-1.5">
+            {LED_MODES.map((mode, i) => (
+              <button
+                key={mode.value}
+                type="button"
+                aria-pressed={led.mode === mode.value}
+                onClick={() => stage({ ledMode: mode.value })}
+                className={
+                  (i === LED_MODES.length - 1 && LED_MODES.length % 2 === 1 ? "col-span-2 " : "") +
+                  (led.mode === mode.value
+                    ? "h-8 rounded-[7px] bg-[var(--accent)]/20 px-2.5 text-xs font-medium text-[var(--text)] shadow-[inset_0_0_0_1px_var(--accent-ambient)]"
+                    : "h-8 rounded-[7px] bg-[var(--panel-2)] px-2.5 text-xs text-[var(--muted)] transition-colors hover:text-[var(--text)]")
+                }
+              >
+                {mode.name}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center justify-between">
+            {LED_COLORS.map((color) => (
+              <button
+                key={color.value}
+                type="button"
+                aria-label={color.name}
+                aria-pressed={led.color === color.value}
+                title={color.name}
+                onClick={() => stage({ ledColor: color.value })}
+                className={
+                  led.color === color.value
+                    ? "size-7 rounded-full ring-2 ring-white ring-offset-2 ring-offset-[#0c0e13]"
+                    : "size-7 rounded-full ring-1 ring-white/20 transition-transform duration-150 hover:scale-110"
+                }
+                style={{ background: LED_COLOR_SWATCHES[color.value] }}
+              />
+            ))}
+          </div>
+          <div>
+            <Label htmlFor="lighting-saturation" className="text-[13px] text-[var(--muted)]">
+              Saturation <b className="ml-1 font-semibold text-[var(--text)]">{led.saturation}/9</b>
+            </Label>
+            <Slider
+              id="lighting-saturation"
+              className="mt-1"
+              min={0}
+              max={9}
+              step={1}
+              value={[led.saturation]}
+              onValueChange={([v]) => stage({ ledSaturation: v })}
             />
-          ))}
-        </div>
-        <div>
-          <Label htmlFor="lighting-saturation" className="text-[13px] text-[var(--muted)]">
-            Saturation <b className="ml-1 font-semibold text-[var(--text)]">{led.saturation}/9</b>
-          </Label>
-          <Slider
-            id="lighting-saturation"
-            className="mt-1.5"
-            min={0}
-            max={9}
-            step={1}
-            value={[led.saturation]}
-            onValueChange={([v]) => stage({ ledSaturation: v })}
-          />
-        </div>
+          </div>
         </div>
       </Panel>
       </div>

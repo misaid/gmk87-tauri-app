@@ -23,6 +23,7 @@ function formatDeviceTime([
 export default function DeviceScreen() {
   const devices = useAppStore((s) => s.devices);
   const connected = useAppStore((s) => s.connected);
+  const lastSyncedAt = useAppStore((s) => s.lastSyncedAt);
   const connectingPath = useAppStore((s) => s.connectingPath);
   const state = useAppStore((s) => s.state);
   const refreshDevices = useAppStore((s) => s.refreshDevices);
@@ -166,9 +167,10 @@ export default function DeviceScreen() {
         )}
       </section>
 
-      <>
+      <div className="flex flex-col gap-4">
+
         <section
-          className="h-full rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4"
+          className="rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4"
           aria-labelledby="device-clock"
         >
           <h2
@@ -178,9 +180,8 @@ export default function DeviceScreen() {
             Board clock
           </h2>
           <p className="mt-1 text-[11px] text-[var(--muted)]">
-            Set the board clock to your system time (
-            {Intl.DateTimeFormat().resolvedOptions().timeZone}). Shows last
-            written time — the board cannot be read back.
+            Set the board clock to your system time. Shows last written time
+            — the board cannot be read back.
           </p>
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <span className="text-lg tabular-nums text-[var(--text)]">
@@ -190,9 +191,15 @@ export default function DeviceScreen() {
               Sync now
             </Button>
           </div>
+          <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[12px]">
+            <dt className="text-[var(--muted)]">Timezone</dt>
+            <dd className="text-[var(--text)]">{Intl.DateTimeFormat().resolvedOptions().timeZone}</dd>
+            <dt className="text-[var(--muted)]">Last synced</dt>
+            <dd className="text-[var(--text)]">{lastSyncedAt ? new Date(lastSyncedAt).toLocaleTimeString() : "Not yet this session"}</dd>
+          </dl>
         </section>
 
-        <section className="flex flex-col gap-3 rounded-[18px] lg:col-span-2 border border-[var(--line)] bg-[var(--panel)] p-4">
+        <section className="flex flex-col gap-3 rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4">
           <h2 className="text-[13px] font-semibold tracking-[0.01em] text-[var(--text)]">Advanced</h2>
           <label className="flex items-center gap-2.5 text-[var(--muted)]">
             <Switch
@@ -218,7 +225,7 @@ export default function DeviceScreen() {
             Copy diagnostics
           </Button>
         </section>
-      </>
+      </div>
     </div>
   );
 }

@@ -13,6 +13,7 @@ import DisplayScreen from "@/screens/DisplayScreen";
 import LightingScreen from "@/screens/LightingScreen";
 import ProfilesScreen from "@/screens/ProfilesScreen";
 import { LED_MODES, UNDERGLOW_EFFECTS } from "@/lib/effects";
+import { brightnessLabel } from "@/components/lighting";
 import { selectEffectiveState, useAppStore } from "@/store";
 
 const NAV_ITEMS = [
@@ -137,7 +138,7 @@ export default function App() {
                   <TabsTrigger
                     key={item.value}
                     value={item.value}
-                    className="rounded-full px-3.5 py-1 text-[13px] font-medium text-[var(--muted)] transition-colors duration-150 hover:text-[var(--text)] data-[state=active]:bg-[var(--panel-2)] data-[state=active]:text-[var(--text)]"
+                    className="rounded-full px-3.5 py-1 text-[13px] font-medium text-[var(--muted)] transition-colors duration-150 hover:text-[var(--text)] data-[state=active]:bg-[var(--pill)] data-[state=active]:text-[var(--text)]"
                   >
                     {item.label}
                   </TabsTrigger>
@@ -169,21 +170,29 @@ export default function App() {
           </div>
         )}
 
-        <main className="mx-auto w-full max-w-[1180px] flex-1 px-6 py-5">
+        <div className="relative">
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-x-0 top-0 h-[560px]"
+            style={{ background: "radial-gradient(70% 65% at 50% 44%, var(--board-glow), transparent 78%)" }}
+          />
+          <section aria-label="Keyboard preview" className="relative mx-auto flex w-full max-w-[1320px] flex-col gap-2 px-6 pt-5">
+            <div className={tab === "lighting" ? "w-full" : "mx-auto w-full max-w-[600px]"}>
+              <KeyboardPreview className="w-full" hero={tab === "lighting"} />
+            </div>
+            <div className="flex flex-wrap items-center justify-center gap-1.5 text-[var(--muted)]">
+              <span className="inline-flex h-6 items-center rounded-full border border-[var(--line)] px-2.5 text-[12px] font-medium text-[var(--text)]">{effectName}</span>
+              <span className="inline-flex h-6 items-center rounded-full border border-[var(--line)] px-2.5 text-[12px]">{effective ? brightnessLabel(effective.underglow.brightness) : "—"}</span>
+              <span className="inline-flex h-6 items-center rounded-full border border-[var(--line)] px-2.5 text-[12px]">{sideLedName}</span>
+              {draftQueuedOffline && (
+                <span className="inline-flex h-6 items-center rounded-full border border-[var(--line)] px-2.5 text-[12px] border-[var(--accent)]/40 font-medium text-[var(--accent)]">Will apply when connected</span>
+              )}
+            </div>
+          </section>
+        </div>
+
+        <main className="mx-auto w-full max-w-[1180px] flex-1 px-6 pb-5 pt-4">
           <div className="flex flex-col gap-5">
-            <section aria-label="Keyboard preview" className="flex flex-col gap-2">
-              <div className={tab === "lighting" ? "w-full" : "mx-auto w-full max-w-[600px]"}>
-                <KeyboardPreview className="w-full" />
-              </div>
-              <div className="flex flex-wrap items-center justify-center gap-1.5 text-[var(--muted)]">
-                <span className="inline-flex h-6 items-center rounded-full border border-[var(--line)] px-2.5 text-[12px] font-medium text-[var(--text)]">{effectName}</span>
-                <span className="inline-flex h-6 items-center rounded-full border border-[var(--line)] px-2.5 text-[12px]">Brightness {effective ? `${effective.underglow.brightness}/9` : "—"}</span>
-                <span className="inline-flex h-6 items-center rounded-full border border-[var(--line)] px-2.5 text-[12px]">{sideLedName}</span>
-                {draftQueuedOffline && (
-                  <span className="inline-flex h-6 items-center rounded-full border border-[var(--line)] px-2.5 text-[12px] border-[var(--accent)]/40 font-medium text-[var(--accent)]">Will apply when connected</span>
-                )}
-              </div>
-            </section>
             <AnimatePresence mode="wait" initial={false}>
               <motion.div
                 key={tab}

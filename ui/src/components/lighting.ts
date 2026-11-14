@@ -279,3 +279,24 @@ export function ledAnimation(led: LedState): GlowAnimation {
   // Fixed color / Fixed color (alternate)
   return { colors: [solid], opacity: [intensity], durationSec: 1, loop: false };
 }
+
+/** Plain-language brightness step, shared by the slider label and the board chip. */
+export function brightnessWord(v: number): string {
+  if (v === 0) return "Off";
+  if (v <= 3) return "Dim";
+  if (v <= 6) return "Medium";
+  if (v <= 8) return "Bright";
+  return "Vivid";
+}
+
+/** "Bright · 8/9" */
+export function brightnessLabel(v: number): string {
+  return `${brightnessWord(v)} · ${v}/9`;
+}
+
+/** Quantised ambient board colour (r g b, strength 0..1) so CSS vars only change on visible steps. */
+export function ambientFrom(avg: { r: number; g: number; b: number } | null, k: number): { rgb: string; k: string } {
+  if (!avg) return { rgb: "120 130 160", k: "0" };
+  const q = (v: number) => Math.max(0, Math.min(255, Math.round(v / 6) * 6));
+  return { rgb: `${q(avg.r)} ${q(avg.g)} ${q(avg.b)}`, k: (Math.round(Math.max(0, Math.min(1, k)) * 20) / 20).toFixed(2) };
+}

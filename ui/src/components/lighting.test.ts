@@ -220,3 +220,16 @@ describe("ledAnimation", () => {
     }
   });
 });
+
+import { ambientFrom, brightnessLabel } from "./lighting";
+
+describe("brightnessLabel / ambientFrom", () => {
+  it("formats word and step the same way everywhere", () => {
+    expect(brightnessLabel(8)).toBe("Bright · 8/9");
+    expect(brightnessLabel(0)).toBe("Off · 0/9");
+  });
+  it("quantises ambient colour and clamps strength", () => {
+    expect(ambientFrom({ r: 80, g: 180, b: 255 }, 0.98)).toEqual({ rgb: "78 180 255", k: "1.00" });
+    expect(ambientFrom(null, 1).k).toBe("0");
+  });
+});

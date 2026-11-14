@@ -162,6 +162,9 @@ interface AppStore {
   noticeKind: "success" | "error" | null;
   /** When set, all ambient animations render once and stay still. */
   animationsPaused: boolean;
+  /** Transient hover/focus preview of an underglow effect on the hero board. Never written to the device. */
+  previewEffect: number | null;
+  setPreviewEffect: (effect: number | null) => void;
   /** Write-confirm modal open (draft commit is destructive — needs a diff). */
   showWriteConfirm: boolean;
 
@@ -307,6 +310,8 @@ export const useAppStore = create<AppStore>((set, get) => {
     notice: null,
     noticeKind: null,
     animationsPaused: false,
+    previewEffect: null,
+    setPreviewEffect: (effect) => set({ previewEffect: effect }),
     showWriteConfirm: false,
 
     refreshDevices: async () => {

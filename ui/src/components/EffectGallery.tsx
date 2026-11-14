@@ -2,6 +2,8 @@ import { useEffect, useState, type KeyboardEvent } from "react";
 import { Activity, ArrowRight, Ban, CircleDot, Lightbulb, Orbit, Rainbow, Radio, Sparkles, Waves, Wind, CloudRain, type LucideIcon } from "lucide-react";
 import { EFFECT_DESCRIPTIONS, UNDERGLOW_EFFECTS } from "@/lib/effects";
 import { ledGrid, type LedLighting } from "@/lib/ledField";
+import { thumbIntensity } from "@/lib/thumbPattern";
+import { useAppStore } from "@/store";
 
 /** A canonical base so static thumbnails differ visibly per effect. */
 const THUMB_BASE: LedLighting = {
@@ -12,10 +14,12 @@ const THUMB_BASE: LedLighting = {
   rainbow: 0,
   color: [139, 92, 246],
 };
-const ROWS = 3;
+const ROWS = 4;
 const COLS = 14;
-const GRID_COLS = 5;
+const GRID_COLS = 4;
 const UNLIT = "#1e2733";
+/** Idle cells sit at ~15% of the lit colour over near-black. */
+const IDLE = "#0a0c10";
 /** Per-family motion cue shown in each tile's corner. */
 const EFFECT_ICON: Record<number, LucideIcon> = {
   1: ArrowRight, 2: Activity, 3: CloudRain, 4: Rainbow, 5: Activity, 6: Lightbulb, 7: Sparkles, 8: Radio,
@@ -42,7 +46,7 @@ function thumbGrid(effect: number, color: [number, number, number], rainbow: num
   return grid;
 }
 
-/** A 3 x 14 cell strip at the effect's characteristic frame; animates only while `live`. */
+/** A 4 x 14 cell strip at the effect's characteristic frame; animates only while `live`. */
 function Thumb({
   effect,
   off,
@@ -70,24 +74,34 @@ function Thumb({
     return (
       <span
         aria-hidden
-        className="flex h-[22px] items-center justify-center rounded-[4px] text-white/45"
+        className="flex h-[26px] items-center justify-center rounded-[4px] text-white/45"
         style={{ background: UNLIT }}
       >
         <Ban className="size-3.5" />
       </span>
     );
   }
+  const pattern = thumbIntensity(effect, 0, 0, ROWS, COLS) !== null;
+  const rgb = `rgb(${color.map((c) => Math.round(c)).join(",")})`;
+  const grid = pattern ? null : thumbGrid(effect, color, rainbow, t);
   return (
     <span aria-hidden className="flex flex-col gap-[2px]">
-      {thumbGrid(effect, color, rainbow, t).map((row, i) => (
-        <span key={i} className="flex h-[6px] gap-px overflow-hidden rounded-[2px]" style={{ filter: "saturate(1.35) brightness(1.3) contrast(1.15)" }}>
-          {row.map((stop, j) => (
-            <span
-              key={j}
-              className="h-full flex-1"
-              style={{ backgroundColor: UNLIT, backgroundImage: `linear-gradient(${stop}, ${stop})` }}
-            />
-          ))}
+      {Array.from({ length: ROWS }, (_, i) => (
+        <span
+          key={i}
+          className="flex h-[5px] gap-px overflow-hidden rounded-[2px]"
+          style={grid ? { filter: "saturate(1.35) brightness(1.3) contrast(1.15)" } : undefined}
+        >
+          {Array.from({ length: COLS }, (_, j) => {
+            if (grid) {
+              const stop = grid[i][j];
+              return <span key={j} className="h-full flex-1" style={{ backgroundColor: UNLIT, backgroundImage: `linear-gradient(${stop}, ${stop})` }} />;
+            }
+            // Hand-drawn frames drift one column per tick while live.
+            const v = thumbIntensity(effect, i, (j + Math.floor((t - base) / 90)) % COLS, ROWS, COLS) ?? 0;
+            const mix = Math.round(15 + 85 * v);
+            return <span key={j} className="h-full flex-1" style={{ backgroundColor: `color-mix(in srgb, ${rgb} ${mix}%, ${IDLE})` }} />;
+          })}
         </span>
       ))}
     </span>
@@ -107,6 +121,8 @@ export function EffectGallery({
 }) {
   const [focused, setFocused] = useState(value);
   const [hover, setHover] = useState<number | null>(null);
+  const setPreviewEffect = useAppStore((st) => st.setPreviewEffect) ?? (() => {});
+  useEffect(() => () => setPreviewEffect(null), [setPreviewEffect]);
   const rgb = `rgb(${color.map((c) => Math.round(c)).join(",")})`;
 
   useEffect(() => {
@@ -124,10 +140,11 @@ export function EffectGallery({
   };
 
   return (
-    <div role="radiogroup" aria-label="Underglow effect" className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+    <div role="radiogroup" aria-label="Underglow effect" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
       {UNDERGLOW_EFFECTS.map((effect, i) => {
         const selected = effect.value === value;
         const Icon = EFFECT_ICON[effect.value];
+        const span = effect.value === 0 ? "col-span-2" : "";
         return (
           <button
             key={effect.value}
@@ -162,14 +179,24 @@ export function EffectGallery({
                   break;
               }
             }}
-            onFocus={() => setFocused(effect.value)}
-            onMouseEnter={() => setHover(effect.value)}
-            onMouseLeave={() => setHover(null)}
+            onFocus={() => {
+              setFocused(effect.value);
+              setPreviewEffect(effect.value);
+            }}
+            onBlur={() => setPreviewEffect(null)}
+            onMouseEnter={() => {
+              setHover(effect.value);
+              setPreviewEffect(effect.value);
+            }}
+            onMouseLeave={() => {
+              setHover(null);
+              setPreviewEffect(null);
+            }}
             style={selected ? { borderColor: rgb, boxShadow: `0 0 14px -2px ${rgb}` } : undefined}
             className={
               selected
-                ? "relative flex min-h-[52px] flex-col justify-between gap-1.5 rounded-[10px] border-2 bg-[var(--panel-2)] p-2 text-left"
-                : "relative flex min-h-[52px] flex-col justify-between gap-1.5 rounded-[10px] border-2 border-[var(--line)] bg-[var(--panel-2)] p-2 text-left transition-colors duration-150 hover:border-[var(--line-strong)]"
+                ? "relative flex min-h-[52px] flex-col justify-between gap-1.5 rounded-[10px] border-2 bg-[var(--panel-2)] p-2 text-left " + span
+                : "relative flex min-h-[52px] flex-col justify-between gap-1.5 rounded-[10px] border-2 border-[var(--line)] bg-[var(--panel-2)] p-2 text-left transition-colors duration-150 hover:border-[var(--line-strong)] " + span
             }
           >
             <Thumb
@@ -181,7 +208,7 @@ export function EffectGallery({
             />
             <span className="flex items-center justify-between gap-1">
               <span className="text-[11px] font-medium leading-tight text-[var(--text)]">{effect.name}</span>
-              {Icon && effect.name !== "Off" && <Icon aria-hidden className="size-3 shrink-0 text-white/60" />}
+              {Icon && effect.name !== "Off" && <Icon aria-hidden className="size-3.5 shrink-0 text-white/70" />}
             </span>
           </button>
         );
