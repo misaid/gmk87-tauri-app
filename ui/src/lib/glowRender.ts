@@ -73,7 +73,7 @@ export class Glow2D implements GlowRenderer {
   private scale = 1;
 
   constructor(private canvas: HTMLCanvasElement) {
-    const ctx = canvas.getContext("2d", { alpha: false });
+    const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("2d context unavailable");
     this.ctx = ctx;
   }
@@ -114,10 +114,9 @@ export class Glow2D implements GlowRenderer {
   draw(frame: Float32Array): void {
     const ctx = this.ctx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    // Opaque black screens to nothing; every key's light is then screen-blended on top.
+    // Transparent canvas: each key's light is screen-blended onto it, and the page shows through.
     ctx.globalCompositeOperation = "source-over";
-    ctx.fillStyle = "#000";
-    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     ctx.globalCompositeOperation = "screen";
     for (let k = 0; k < this.rects.length; k++) {
       const o = k * FRAME_STRIDE;
@@ -182,7 +181,8 @@ void main() {
   float a2 = min(1.0, 1.4 * i) * m.b;
   float a3 = min(1.0, 0.9 * i) * m.a;
   vec3 dark = (1.0 - a1 * c) * (1.0 - a2 * c) * (1.0 - a3 * c);
-  o = vec4(1.0 - dark, 0.0);
+  vec3 l = 1.0 - dark;
+  o = vec4(l, max(l.r, max(l.g, l.b)));
 }`;
 
 function compile(gl: WebGL2RenderingContext, type: number, src: string): WebGLShader {
@@ -218,8 +218,8 @@ export class GlowGL implements GlowRenderer {
     onLost?: () => void,
   ) {
     const gl = canvas.getContext("webgl2", {
-      alpha: false,
-      premultipliedAlpha: false,
+      alpha: true,
+      premultipliedAlpha: true,
       antialias: false,
       depth: false,
       stencil: false,
@@ -283,8 +283,8 @@ export class GlowGL implements GlowRenderer {
     }
     gl.disable(gl.DEPTH_TEST);
     gl.enable(gl.BLEND);
-    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_COLOR);
-    gl.clearColor(0, 0, 0, 1);
+    gl.blendFuncSeparate(gl.ONE, gl.ONE_MINUS_SRC_COLOR, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.clearColor(0, 0, 0, 0);
   }
 
   private upload(unit: number, data: Uint8Array, w: number, h: number): WebGLTexture {

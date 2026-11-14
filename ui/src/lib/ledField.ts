@@ -48,6 +48,9 @@ function wave(x: number): number {
   return 0.5 + 0.5 * Math.cos(TAU * x);
 }
 
+/** The real board runs its effects at about half the speed the preview first used. */
+export const BOARD_TIME_SCALE = 0.5;
+
 /** Animation rate in cycles/second. Device speed 0 is the fastest. */
 function rate(speed: number): number {
   return 0.25 + ((9 - clamp(speed, 0, 9)) / 9) * 1.5;
@@ -105,8 +108,9 @@ export function ledSample(
   x: number,
   y: number,
   keyIndex: number,
-  timeMs: number,
+  rawTimeMs: number,
 ): LedSample {
+  const timeMs = rawTimeMs * BOARD_TIME_SCALE;
   const nx = clamp01(x);
   const ny = clamp01(y);
   const mx = l.orientation === 1 ? 1 - nx : nx;

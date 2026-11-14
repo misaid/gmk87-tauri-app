@@ -1,3 +1,5 @@
+import { BOARD_TIME_SCALE } from "@/lib/ledField";
+
 export interface UnderglowState {
   effect: number;
   brightness: number;
@@ -234,7 +236,7 @@ export function ledBarSample(led: LedState, timeMs: number): LedBarSample {
   if (led.color === 8) return { r: 0, g: 0, b: 0, a: 0 };
   const intensity = 0.3 + (led.saturation / 9) * 0.7;
   const base = LED_SWATCH_RGB[led.color] ?? LED_SWATCH_RGB[0];
-  const t = timeMs / 1000;
+  const t = (timeMs * BOARD_TIME_SCALE) / 1000;
   if (led.rainbow === 1 || led.mode === 1) {
     const [r, g, b] = hslToRgb(((t / 4) % 1) * 360, 0.85, 0.58);
     const pulse = led.mode === 1 ? 0.65 + 0.35 * Math.sin(t * 2.2) : 1;

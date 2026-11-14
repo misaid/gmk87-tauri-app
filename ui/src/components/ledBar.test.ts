@@ -13,12 +13,12 @@ describe("ledBarSample", () => {
   });
   it("blinks in mode 0", () => {
     const led = { mode: 0, saturation: 9, rainbow: 0, color: 0 };
-    expect(ledBarSample(led, 0).a).toBeGreaterThan(ledBarSample(led, 700).a);
+    expect(ledBarSample(led, 0).a).toBeGreaterThan(ledBarSample(led, 1400).a);
   });
   it("alternates colours in mode 2 and cycles hue for rainbow", () => {
     const pair = { mode: 2, saturation: 9, rainbow: 0, color: 0 };
-    expect(ledBarSample(pair, 0).r).not.toBe(ledBarSample(pair, 700).r);
+    expect(ledBarSample(pair, 0).r).not.toBe(ledBarSample(pair, 1400).r);
     const rb = { mode: 3, saturation: 9, rainbow: 1, color: 0 };
-    expect(ledBarSample(rb, 0).g).not.toBe(ledBarSample(rb, 1500).g);
+    expect(ledBarSample(rb, 0).g).not.toBe(ledBarSample(rb, 3000).g);
   });
 });

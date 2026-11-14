@@ -400,7 +400,7 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
     const targetFps = () => {
       const { activeTab: tab, still } = live.current;
       if (still) return 0;
-      return tab === "lighting" ? quality.fps : 1;
+      return tab === "profiles" ? 1 : quality.fps;
     };
     const loop = (t: number) => {
       raf = 0;
@@ -415,7 +415,7 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
           // A late frame means the page (style, raster) is struggling even if our own JS is cheap.
           const late = lastDraw === -Infinity ? 0 : Math.max(0, t - lastDraw - interval * 1.5);
           lastDraw = t;
-          if (live.current.activeTab === "lighting") quality.push(cost + late);
+          quality.push(cost + late);
         }
         raf = requestAnimationFrame(loop);
       }
@@ -599,7 +599,7 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
             aria-hidden
             data-renderer={glowKind}
             className="pointer-events-none absolute"
-            style={{ ...SPILL_BOX, mixBlendMode: "screen" }}
+            style={{ ...SPILL_BOX }}
           />
 
           {/* The hot seam line under each cap (blended normally, not screened) */}
