@@ -51,7 +51,9 @@ fn lists_wired_and_wireless_separately_when_both_are_present() {
 #[test]
 fn linux_device_nodes_are_filesystem_paths_but_windows_interfaces_are_not() {
     assert!(is_filesystem_path("/run/udev/gmk87-node"));
-    assert!(!is_filesystem_path(r"\\?\hid#vid_320f&pid_5055#8&2f0e3c1&0&0000"));
+    assert!(!is_filesystem_path(
+        r"\\?\hid#vid_320f&pid_5055#8&2f0e3c1&0&0000"
+    ));
 }
 
 #[test]
