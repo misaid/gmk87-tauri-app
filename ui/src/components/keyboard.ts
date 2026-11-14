@@ -49,10 +49,10 @@ const RECESS = { x: CASE.x + 0.1, y: CASE.y + 0.1, w: CASE.w - 0.2, h: CASE.h - 
 // Plate exactly covers the key field.
 const PLATE = { x: 0, y: 0, w: TOTAL_W, h: ROWS };
 // Raised silver module (right end flush with key field's right edge).
-const MODULE = { x: 15.0, y: 0.02, w: 3.2, h: 0.92 };
-const SCREEN_RECESS = { x: 15.17, y: 0.05, w: 1.62, h: 0.83 };
-const SCREEN_ACTIVE = { x: 15.37, y: 0.12, w: 1.28, h: 0.74 };
-const KNOB = { cx: 17.57, cy: 0.42, d: 1.1 };
+const MODULE = { x: 15.4, y: 0.04, w: 2.78, h: 0.8 };
+const SCREEN_RECESS = { x: 15.5, y: 0.1, w: 1.4, h: 0.68 };
+const SCREEN_ACTIVE = { x: 15.58, y: 0.15, w: 1.24, h: 0.58 };
+const KNOB = { cx: 17.68, cy: 0.44, d: 0.7 };
 const LIGHT_RECESS = { x: 17.0, y: 3.27, w: 1.08, h: 0.32 };
 const LIGHT_CAPSULE = { x: 17.08, y: 3.34, w: 0.92, h: 0.18 };
 
