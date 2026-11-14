@@ -37,7 +37,6 @@ interface KeyClass {
   masks: GlowMasks;
   /** Distinct (width, height) classes share masks; keys differ only by position. */
   levels: Map<number, HTMLCanvasElement>;
-  scratch: HTMLCanvasElement | null;
 }
 
 function classOf(rects: readonly KeyRect[], scale: number): { classes: KeyClass[]; keyClass: number[] } {
@@ -49,11 +48,50 @@ function classOf(rects: readonly KeyRect[], scale: number): { classes: KeyClass[
     if (n === undefined) {
       n = classes.length;
       ids.set(id, n);
-      classes.push({ masks: masksFor(r.w, r.h, scale), levels: new Map(), scratch: null });
+      classes.push({ masks: masksFor(r.w, r.h, scale), levels: new Map() });
     }
     return n;
   });
   return { classes, keyClass };
+}
+
+const tintCache = new WeakMap<HTMLCanvasElement, Map<number, HTMLCanvasElement>>();
+const TINT_STEP = 8;
+const TINT_CAP = 400;
+const q8 = (v: number) => Math.min(255, Math.round(v / TINT_STEP) * TINT_STEP);
+
+/**
+ * A copy of the white `mask` filled with the colour, built once and never touched again.
+ * Reusing one scratch canvas per key and drawing it straight away can show the wrong colour
+ * on engines that record canvas drawing and replay it later (every key then picks up whatever
+ * the scratch canvas held last), so each tint is its own canvas.
+ */
+function tinted(mask: HTMLCanvasElement, r: number, g: number, b: number): HTMLCanvasElement {
+  const qr = q8(r);
+  const qg = q8(g);
+  const qb = q8(b);
+  const key = (qr << 16) | (qg << 8) | qb;
+  let byColour = tintCache.get(mask);
+  if (!byColour) {
+    byColour = new Map();
+    tintCache.set(mask, byColour);
+  }
+  let hit = byColour.get(key);
+  if (!hit) {
+    if (byColour.size >= TINT_CAP) byColour.clear();
+    hit = document.createElement("canvas");
+    hit.width = mask.width;
+    hit.height = mask.height;
+    const c = hit.getContext("2d");
+    if (c) {
+      c.fillStyle = `rgb(${qr},${qg},${qb})`;
+      c.fillRect(0, 0, hit.width, hit.height);
+      c.globalCompositeOperation = "destination-in";
+      c.drawImage(mask, 0, 0);
+    }
+    byColour.set(key, hit);
+  }
+  return hit;
 }
 
 function toCanvas(data: Uint8ClampedArray, w: number, h: number): HTMLCanvasElement {
@@ -97,18 +135,9 @@ export class Glow2D implements GlowRenderer {
     return lv;
   }
 
-  /** Tints `mask` (white, alpha only) with `rgb` on the scratch canvas and screens it onto the board. */
-  private screen(cls: KeyClass, mask: HTMLCanvasElement, rgb: string, dx: number, dy: number): void {
-    const sctx = cls.scratch?.getContext("2d");
-    if (!sctx || !cls.scratch) return;
-    const m = cls.masks;
-    sctx.globalCompositeOperation = "source-over";
-    sctx.clearRect(0, 0, m.width, m.height);
-    sctx.fillStyle = rgb;
-    sctx.fillRect(0, 0, m.width, m.height);
-    sctx.globalCompositeOperation = "destination-in";
-    sctx.drawImage(mask, 0, 0);
-    this.ctx.drawImage(cls.scratch, dx, dy);
+  /** Screens `mask` (white, alpha only) tinted with the colour onto the board. */
+  private screen(mask: HTMLCanvasElement, r: number, g: number, b: number, dx: number, dy: number): void {
+    this.ctx.drawImage(tinted(mask, r, g, b), dx, dy);
   }
 
   draw(frame: Float32Array): void {
@@ -125,18 +154,13 @@ export class Glow2D implements GlowRenderer {
       const cls = this.classes[this.keyClass[k]];
       const lv = this.level(cls, Math.max(1, Math.round(i * LEVELS)));
       const m = cls.masks;
-      if (!cls.scratch) {
-        cls.scratch = document.createElement("canvas");
-        cls.scratch.width = m.width;
-        cls.scratch.height = m.height;
-      }
       const r = this.rects[k];
       const dx = Math.round(r.x * this.scale - m.ox);
       const dy = Math.round(r.y * this.scale - m.oy);
       const R = frame[o];
       const G = frame[o + 1];
       const B = frame[o + 2];
-      this.screen(cls, lv, `rgb(${R},${G},${B})`, dx, dy);
+      this.screen(lv, R, G, B, dx, dy);
     }
     ctx.globalCompositeOperation = "source-over";
   }
@@ -421,7 +445,6 @@ export class SeamLayer {
   private rects: KeyRect[] = [];
   private scale = 1;
   private sprites = new Map<KeyClass, { shadow: HTMLCanvasElement; body: HTMLCanvasElement; x0: number; y0: number; w: number; h: number }>();
-  private scratch = new Map<KeyClass, HTMLCanvasElement>();
 
   constructor(private canvas: HTMLCanvasElement) {
     const ctx = canvas.getContext("2d");
@@ -438,7 +461,6 @@ export class SeamLayer {
     this.classes = g.classes;
     this.keyClass = g.keyClass;
     this.sprites.clear();
-    this.scratch.clear();
   }
 
   /** The seam only covers a thin strip, so its sprites are cropped to the pixels that matter. */
@@ -476,26 +498,13 @@ export class SeamLayer {
       }
       s = { shadow: toCanvas(shadow, w, h), body: toCanvas(body, w, h), x0, y0, w, h };
       this.sprites.set(cls, s);
-      const sc = document.createElement("canvas");
-      sc.width = w;
-      sc.height = h;
-      this.scratch.set(cls, sc);
     }
     return s;
   }
 
-  private stamp(cls: KeyClass, mask: HTMLCanvasElement, rgb: string, alpha: number, dx: number, dy: number): void {
-    const sc = this.scratch.get(cls);
-    const sctx = sc?.getContext("2d");
-    if (!sc || !sctx) return;
-    sctx.globalCompositeOperation = "source-over";
-    sctx.clearRect(0, 0, sc.width, sc.height);
-    sctx.fillStyle = rgb;
-    sctx.fillRect(0, 0, sc.width, sc.height);
-    sctx.globalCompositeOperation = "destination-in";
-    sctx.drawImage(mask, 0, 0);
+  private stamp(mask: HTMLCanvasElement, r: number, g: number, b: number, alpha: number, dx: number, dy: number): void {
     this.ctx.globalAlpha = alpha;
-    this.ctx.drawImage(sc, dx, dy);
+    this.ctx.drawImage(tinted(mask, r, g, b), dx, dy);
   }
 
   draw(frame: Float32Array): void {
@@ -516,8 +525,8 @@ export class SeamLayer {
       const G = frame[o + 1];
       const B = frame[o + 2];
       // The seam element sits at opacity `i`; its shadow colour also carries `i`, hence i squared.
-      this.stamp(cls, sp.shadow, `rgb(${R},${G},${B})`, i * i, dx, dy);
-      this.stamp(cls, sp.body, `rgb(${Math.round(R * 0.8 + 51)},${Math.round(G * 0.8 + 51)},${Math.round(B * 0.8 + 51)})`, i, dx, dy);
+      this.stamp(sp.shadow, R, G, B, i * i, dx, dy);
+      this.stamp(sp.body, R * 0.8 + 51, G * 0.8 + 51, B * 0.8 + 51, i, dx, dy);
     }
     ctx.globalAlpha = 1;
   }
