@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import * as ipc from "@/lib/ipc";
 import { useAppStore } from "@/store";
 
@@ -20,9 +20,9 @@ export default function DeviceScreen() {
   const refreshDevices = useAppStore((s) => s.refreshDevices);
   const connectTo = useAppStore((s) => s.connectTo);
   const disconnectDevice = useAppStore((s) => s.disconnectDevice);
-  const setActiveTab = useAppStore((s) => s.setActiveTab);
   const syncClock = useAppStore((s) => s.syncClock);
   const setNotice = useAppStore((s) => s.setNotice);
+  const setLightingDraft = useAppStore((s) => s.setLightingDraft);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
 
   useEffect(() => {
@@ -36,70 +36,74 @@ export default function DeviceScreen() {
   }, [confirmDisconnect]);
 
   return (
-    <div className="flex max-w-xl flex-col gap-6 pt-3">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-[var(--text-h1)] font-semibold text-white">Devices</h1>
-          <p className="mt-1 text-sm text-white/80">Connect your GMK87 over USB.</p>
+    <div className="flex flex-col gap-5 text-[13px]">
+      <section className="rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4" aria-labelledby="device-heading">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h2 id="device-heading" className="text-[13px] font-semibold tracking-[0.01em] text-[var(--text)]">
+            Connection
+          </h2>
+          <Button variant="ghost" size="sm" onClick={() => void refreshDevices()}>
+            Refresh
+          </Button>
         </div>
-        <Button variant="outline" size="sm" onClick={() => void refreshDevices()}>
-          Refresh
-        </Button>
-      </div>
 
-      {devices.length === 0 && (
-        <p className="text-sm text-white/80">
-          No GMK87 found. Plug in the USB cable (wired keyboard or 2.4 GHz dongle) and press Refresh. If it still doesn't appear, a permission prompt will explain the udev fix.
-        </p>
-      )}
-
-      {devices.map((device) => {
-        const isConnecting = connectingPath === device.path;
-        const transportLabel = device.transport === "wireless24g" ? "2.4 GHz dongle" : "Wired USB";
-        return (
-        <Card key={device.path}>
-          <CardHeader className="flex-row items-center justify-between gap-3">
-            <CardTitle className="text-base">{device.label}</CardTitle>
-            <div className="flex items-center gap-2">
-              {device.hasVia && <Badge variant="secondary">VIA</Badge>}
-            </div>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-2 text-sm text-white/80">
-            <span className="text-xs text-white/70">{transportLabel}</span>
-            <details className="rounded-md border border-white/10 p-2 text-xs text-white/70">
-              <summary className="cursor-pointer font-medium text-white/80">Technical details</summary>
-              <p className="mt-1">Product 0x{device.productId.toString(16).padStart(4, "0")}</p>
-              <p className="font-mono">{device.path}</p>
-            </details>
-            {device.hasVia && <span className="text-xs text-white/70">VIA reachable — remapping arrives in a future version.</span>}
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                disabled={connected || connectingPath !== null}
-                aria-busy={isConnecting || undefined}
-                onClick={() => void connectTo(device.path)}
-              >
-                {isConnecting ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" aria-hidden />
-                    Connecting…
-                  </>
-                ) : (
-                  "Connect"
-                )}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-        );
-      })}
-
-      {state && (
-        <div className="flex flex-col gap-2">
-          <p className="text-xs text-white/70">
-            {state.synced ? "Settings written and acknowledged." : "Connected; nothing written yet."}
+        {devices.length === 0 && (
+          <p className="text-[var(--muted)]">
+            No GMK87 found. Plug in the USB cable (wired keyboard or 2.4 GHz dongle) and press Refresh. On Linux, a permission prompt will appear if udev access is missing.
           </p>
-          <div className="flex flex-wrap items-center gap-2">
+        )}
+
+        <div className="flex flex-col gap-2">
+          {devices.map((device) => {
+            const isConnecting = connectingPath === device.path;
+            const transportLabel = device.transport === "wireless24g" ? "2.4 GHz dongle" : "Wired USB";
+            return (
+              <div
+                key={device.path}
+                className="flex items-center gap-3 rounded-[12px] border border-[var(--line)] bg-[var(--panel-2)] p-3"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate font-medium text-[var(--text)]">{device.label}</span>
+                    {device.hasVia && <Badge variant="secondary">VIA</Badge>}
+                  </div>
+                  <span className="text-[11px] text-[var(--muted)]">{transportLabel}</span>
+                  {device.hasVia && (
+                    <span className="block text-[11px] text-[var(--muted)]">
+                      VIA reachable — remapping arrives in a future version.
+                    </span>
+                  )}
+                  <details className="mt-1 text-[11px] text-[var(--muted)]">
+                    <summary className="cursor-pointer">Technical details</summary>
+                    <p className="mt-1">Product 0x{device.productId.toString(16).padStart(4, "0")}</p>
+                    <p className="font-mono">{device.path}</p>
+                  </details>
+                </div>
+                <Button
+                  size="sm"
+                  disabled={connected || connectingPath !== null}
+                  aria-busy={isConnecting || undefined}
+                  onClick={() => void connectTo(device.path)}
+                >
+                  {isConnecting ? (
+                    <>
+                      <Loader2 className="size-4 animate-spin" aria-hidden />
+                      Connecting…
+                    </>
+                  ) : (
+                    "Connect"
+                  )}
+                </Button>
+              </div>
+            );
+          })}
+        </div>
+
+        {state && (
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-[12px] border border-[var(--line)] bg-[var(--panel-2)] p-3">
+            <span className="text-[var(--text)]">
+              {state.synced ? "Connected — settings written and acknowledged." : "Connected — nothing written yet."}
+            </span>
             <Button
               size="sm"
               variant={confirmDisconnect ? "destructive" : "outline"}
@@ -112,39 +116,39 @@ export default function DeviceScreen() {
                 void disconnectDevice();
               }}
             >
-              {confirmDisconnect ? "Click again to disconnect — draft kept" : "Disconnect"}
+              {confirmDisconnect ? "Click again to disconnect" : "Disconnect"}
             </Button>
-            <p className="flex flex-wrap items-center gap-2 text-sm text-white/80">
-              <span>Win Lock: <span className="font-medium text-white">{state.winLock ? "On" : "Off"}</span></span>
-              <Button variant="outline" size="sm" onClick={() => setActiveTab("lighting")}>Edit in Lighting</Button>
-              <span className="text-xs text-white/70">— joins the lighting draft</span>
-            </p>
+            <label className="ml-auto flex items-center gap-2.5 text-[var(--muted)]">
+              <Switch
+                checked={state.winLock}
+                onCheckedChange={(checked) => setLightingDraft?.({ winLock: checked })}
+              />
+              Windows key lock
+            </label>
           </div>
-        </div>
-      )}
+        )}
+      </section>
 
-      <section className="rounded-lg border border-white/10 p-4" aria-labelledby="device-clock">
-        <h2 id="device-clock" className="text-sm font-semibold text-white">Board clock</h2>
-        <p className="mt-1 text-xs text-white/70">Set the board clock to your system time ({Intl.DateTimeFormat().resolvedOptions().timeZone}). Shows last written time — the board cannot be read back.</p>
+      <section className="rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4" aria-labelledby="device-clock">
+        <h2 id="device-clock" className="text-[13px] font-semibold tracking-[0.01em] text-[var(--text)]">
+          Board clock
+        </h2>
+        <p className="mt-1 text-[11px] text-[var(--muted)]">
+          Set the board clock to your system time ({Intl.DateTimeFormat().resolvedOptions().timeZone}). Shows last written time — the board cannot be read back.
+        </p>
         <div className="mt-3 flex flex-wrap items-center gap-3">
-          <p className="font-mono text-xl text-white">{state ? formatDeviceTime(state.time as DeviceTime) : "—"}</p>
-          <Button size="sm" onClick={() => void syncClock()} disabled={!state}>Sync now</Button>
+          <span className="font-mono text-lg text-[var(--text)]">
+            {state ? formatDeviceTime(state.time as DeviceTime) : "—"}
+          </span>
+          <Button size="sm" onClick={() => void syncClock()} disabled={!state}>
+            Sync now
+          </Button>
         </div>
       </section>
 
-      <details className="rounded-lg border border-white/10 p-4 text-sm text-white/70">
-        <summary className="cursor-pointer font-medium text-white/80">How this works</summary>
-        <ul className="mt-2 list-disc space-y-1 pl-5 text-xs">
-          <li>The board cannot be read back — the app keeps the last settings it wrote.</li>
-          <li>The display keeps two image slots (240×135, 36 frames total). Both are resent on every upload.</li>
-          <li>Underglow and side LEDs are hardware effects — the picture in the app simulates them, it does not drive them.</li>
-        </ul>
-      </details>
-
-      <Button
-        variant="ghost"
-        size="sm"
-        className="self-start"
+      <button
+        type="button"
+        className="self-start text-xs text-[var(--muted)] underline-offset-4 transition-colors hover:text-[var(--text)] hover:underline"
         onClick={async () => {
           const text = await ipc.copyDiagnostics();
           await navigator.clipboard.writeText(text);
@@ -152,7 +156,7 @@ export default function DeviceScreen() {
         }}
       >
         Copy diagnostics
-      </Button>
+      </button>
     </div>
   );
 }

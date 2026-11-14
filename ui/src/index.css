@@ -2,15 +2,26 @@
 
 :root {
   --radius: 0.6rem;
+  --bg: #07080b;
+  --panel: rgba(255, 255, 255, 0.028);
+  --panel-2: rgba(255, 255, 255, 0.05);
+  --line: rgba(255, 255, 255, 0.075);
+  --line-strong: rgba(255, 255, 255, 0.14);
+  --text: #e9eaee;
+  --muted: #969ba6;
+  --dim: #6b7280;
   --accent: #8b5cf6;
   --accent-safe: #8b5cf6;
-  /* Type tokens — one scale for the whole shell */
+  --success: #34d399;
+  --danger: #f87171;
+  --warn: #fbbf24;
+  /* Legacy type scale kept for any stragglers */
   --text-h1: 1.25rem;
   --text-h2: 0.9375rem;
-  --text-body: 0.875rem;
-  --text-caption: 0.75rem;
-  --space-section: 1.5rem;
+  --text-body: 0.8125rem;
+  --space-section: 1.25rem;
   --space-card: 1rem;
+  --focus: var(--accent);
   color-scheme: dark;
 }
 
@@ -22,15 +33,18 @@ body,
 
 body {
   margin: 0;
-  background: #0b0c10;
-  color: #e8e8ea;
+  background-color: var(--bg);
+  background-image: radial-gradient(1100px 520px at 50% -12%, rgba(139, 92, 246, 0.10), transparent 70%);
+  background-attachment: fixed;
+  color: var(--text);
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  font-size: var(--text-body);
+  font-size: 13px;
   line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }
 
-h1 { font-size: var(--text-h1); font-weight: 600; line-height: 1.25; }
-h2 { font-size: var(--text-h2); font-weight: 600; line-height: 1.35; }
+h1 { font-size: 1.1rem; font-weight: 600; line-height: 1.25; }
+h2 { font-size: 0.8125rem; font-weight: 600; letter-spacing: 0.01em; }
 
 /* Fixed product accent (violet) — board colour lives in the preview, not the chrome.
    White core + accent halo stays legible on dark. */
@@ -43,9 +57,20 @@ h2 { font-size: var(--text-h2); font-weight: 600; line-height: 1.35; }
 /* Accent text helper (fixed violet). */
 .accent-text { color: var(--accent-safe); }
 
-/* Gallery thumbnails: keep them crisp on low-end GPUs. */
-* {
-  -webkit-font-smoothing: antialiased;
+/* Panel surfaces: one shape for every section */
+.panel {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 18px;
+}
+
+/* Eyebrow labels */
+.eyebrow {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  color: var(--dim);
+  font-weight: 600;
 }
 
 /* Subtle scrollbars that match the dark shell. */
@@ -62,8 +87,8 @@ h2 { font-size: var(--text-h2); font-weight: 600; line-height: 1.35; }
 
 /* Dialog system — one shape for every modal */
 .dialog-panel {
-  border-radius: 0.75rem;
-  border: 1px solid rgba(255,255,255,0.1);
-  background: #171717;
-  box-shadow: 0 25px 50px -12px rgba(0,0,0,0.8);
+  border-radius: 18px;
+  border: 1px solid var(--line-strong);
+  background: #101319;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8);
 }

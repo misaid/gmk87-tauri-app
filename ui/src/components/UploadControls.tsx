@@ -58,12 +58,12 @@ export function UploadControls() {
         Write image to board
       </Button>
       {dropped > 0 && entry.info && (
-        <p className="rounded-md bg-sky-400/10 px-2 py-1 text-xs text-sky-300" role="note">
+        <p className="rounded-[10px] bg-[var(--accent)]/10 px-2.5 py-1.5 text-[11px] text-[#c4b5fd]" role="note">
           Will drop {dropped} frames: {entry.info.sourceFrames} → {entry.info.frames} to fit 36 total.
         </p>
       )}
       {blockedReasons.length > 0 && !busy && (
-        <div id="upload-blocked-reasons" className="text-xs text-white/70" role="note">
+        <div id="upload-blocked-reasons" className="text-[11px] text-[var(--muted)]" role="note">
           <p>To upload, please:</p>
           <ul className="list-disc pl-4">
             {blockedReasons.map((reason) => (
@@ -85,7 +85,7 @@ export function UploadControls() {
       {busy && (
         <div className="flex flex-col gap-1">
           <Progress value={percent} />
-          <span className="text-xs text-white/70">
+          <span className="text-[11px] text-[var(--muted)]">
             {percent}% · {progress ? `${progress.bytesSent} / ${progress.totalBytes} bytes` : "—"} · {totalFrames} frames
           </span>
         </div>
@@ -100,36 +100,28 @@ export function UploadControls() {
         >
           <div
             ref={dialogRef}
-            className="dialog-panel w-full max-w-lg p-5"
+            className="dialog-panel w-full max-w-md p-5"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 id="upload-confirm-title" className="text-base font-medium text-white">
+            <h3 id="upload-confirm-title" className="text-[15px] font-semibold text-[var(--text)]">
               Write this image to the board?
             </h3>
-            <dl className="mt-3 space-y-1.5 text-sm">
+            <div className="mt-3 flex flex-col gap-1 text-xs text-[var(--muted)]">
               {(["slot0", "slot1"] as const).map((s) => {
-                const before = lastUploaded?.[s]?.name || `Slot ${s === "slot0" ? "0" : "1"} (on board)`;
+                const before = lastUploaded?.[s]?.name || `on board`;
                 const after = slotName(s);
-                const beforeFrames = lastUploaded?.[s]?.info?.frames ?? "—";
                 const changed = before !== after;
                 return (
-                  <div key={s} className="flex items-center justify-between gap-3 border-b border-white/10 pb-1.5">
-                    <dt className="text-white/70">{s === "slot0" ? "Slot 0" : "Slot 1"}</dt>
-                    <dd className="text-right">
-                      <span className="text-white/60">{before} · {beforeFrames} frames</span>
-                      <span aria-hidden className="text-white/60"> → </span>
-                      <span className={changed ? "font-semibold text-sky-300" : ""}>{after} · {slotFrames(s)} frames</span>
-                    </dd>
-                  </div>
+                  <p key={s}>
+                    <span className="text-[var(--text)]">Slot {s === "slot0" ? "0" : "1"}:</span>{" "}
+                    <span className={changed ? "text-[#c4b5fd]" : ""}>{after} · {slotFrames(s)} frames</span>
+                  </p>
                 );
               })}
-            </dl>
-            {dropped > 0 && entry.info && (
-              <p className="mt-1 text-xs text-sky-300">Drops {dropped} frames ({entry.info.sourceFrames} → {entry.info.frames}) to fit.</p>
-            )}
-            <p className="mt-1 text-sm text-white/70">
-              Both slots are resent. The other slot keeps its image. This overwrites what the board shows.
-            </p>
+              {dropped > 0 && entry.info && (
+                <p className="text-[#c4b5fd]">Drops {dropped} frames ({entry.info.sourceFrames} → {entry.info.frames}) to fit.</p>
+              )}
+            </div>
             <div className="mt-4 flex justify-end gap-2">
               <Button variant="outline" onClick={() => setConfirmOpen(false)}>
                 Cancel

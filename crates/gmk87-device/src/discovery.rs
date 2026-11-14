@@ -41,6 +41,42 @@ pub struct RawHidDevice {
     pub interface_number: i32,
 }
 
+/// A device path that names a node in the filesystem (Linux `/dev/hidrawN`).
+///
+/// Windows HID paths are interface names such as `\\?\hid#vid_320f&pid_5055…`
+/// and do **not** exist as files, so they must be checked by re-enumerating the
+/// HID bus instead of with `Path::exists`.
+pub fn is_filesystem_path(path: &str) -> bool {
+    path.starts_with('/')
+}
+
+/// Whether `path` appears in a freshly enumerated HID device list.
+///
+/// HID interface paths are case-insensitive on Windows, so compare that way
+/// everywhere.
+pub fn listed_contains(devices: &[RawHidDevice], path: &str) -> bool {
+    devices
+        .iter()
+        .any(|device| device.path.eq_ignore_ascii_case(path))
+}
+
+/// Whether the device at `path` is still attached.
+///
+/// This is the liveness check behind the app's disconnect watchdog. It must
+/// work on every platform: on Windows the old filesystem probe always returned
+/// `false`, which made the app drop a healthy connection a couple of seconds
+/// after connecting.
+///
+/// `Err` means the bus could not be enumerated, not that the device is gone —
+/// callers must not treat it as a disconnect.
+pub fn device_present(path: &str) -> Result<bool, DeviceError> {
+    if is_filesystem_path(path) {
+        return Ok(std::path::Path::new(path).exists());
+    }
+    let devices = SystemEnumerator.list()?;
+    Ok(listed_contains(&devices, path))
+}
+
 pub trait HidEnumerator {
     fn list(&self) -> Result<Vec<RawHidDevice>, DeviceError>;
 }

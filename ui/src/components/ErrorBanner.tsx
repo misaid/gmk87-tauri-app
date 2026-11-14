@@ -13,7 +13,7 @@ export function ErrorBanner() {
   return (
     <div
       role="alert"
-      className="flex flex-wrap items-center justify-between gap-4 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-200"
+      className="flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-[var(--danger)]/30 bg-[var(--danger)]/10 px-4 py-2.5 text-[13px] text-[#fecaca]"
     >
       <span className="min-w-0 flex-1">{error}</span>
       <span className="flex gap-2">
@@ -29,7 +29,7 @@ export function ErrorBanner() {
         >
           Refresh devices
         </Button>
-        <button className="underline" onClick={dismiss}>
+        <button className="underline underline-offset-2" onClick={dismiss}>
           Dismiss
         </button>
       </span>
