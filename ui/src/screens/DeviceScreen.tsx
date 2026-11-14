@@ -79,9 +79,14 @@ export default function DeviceScreen() {
                     <p className="font-mono">{device.path}</p>
                   </details>
                 </div>
+                {connected ? (
+                  devices.length === 1 && (
+                    <span className="rounded-full bg-emerald-400/15 px-2.5 py-1 text-xs font-medium text-emerald-300">Connected</span>
+                  )
+                ) : (
                 <Button
                   size="sm"
-                  disabled={connected || connectingPath !== null}
+                  disabled={connectingPath !== null}
                   aria-busy={isConnecting || undefined}
                   onClick={() => void connectTo(device.path)}
                 >
@@ -94,6 +99,7 @@ export default function DeviceScreen() {
                     "Connect"
                   )}
                 </Button>
+                )}
               </div>
             );
           })}

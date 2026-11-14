@@ -70,9 +70,9 @@ export default function LightingScreen() {
   }
 
   return (
-    <div className="flex flex-col gap-5 text-[13px]">
+    <div className="grid gap-5 text-[13px] lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
       {history.length > 0 && (
-        <div className="flex justify-end">
+        <div className="flex justify-end lg:col-span-2">
           <button
             type="button"
             onClick={() => void undoLighting()}
@@ -83,8 +83,9 @@ export default function LightingScreen() {
         </div>
       )}
 
+      <div className="flex min-w-0 flex-col gap-5">
       <Panel title="Looks">
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {presets.map((preset) => {
             const v = PRESET_VALUES[preset.name];
             return (
@@ -136,8 +137,11 @@ export default function LightingScreen() {
         <EffectGallery value={underglow.effect} color={underglow.color} rainbow={underglow.rainbow} onSelect={(v) => stage({ underglowEffect: v })} />
       </Panel>
 
+      </div>
+
+      <div className="flex min-w-0 flex-col gap-5 lg:sticky lg:top-4">
       <Panel title="Brightness & speed">
-        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-5">
           <div>
             <Label htmlFor="lighting-brightness" className="text-[var(--muted)]">
               Brightness — <span className="text-[var(--text)]">{brightnessWord(underglow.brightness)}</span>
@@ -288,6 +292,7 @@ export default function LightingScreen() {
           </div>
         </div>
       </details>
+      </div>
     </div>
   );
 }
