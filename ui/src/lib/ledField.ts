@@ -270,3 +270,25 @@ export function ledStops(l: LedLighting, timeMs = 0): string[] {
   }
   return out;
 }
+
+/**
+ * A rows x cols grid of samples as CSS colours (alpha baked in, normalised to
+ * full brightness so thumbnails read at full hue) — row-based effects read
+ * vertically and ripples read from the centre.
+ */
+export function ledGrid(l: LedLighting, timeMs: number, rows: number, cols: number): string[][] {
+  const out: string[][] = [];
+  for (let r = 0; r < rows; r++) {
+    const y = (r + 0.5) / rows;
+    const row: string[] = [];
+    for (let c = 0; c < cols; c++) {
+      const x = (c + 0.5) / cols;
+      const s = ledSample(l, x, y, r * cols + c, timeMs);
+      const peak = clamp(l.brightness, 0, 9) / 9 || 1;
+      const i = clamp01(s.intensity / peak);
+      row.push(ledCss(s, i <= 0.004 ? 0 : 0.1 + 0.9 * Math.pow(i, 2.2)));
+    }
+    out.push(row);
+  }
+  return out;
+}

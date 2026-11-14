@@ -99,6 +99,19 @@ function Keycap({
             mixBlendMode: "screen",
           }}
         />
+        {/* Row-gap underglow: light bleeding between rows */}
+        <div
+          className="absolute"
+          style={{
+            left: "0%",
+            right: "0%",
+            bottom: "-24%",
+            height: "30%",
+            background: "rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 0.35))",
+            filter: "blur(10px)",
+            mixBlendMode: "screen",
+          }}
+        />
         {/* The LED seam: a crisp hot line right under the cap's bottom edge */}
         <div
           className="absolute"
@@ -294,6 +307,7 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
         ctx.restore();
       }
 
+      caseEl.style.setProperty("--rimk", "0");
       let ar = 0, ag = 0, ab = 0, aw = 0;
       for (let i = 0; i < coords.length; i++) {
         const c = coords[i];
@@ -310,6 +324,8 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
         const avgG = Math.round(ag / aw);
         const avgB = Math.round(ab / aw);
         const k = Math.min(1, aw / coords.length);
+        caseEl.style.setProperty("--rim", `${avgR} ${avgG} ${avgB}`);
+        caseEl.style.setProperty("--rimk", String(Math.min(1, k * 1.6)));
         const r = cw * 0.55;
         ctx.save();
         ctx.translate(originX + cw / 2, spillY);
@@ -401,6 +417,17 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
               backgroundImage: "linear-gradient(180deg, #22252c 0%, #101217 100%)",
               boxShadow:
                 "inset 0 1px 0 rgba(255,255,255,0.08), 0 34px 54px -18px rgba(0,0,0,0.8), 0 2px 0 rgba(255,255,255,0.02)",
+            }}
+          />
+
+          {/* Rim glow: 1px inner edge in the average LED colour */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0"
+            style={{
+              borderRadius: "2.5%",
+              boxShadow:
+                "inset 0 0 0 1px rgb(var(--rim, 139 92 246) / calc(var(--rimk, 0) * 0.55)), inset 0 0 8px rgb(var(--rim, 139 92 246) / calc(var(--rimk, 0) * 0.18))",
             }}
           />
 

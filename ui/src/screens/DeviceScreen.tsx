@@ -44,9 +44,9 @@ export default function DeviceScreen() {
   }, [confirmDisconnect]);
 
   return (
-    <div className="grid gap-4 text-[13px] lg:grid-cols-2 lg:items-start">
+    <div className="grid gap-4 text-[13px] lg:grid-cols-2 lg:items-stretch">
       <section
-        className="rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4"
+        className="h-full rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4"
         aria-labelledby="device-heading"
       >
         <div className="mb-3 flex items-center justify-between gap-3">
@@ -56,15 +56,34 @@ export default function DeviceScreen() {
           >
             Connection
           </h2>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 text-xs"
-            onClick={() => void refreshDevices()}
-          >
-            <RefreshCw className="size-3.5" aria-hidden />
-            Refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => void refreshDevices()}
+            >
+              <RefreshCw className="size-3.5" aria-hidden />
+              Refresh
+            </Button>
+            {state && (
+            <Button
+              variant={confirmDisconnect ? "destructive" : "secondary"}
+              size="sm"
+              className="h-8 text-xs"
+              onClick={() => {
+                if (!confirmDisconnect) {
+                  setConfirmDisconnect(true);
+                  return;
+                }
+                setConfirmDisconnect(false);
+                void disconnectDevice();
+              }}
+            >
+              {confirmDisconnect ? "Click again to disconnect" : "Disconnect"}
+            </Button>
+            )}
+          </div>
         </div>
 
         {devices.length === 0 && (
@@ -147,19 +166,6 @@ export default function DeviceScreen() {
                 ? "Settings written and acknowledged."
                 : "Nothing written yet."}
             </span>
-            <Button
-              variant={confirmDisconnect ? "destructive" : "secondary"}
-              onClick={() => {
-                if (!confirmDisconnect) {
-                  setConfirmDisconnect(true);
-                  return;
-                }
-                setConfirmDisconnect(false);
-                void disconnectDevice();
-              }}
-            >
-              {confirmDisconnect ? "Click again to disconnect" : "Disconnect"}
-            </Button>
           </div>
         )}
       </section>
@@ -190,7 +196,8 @@ export default function DeviceScreen() {
           </div>
         </section>
 
-        <section className="rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4">
+        <section className="flex flex-1 flex-col gap-3 rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4">
+          <h2 className="text-[13px] font-semibold tracking-[0.01em] text-[var(--text)]">Advanced</h2>
           <label className="flex items-center gap-2.5 text-[var(--muted)]">
             <Switch
               checked={state?.winLock ?? false}
@@ -201,22 +208,21 @@ export default function DeviceScreen() {
             />
             Windows key lock
           </label>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 justify-self-start self-start text-xs"
+            onClick={async () => {
+              const text = await ipc.copyDiagnostics();
+              await navigator.clipboard.writeText(text);
+              setNotice?.("Diagnostics copied ✓");
+            }}
+          >
+            <Clipboard className="size-3.5" aria-hidden />
+            Copy diagnostics
+          </Button>
         </section>
       </div>
-
-      <Button
-        variant="outline"
-        size="sm"
-        className="h-8 justify-self-start text-xs lg:col-span-2"
-        onClick={async () => {
-          const text = await ipc.copyDiagnostics();
-          await navigator.clipboard.writeText(text);
-          setNotice?.("Diagnostics copied ✓");
-        }}
-      >
-        <Clipboard className="size-3.5" aria-hidden />
-        Copy diagnostics
-      </Button>
     </div>
   );
 }

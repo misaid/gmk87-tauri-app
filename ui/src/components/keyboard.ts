@@ -53,8 +53,8 @@ const MODULE = { x: 15.4, y: 0.04, w: 2.78, h: 0.8 };
 const SCREEN_RECESS = { x: 15.5, y: 0.1, w: 1.4, h: 0.68 };
 const SCREEN_ACTIVE = { x: 15.58, y: 0.15, w: 1.24, h: 0.58 };
 const KNOB = { cx: 17.68, cy: 0.44, d: 0.7 };
-const LIGHT_RECESS = { x: 17.0, y: 3.27, w: 1.08, h: 0.32 };
-const LIGHT_CAPSULE = { x: 17.08, y: 3.34, w: 0.92, h: 0.18 };
+const LIGHT_RECESS = { x: 16.47, y: 3.27, w: 1.56, h: 0.32 };
+const LIGHT_CAPSULE = { x: 16.55, y: 3.34, w: 1.4, h: 0.18 };
 
 function centerOf(box: { x: number; y: number; w: number; h: number }) {
   return [box.x + box.w / 2, box.y + box.h / 2] as const;

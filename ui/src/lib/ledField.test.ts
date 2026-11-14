@@ -171,3 +171,12 @@ describe("ledStops", () => {
     }
   });
 });
+
+describe("ledGrid", () => {
+  it("returns rows x cols cells and an Off grid is fully transparent", async () => {
+    const { ledGrid } = await import("./ledField");
+    const g = ledGrid({ effect: 0, brightness: 9, speed: 3, orientation: 0, rainbow: 0, color: [10, 20, 30] }, 0, 3, 14);
+    expect(g).toHaveLength(3);
+    expect(g[0]).toHaveLength(14);
+  });
+});

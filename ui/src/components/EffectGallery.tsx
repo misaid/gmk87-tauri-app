@@ -1,32 +1,42 @@
 import { useEffect, useState, type KeyboardEvent } from "react";
+import { Ban } from "lucide-react";
 import { EFFECT_DESCRIPTIONS, UNDERGLOW_EFFECTS } from "@/lib/effects";
-import { ledStops, type LedLighting } from "@/lib/ledField";
+import { ledGrid, type LedLighting } from "@/lib/ledField";
 
 /** A canonical base so static thumbnails differ visibly per effect. */
 const THUMB_BASE: LedLighting = {
   effect: 0,
-  brightness: 6,
+  brightness: 9,
   speed: 3,
   orientation: 0,
   rainbow: 0,
   color: [139, 92, 246],
 };
-const THUMB_TIME_MS = 1600;
+const ROWS = 3;
+const COLS = 14;
+const GRID_COLS = 5;
+const UNLIT = "#2a3442";
+/** Resting frame per effect, as a phase (speed 3 runs 1.25 cycles/s): lands on a visible peak. */
+const THUMB_PHASE: Record<number, number> = {
+  1: 0.3, 2: 0.42, 3: 0.2, 5: 0.25, 7: 0.2, 8: 0.35, 9: 0.38, 10: 0.5,
+  12: 0.1, 13: 0.3, 14: 0.3, 15: 0.5, 16: 0.15, 17: 0.5, 18: 0.2,
+};
+const thumbTime = (effect: number) => Math.round((THUMB_PHASE[effect] ?? 0.35) * 800);
 
-const thumbCache = new Map<string, string[]>();
+const thumbCache = new Map<string, string[][]>();
 /** Thumbnails use the board's live colour so the picker previews what you will get. */
-function thumbStops(effect: number, color: [number, number, number], rainbow: number, t: number): string[] {
+function thumbGrid(effect: number, color: [number, number, number], rainbow: number, t: number): string[][] {
   const k = `${effect}|${color.join(",")}|${rainbow}|${t}`;
-  let stops = thumbCache.get(k);
-  if (!stops) {
-    stops = ledStops({ ...THUMB_BASE, effect, color, rainbow }, t);
+  let grid = thumbCache.get(k);
+  if (!grid) {
+    grid = ledGrid({ ...THUMB_BASE, effect, color, rainbow }, t, ROWS, COLS);
     if (thumbCache.size > 3000) thumbCache.clear();
-    thumbCache.set(k, stops);
+    thumbCache.set(k, grid);
   }
-  return stops;
+  return grid;
 }
 
-/** Two bars sampled at different moments; animates only while `live`. */
+/** A 3 x 14 cell strip at the effect's characteristic frame; animates only while `live`. */
 function Thumb({
   effect,
   off,
@@ -40,24 +50,37 @@ function Thumb({
   rainbow: number;
   live: boolean;
 }) {
-  const [t, setT] = useState(THUMB_TIME_MS);
+  const base = thumbTime(effect);
+  const [t, setT] = useState(base);
   useEffect(() => {
     if (!live || off) {
-      setT(THUMB_TIME_MS);
+      setT(base);
       return;
     }
     const id = window.setInterval(() => setT((v) => v + 90), 90);
     return () => window.clearInterval(id);
-  }, [live, off]);
+  }, [live, off, base]);
   if (off) {
-    return <span aria-hidden className="block h-[18px] rounded-md border border-dashed border-white/15" />;
+    return (
+      <span
+        aria-hidden
+        className="flex h-[22px] items-center justify-center rounded-[4px] text-white/45"
+        style={{ background: UNLIT }}
+      >
+        <Ban className="size-3.5" />
+      </span>
+    );
   }
   return (
-    <span aria-hidden className="flex flex-col gap-[3px]">
-      {[0, 700].map((dt) => (
-        <span key={dt} className="flex h-[7px] overflow-hidden rounded-full bg-white/[0.04]">
-          {thumbStops(effect, color, rainbow, t + dt).map((stop, j) => (
-            <span key={j} className="h-full flex-1" style={{ background: stop }} />
+    <span aria-hidden className="flex flex-col gap-[2px]">
+      {thumbGrid(effect, color, rainbow, t).map((row, i) => (
+        <span key={i} className="flex h-[6px] gap-px overflow-hidden rounded-[2px]">
+          {row.map((stop, j) => (
+            <span
+              key={j}
+              className="h-full flex-1"
+              style={{ backgroundColor: UNLIT, backgroundImage: `linear-gradient(${stop}, ${stop})` }}
+            />
           ))}
         </span>
       ))}
@@ -95,7 +118,7 @@ export function EffectGallery({
   };
 
   return (
-    <div role="radiogroup" aria-label="Underglow effect" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+    <div role="radiogroup" aria-label="Underglow effect" className="grid grid-cols-2 gap-2 sm:grid-cols-5">
       {UNDERGLOW_EFFECTS.map((effect, i) => {
         const selected = effect.value === value;
         return (
@@ -119,10 +142,10 @@ export function EffectGallery({
                   moveFocus(e, Math.max(0, i - 1));
                   break;
                 case "ArrowDown":
-                  moveFocus(e, Math.min(UNDERGLOW_EFFECTS.length - 1, i + 4));
+                  moveFocus(e, Math.min(UNDERGLOW_EFFECTS.length - 1, i + GRID_COLS));
                   break;
                 case "ArrowUp":
-                  moveFocus(e, Math.max(0, i - 4));
+                  moveFocus(e, Math.max(0, i - GRID_COLS));
                   break;
                 case "Home":
                   moveFocus(e, 0);
