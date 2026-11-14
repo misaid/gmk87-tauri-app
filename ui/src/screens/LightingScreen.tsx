@@ -5,7 +5,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { EffectGallery } from "@/components/EffectGallery";
 import { underglowCategory } from "@/components/lighting";
-import { LED_COLORS, LED_COLOR_SWATCHES, LED_MODES, PRESET_VALUES, UNDERGLOW_EFFECTS } from "@/lib/effects";
+import { LED_COLORS, LED_COLOR_SWATCHES, LED_MODES, PRESET_VALUES } from "@/lib/effects";
 import { OFFLINE_STATE, selectEffectiveState, useAppStore } from "@/store";
 
 function Panel({ title, children, className }: { title: string; children: ReactNode; className?: string }) {
@@ -44,6 +44,27 @@ const GLOW_COLORS: ReadonlyArray<{ name: string; rgb: [number, number, number] }
   { name: "Violet", rgb: [139, 92, 246] },
   { name: "White", rgb: [255, 255, 255] },
 ];
+
+const TINT: Record<string, string> = { gaming: "#ff9f0a", relaxed: "#0a84ff", minimal: "", productivity: "#40c8e0", "purple-wave": "#0a84ff", matrix: "#a7ffb0", sunset: "#ff3b30" };
+
+function LookDot({ name, v }: { name: string; v: { color: number[]; rainbow: number } }) {
+  const ring = "inset 0 0 0 1px rgba(255,255,255,0.2)";
+  if (name === "minimal") {
+    return (
+      <span
+        aria-hidden
+        className="size-3.5 shrink-0 rounded-full"
+        style={{ boxShadow: ring, background: "linear-gradient(135deg, transparent 45%, rgba(255,255,255,0.45) 46%, rgba(255,255,255,0.45) 54%, transparent 55%)" }}
+      />
+    );
+  }
+  const base = `rgb(${v.color.join(",")})`;
+  const bg =
+    v.rainbow === 1
+      ? "conic-gradient(#ff3b30, #ffcc00, #30d158, #40c8e0, #0a84ff, #8b5cf6, #ff3b30)"
+      : `linear-gradient(135deg, ${base}, ${TINT[name] || "#8b5cf6"})`;
+  return <span aria-hidden className="size-3.5 shrink-0 rounded-full" style={{ background: bg, boxShadow: ring }} />;
+}
 
 export default function LightingScreen() {
   const effective = useAppStore(selectEffectiveState);
@@ -96,58 +117,6 @@ export default function LightingScreen() {
       <div className="flex min-w-0 flex-col gap-4">
       <Panel title="Effect">
         <EffectGallery value={underglow.effect} color={underglow.color} rainbow={underglow.rainbow} onSelect={(v) => stage({ underglowEffect: v })} />
-      </Panel>
-
-
-
-      </div>
-
-      <div className="flex min-w-0 flex-col gap-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
-      <Panel title="Looks">
-        <div className="flex flex-col gap-1">
-          {presets.map((preset) => {
-            const v = PRESET_VALUES[preset.name];
-            return (
-              <button
-                key={preset.name}
-                type="button"
-                title={preset.description}
-                onClick={() => {
-                  if (!v) return;
-                  stage({
-                    underglowEffect: v.effect,
-                    underglowBrightness: v.brightness,
-                    underglowSpeed: v.speed,
-                    underglowOrientation: v.orientation,
-                    underglowRainbow: v.rainbow,
-                    underglowColor: v.color,
-                    ledMode: v.ledMode,
-                    ledSaturation: v.ledSaturation,
-                    ledRainbow: v.ledRainbow,
-                    ledColor: v.ledColor,
-                  });
-                }}
-                className="flex h-9 items-center gap-2.5 rounded-[9px] border border-[var(--line)] bg-[var(--panel-2)] px-2.5 text-left transition-colors duration-150 hover:border-[var(--line-strong)]"
-              >
-                {v && (
-                  <span
-                    className="size-3 shrink-0 rounded-full border border-white/20"
-                    style={{ background: `rgb(${v.color.join(",")})` }}
-                    aria-hidden
-                  />
-                )}
-                <span className="min-w-0 flex-1 truncate text-[13px] font-medium capitalize text-[var(--text)]">
-                  {preset.name.replace(/-/g, " ")}
-                </span>
-                {v && (
-                  <span className="shrink-0 text-[11px] text-[var(--muted)]">
-                    {UNDERGLOW_EFFECTS.find((e) => e.value === v.effect)?.name}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
       </Panel>
 
       <Panel title="Brightness & speed">
@@ -256,6 +225,47 @@ export default function LightingScreen() {
         </div>
       </Panel>
 
+
+      </div>
+
+      <div className="flex min-w-0 flex-col gap-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
+      <Panel title="Looks">
+        <div className="grid grid-cols-2 gap-1.5">
+          {presets.map((preset) => {
+            const v = PRESET_VALUES[preset.name];
+            return (
+              <button
+                key={preset.name}
+                type="button"
+                title={preset.description}
+                onClick={() => {
+                  if (!v) return;
+                  stage({
+                    underglowEffect: v.effect,
+                    underglowBrightness: v.brightness,
+                    underglowSpeed: v.speed,
+                    underglowOrientation: v.orientation,
+                    underglowRainbow: v.rainbow,
+                    underglowColor: v.color,
+                    ledMode: v.ledMode,
+                    ledSaturation: v.ledSaturation,
+                    ledRainbow: v.ledRainbow,
+                    ledColor: v.ledColor,
+                  });
+                }}
+                className="flex h-9 items-center gap-2 rounded-[9px] border border-[var(--line)] bg-[var(--panel-2)] px-2 text-left transition-colors duration-150 hover:border-[var(--line-strong)]"
+              >
+                {v && (
+                  <LookDot name={preset.name} v={v} />
+                )}
+                <span className="min-w-0 flex-1 truncate text-[13px] font-medium capitalize text-[var(--text)]">
+                  {preset.name.replace(/-/g, " ")}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </Panel>
 
       <Panel title="Side light bar">
         <div className="flex flex-col gap-4">

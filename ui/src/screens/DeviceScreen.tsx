@@ -160,19 +160,15 @@ export default function DeviceScreen() {
         </div>
 
         {state && (
-          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-[12px] border border-[var(--line)] bg-[var(--panel-2)] p-3">
-            <span className="text-[var(--text)]">
-              {state.synced
-                ? "Settings written and acknowledged."
-                : "Nothing written yet."}
-            </span>
-          </div>
+          <p className="mt-3 text-[11px] text-[var(--muted)]">
+            {state.synced ? "Settings written and acknowledged." : "Nothing written yet."}
+          </p>
         )}
       </section>
 
-      <div className="flex flex-col gap-4">
+      <>
         <section
-          className="rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4"
+          className="h-full rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4"
           aria-labelledby="device-clock"
         >
           <h2
@@ -187,7 +183,7 @@ export default function DeviceScreen() {
             written time — the board cannot be read back.
           </p>
           <div className="mt-3 flex flex-wrap items-center gap-3">
-            <span className="font-mono text-lg text-[var(--text)]">
+            <span className="text-lg tabular-nums text-[var(--text)]">
               {state ? formatDeviceTime(state.time as DeviceTime) : "—"}
             </span>
             <Button onClick={() => void syncClock()} disabled={!state}>
@@ -196,7 +192,7 @@ export default function DeviceScreen() {
           </div>
         </section>
 
-        <section className="flex flex-1 flex-col gap-3 rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4">
+        <section className="flex flex-col gap-3 rounded-[18px] lg:col-span-2 border border-[var(--line)] bg-[var(--panel)] p-4">
           <h2 className="text-[13px] font-semibold tracking-[0.01em] text-[var(--text)]">Advanced</h2>
           <label className="flex items-center gap-2.5 text-[var(--muted)]">
             <Switch
@@ -222,7 +218,7 @@ export default function DeviceScreen() {
             Copy diagnostics
           </Button>
         </section>
-      </div>
+      </>
     </div>
   );
 }

@@ -273,7 +273,7 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
         const c = coords[i];
         const s = ledSample(lighting, c.x, c.y, i, timeMs);
         const rgb = `${Math.round(s.r)} ${Math.round(s.g)} ${Math.round(s.b)}`;
-        const intensity = s.intensity.toFixed(3);
+        const intensity = (lighting.effect !== 0 ? Math.max(s.intensity, 0.12) : s.intensity).toFixed(3);
         const key = `${rgb}|${intensity}`;
         if (lastKeyVars.current[i] !== key) {
           lastKeyVars.current[i] = key;
@@ -312,11 +312,12 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
       for (let i = 0; i < coords.length; i++) {
         const c = coords[i];
         const s = ledSample(lighting, c.x, c.y, i, timeMs);
-        if (s.intensity > 0) {
-          ar += s.r * s.intensity;
-          ag += s.g * s.intensity;
-          ab += s.b * s.intensity;
-          aw += s.intensity;
+        const inten = lighting.effect !== 0 ? Math.max(s.intensity, 0.12) : s.intensity;
+        if (inten > 0) {
+          ar += s.r * inten;
+          ag += s.g * inten;
+          ab += s.b * inten;
+          aw += inten;
         }
       }
       if (aw > 0) {
@@ -413,7 +414,7 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
             aria-hidden
             className="absolute inset-0"
             style={{
-              borderRadius: "2.5%",
+              borderRadius: "10px",
               backgroundImage: "linear-gradient(180deg, #22252c 0%, #101217 100%)",
               boxShadow:
                 "inset 0 1px 0 rgba(255,255,255,0.08), 0 34px 54px -18px rgba(0,0,0,0.8), 0 2px 0 rgba(255,255,255,0.02)",
@@ -425,9 +426,9 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
             aria-hidden
             className="pointer-events-none absolute inset-0"
             style={{
-              borderRadius: "2.5%",
+              borderRadius: "10px",
               boxShadow:
-                "inset 0 0 0 1px rgb(var(--rim, 139 92 246) / calc(var(--rimk, 0) * 0.55)), inset 0 0 8px rgb(var(--rim, 139 92 246) / calc(var(--rimk, 0) * 0.18))",
+                "inset 0 0 10px rgb(var(--rim, 139 92 246) / calc(var(--rimk, 0) * 0.22)), inset 0 1px 0 rgba(255,255,255,0.08)",
             }}
           />
 

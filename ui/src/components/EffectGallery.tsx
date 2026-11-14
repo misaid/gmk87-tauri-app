@@ -1,5 +1,5 @@
 import { useEffect, useState, type KeyboardEvent } from "react";
-import { Ban } from "lucide-react";
+import { Activity, ArrowRight, Ban, CircleDot, Lightbulb, Orbit, Rainbow, Radio, Sparkles, Waves, Wind, CloudRain, type LucideIcon } from "lucide-react";
 import { EFFECT_DESCRIPTIONS, UNDERGLOW_EFFECTS } from "@/lib/effects";
 import { ledGrid, type LedLighting } from "@/lib/ledField";
 
@@ -15,7 +15,13 @@ const THUMB_BASE: LedLighting = {
 const ROWS = 3;
 const COLS = 14;
 const GRID_COLS = 5;
-const UNLIT = "#2a3442";
+const UNLIT = "#1e2733";
+/** Per-family motion cue shown in each tile's corner. */
+const EFFECT_ICON: Record<number, LucideIcon> = {
+  1: ArrowRight, 2: Activity, 3: CloudRain, 4: Rainbow, 5: Activity, 6: Lightbulb, 7: Sparkles, 8: Radio,
+  9: ArrowRight, 10: Sparkles, 11: Rainbow, 12: Wind, 13: CircleDot, 14: Orbit, 15: CloudRain, 16: Waves,
+  17: Rainbow, 18: Rainbow,
+};
 /** Resting frame per effect, as a phase (speed 3 runs 1.25 cycles/s): lands on a visible peak. */
 const THUMB_PHASE: Record<number, number> = {
   1: 0.3, 2: 0.42, 3: 0.2, 5: 0.25, 7: 0.2, 8: 0.35, 9: 0.38, 10: 0.5,
@@ -74,7 +80,7 @@ function Thumb({
   return (
     <span aria-hidden className="flex flex-col gap-[2px]">
       {thumbGrid(effect, color, rainbow, t).map((row, i) => (
-        <span key={i} className="flex h-[6px] gap-px overflow-hidden rounded-[2px]">
+        <span key={i} className="flex h-[6px] gap-px overflow-hidden rounded-[2px]" style={{ filter: "saturate(1.35) brightness(1.3) contrast(1.15)" }}>
           {row.map((stop, j) => (
             <span
               key={j}
@@ -121,6 +127,7 @@ export function EffectGallery({
     <div role="radiogroup" aria-label="Underglow effect" className="grid grid-cols-2 gap-2 sm:grid-cols-5">
       {UNDERGLOW_EFFECTS.map((effect, i) => {
         const selected = effect.value === value;
+        const Icon = EFFECT_ICON[effect.value];
         return (
           <button
             key={effect.value}
@@ -161,8 +168,8 @@ export function EffectGallery({
             style={selected ? { borderColor: rgb, boxShadow: `0 0 14px -2px ${rgb}` } : undefined}
             className={
               selected
-                ? "flex min-h-[52px] flex-col justify-between gap-1.5 rounded-[10px] border-2 bg-[var(--panel-2)] p-2 text-left"
-                : "flex min-h-[52px] flex-col justify-between gap-1.5 rounded-[10px] border-2 border-[var(--line)] bg-[var(--panel-2)] p-2 text-left transition-colors duration-150 hover:border-[var(--line-strong)]"
+                ? "relative flex min-h-[52px] flex-col justify-between gap-1.5 rounded-[10px] border-2 bg-[var(--panel-2)] p-2 text-left"
+                : "relative flex min-h-[52px] flex-col justify-between gap-1.5 rounded-[10px] border-2 border-[var(--line)] bg-[var(--panel-2)] p-2 text-left transition-colors duration-150 hover:border-[var(--line-strong)]"
             }
           >
             <Thumb
@@ -172,7 +179,10 @@ export function EffectGallery({
               rainbow={rainbow}
               live={selected || hover === effect.value || focused === effect.value}
             />
-            <span className="text-[11px] font-medium leading-tight text-[var(--text)]">{effect.name}</span>
+            <span className="flex items-center justify-between gap-1">
+              <span className="text-[11px] font-medium leading-tight text-[var(--text)]">{effect.name}</span>
+              {Icon && effect.name !== "Off" && <Icon aria-hidden className="size-3 shrink-0 text-white/60" />}
+            </span>
           </button>
         );
       })}
