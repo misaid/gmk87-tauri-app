@@ -30,4 +30,18 @@ describe("SyncBar", () => {
     expect(useAppStore.getState().autoApply).toBe(false);
     expect(screen.getByRole("button", { name: /apply to keyboard/i })).toBeInTheDocument();
   });
+
+  it("offers the lighting preview modes in the options menu and applies the choice", async () => {
+    const { getLightingMode, resetLightingModeCache } = await import("@/lib/lightingPerf");
+    resetLightingModeCache();
+    render(<SyncBar />);
+    await userEvent.click(screen.getByRole("button", { name: "Sync options" }));
+    const group = screen.getByRole("radiogroup", { name: "Lighting preview" });
+    expect(group).toBeInTheDocument();
+    expect(screen.getAllByRole("radio").map((r) => r.textContent)).toEqual(["Auto", "GPU", "CPU", "Static"]);
+    await userEvent.click(screen.getByRole("radio", { name: "Static" }));
+    expect(getLightingMode()).toBe("static");
+    expect(screen.getByRole("radio", { name: "Static" })).toHaveAttribute("aria-checked", "true");
+    resetLightingModeCache();
+  });
 });

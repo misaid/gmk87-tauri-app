@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
 import { useReducedMotion } from "framer-motion";
 import {
   caseLayout,
@@ -15,7 +15,20 @@ import {
   type LabeledKey,
 } from "./keyboard";
 import { ambientFrom, ledBarSample } from "./lighting";
-import { capTint, keyIntensity, ledSample, type LedLighting } from "@/lib/ledField";
+import { CapOverlay } from "@/lib/capOverlay";
+import { SeamLayer, createGlow, type GlowRenderer } from "@/lib/glowRender";
+import { sampleFrame } from "@/lib/lightingFrame";
+import {
+  AdaptiveQuality,
+  FRAME_STRIDE,
+  chooseRenderer,
+  getLightingMode,
+  quantise,
+  rateGate,
+  subscribeLightingMode,
+  webgl2Available,
+} from "@/lib/lightingPerf";
+import { ledSample, type LedLighting } from "@/lib/ledField";
 import { cn } from "@/lib/utils";
 import { LightBarPopover, OPEN_LIGHT_BAR_EVENT } from "@/components/LightBarPopover";
 import { UNDERGLOW_EFFECTS } from "@/lib/effects";
@@ -25,6 +38,13 @@ import { OFFLINE_STATE, selectEffectiveState, useAppStore } from "@/store";
 const SPILL_X = 42;
 const SPILL_TOP = 30;
 const SPILL_BOTTOM = 64;
+/** The effect canvases cover the case plus the spill margins; explicit size so a high-DPI backing store is not shown at its pixel size. */
+const SPILL_BOX: CSSProperties = {
+  left: -SPILL_X,
+  top: -SPILL_TOP,
+  width: `calc(100% + ${SPILL_X * 2}px)`,
+  height: `calc(100% + ${SPILL_TOP + SPILL_BOTTOM}px)`,
+};
 /** How much vertical knob drag equals one brightness step. */
 const KNOB_STEP_PX = 18;
 
@@ -59,15 +79,14 @@ function Keycap({
   refSize,
   keyBox,
   interactive,
-  layer,
-  setKeyRef,
+  index,
+  register,
 }: {
   refSize: [number, number];
   keyBox: LabeledKey;
   interactive: boolean;
-  /** Glows paint in one layer under every cap, so no row's cap covers another's light. */
-  layer: "glow" | "cap";
-  setKeyRef: (el: HTMLDivElement | null) => void;
+  index: number;
+  register: (index: number, el: HTMLSpanElement | null) => void;
 }) {
   const rect = toPercentRect(refSize, keyBox.position, keyBox.size);
   const widthU = keyBox.size[0] / PITCH_U;
@@ -77,89 +96,22 @@ function Keycap({
     width: `${rect.width}%`,
     height: `${rect.height}%`,
   };
+  // Static white cap. The LED glow under it, the faint wash of LED colour on its lower
+  // third and the unlit-cap shading are painted per frame on the canvases around the caps.
   const capStyle: CSSProperties = {
     position: "relative",
     zIndex: 2,
     width: "100%",
     height: "100%",
-    // White cap; the lower third picks up a faint wash of the LED colour from underneath
-    // (alpha --t is capped at ~17% so the cap always reads white).
-    backgroundImage:
-      "linear-gradient(180deg, rgb(var(--c, 139 92 246) / 0) 55%, rgb(var(--c, 139 92 246) / var(--t, 0)) 100%), linear-gradient(180deg, #fbfbfc 0%, #eceef2 60%, #dcdfe6 100%)",
+    backgroundImage: "linear-gradient(180deg, #fbfbfc 0%, #eceef2 60%, #dcdfe6 100%)",
     // Corner radius from the key's own height, so wide keys (space, shift)
     // keep the same corners as a 1u key instead of turning into pills.
     borderRadius: `${(16 * (refSize[1] * rect.height)) / (refSize[0] * rect.width)}% / 16%`,
-    // Unlit caps sit a touch darker than lit ones, widening the board-wide contrast.
-    filter: "brightness(calc(0.9 + var(--i, 0) * 0.1))",
     boxShadow: "inset 0 1px 0 rgba(255,255,255,0.9), 0 0.1em 0.16em rgba(0,0,0,0.6)",
   };
 
-  if (layer === "glow") {
-    return (
-      <div ref={setKeyRef} aria-hidden className="pointer-events-none absolute [container-type:inline-size]" style={keyStyle}>
-        {/* Halo: light spills out of the cap's bottom edge, almost none from the top or sides */}
-        <div
-          className="absolute"
-          style={{
-            left: "-5%",
-            right: "-5%",
-            top: "-2%",
-            bottom: "-70%",
-            transform: "translateY(3px)",
-            background:
-              "radial-gradient(70% 62% at 50% 62%, rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 2)) 0%, rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 1.2)) 55%, rgb(var(--c, 139 92 246) / 0) 100%)",
-            filter: "blur(3px)",
-            mixBlendMode: "screen",
-          }}
-        />
-        {/* Light through the gap below the key, pooling on the black case */}
-        <div
-          className="absolute"
-          style={{
-            left: "-6%",
-            right: "-6%",
-            bottom: "-55%",
-            height: "80%",
-            background:
-              "radial-gradient(62% 70% at 50% 30%, rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 1.4)) 0%, rgb(var(--c, 139 92 246) / 0) 78%)",
-            filter: "blur(4px)",
-            mixBlendMode: "screen",
-          }}
-        />
-        {/* Row-gap bleed: a wide soft band under the cap */}
-        <div
-          className="absolute"
-          style={{
-            left: "-4%",
-            right: "-4%",
-            bottom: "-34%",
-            height: "34%",
-            background: "rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 0.9))",
-            filter: "blur(9px)",
-            mixBlendMode: "screen",
-          }}
-        />
-        {/* The LED seam: a crisp hot line right under the cap's bottom edge */}
-        <div
-          className="absolute"
-          style={{
-            left: "8%",
-            right: "8%",
-            bottom: "-12%",
-            height: "12%",
-            borderRadius: "50%",
-            background: "color-mix(in srgb, rgb(var(--c, 139 92 246)) 80%, white)",
-            opacity: "var(--i, 0)",
-            boxShadow: "0 1px 9px 3px rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 1))",
-          }}
-        />
-      </div>
-    );
-  }
-
   return (
     <div
-      ref={setKeyRef}
       aria-hidden
       className={cn(
         "absolute [container-type:inline-size]",
@@ -170,11 +122,12 @@ function Keycap({
       <div className={cn("flex items-center justify-center", interactive && "transition-transform duration-150")} style={capStyle}>
         {keyBox.label ? (
           <span
+            ref={(el) => register(index, el)}
             className="whitespace-nowrap font-semibold leading-none"
             style={{
               // Sized from the key's width in 1u so every legend shares one scale.
               fontSize: `clamp(3px, ${(keyBox.label.length <= 1 ? 29 : 25) / widthU}cqw, 20px)`,
-              color: "color-mix(in srgb, rgb(var(--c, 139 92 246)) calc(var(--t, 0) * 100%), #3a3f4b)",
+              color: "#3a3f4b",
               ...(widthU >= 1.5
                 ? { position: "absolute", left: `${20 / widthU}%`, top: `${18 / widthU}%`, textAlign: "left" }
                 : {}),
@@ -187,6 +140,8 @@ function Keycap({
     </div>
   );
 }
+
+const MemoKeycap = memo(Keycap);
 
 export function KeyboardPreview({ className, interactive = true, hero = false, overlay }: { className?: string; interactive?: boolean; hero?: boolean; overlay?: ReactNode }) {
   const effective = useAppStore(selectEffectiveState);
@@ -244,9 +199,23 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const caseRef = useRef<HTMLDivElement>(null);
-  const keyRefs = useRef<Array<HTMLDivElement | null>>([]);
-  const capRefs = useRef<Array<HTMLDivElement | null>>([]);
-  const lastKeyVars = useRef<string[]>([]);
+  const glowRef = useRef<HTMLCanvasElement>(null);
+  const overlayRef = useRef<HTMLCanvasElement>(null);
+  const seamRef = useRef<HTMLCanvasElement>(null);
+  const rimRef = useRef<HTMLDivElement>(null);
+  const mode = useSyncExternalStore(subscribeLightingMode, getLightingMode);
+  const glAvailable = useMemo(() => webgl2Available(), []);
+  const [glFailed, setGlFailed] = useState(false);
+  const renderer = chooseRenderer(mode, glAvailable && !glFailed);
+  const glowKind: "gl" | "2d" = renderer === "gl" ? "gl" : "2d";
+  const activeTabNow = useAppStore((s) => s.activeTab);
+  const live = useRef({ lighting, led, activeTab: activeTabNow, still: motionPaused || renderer === "static" });
+  live.current = { lighting, led, activeTab: activeTabNow, still: motionPaused || renderer === "static" };
+  const wake = useRef<() => void>(() => {});
+  const legends = useRef<Array<HTMLSpanElement | null>>([]);
+  const registerLegend = useRef((i: number, el: HTMLSpanElement | null) => {
+    legends.current[i] = el;
+  }).current;
 
   const nudgeBrightness = (delta: number) => {
     if (!interactive) return;
@@ -261,71 +230,92 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
 
   useEffect(() => {
     const canvas = canvasRef.current;
+    const glowCanvas = glowRef.current;
+    const overlayCanvas = overlayRef.current;
+    const seamCanvas = seamRef.current;
     const caseEl = caseRef.current;
-    if (!canvas || !caseEl) return;
+    if (!canvas || !glowCanvas || !overlayCanvas || !seamCanvas || !caseEl) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    let caseW = 0;
-    let caseH = 0;
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-
-    const resize = () => {
-      const rect = caseEl.getBoundingClientRect();
-      caseW = rect.width;
-      caseH = rect.height;
-      canvas.width = Math.max(1, Math.round((caseW + SPILL_X * 2) * dpr));
-      canvas.height = Math.max(1, Math.round((caseH + SPILL_TOP + SPILL_BOTTOM) * dpr));
-    };
-    resize();
-    let ro: ResizeObserver | undefined;
-    if (typeof ResizeObserver !== "undefined") {
-      ro = new ResizeObserver(resize);
-      ro.observe(caseEl);
+    let glow: GlowRenderer;
+    let overlay: CapOverlay;
+    let seam: SeamLayer;
+    try {
+      glow = createGlow(glowKind, glowCanvas, () => setGlFailed(true));
+      overlay = new CapOverlay(overlayCanvas);
+      seam = new SeamLayer(seamCanvas);
+    } catch {
+      // WebGL2 refused to start on this canvas: remount it as a 2D canvas.
+      setGlFailed(true);
+      return;
     }
 
-    const draw = (timeMs: number) => {
+    const frame = new Float32Array(coords.length * FRAME_STRIDE);
+    const keyRects = keys.map((k) => toPercentRect(board.size, k.position, k.size));
+    let caseW = 0;
+    let caseH = 0;
+    let spillScale = 1;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+
+    const layout = () => {
+      const rect = caseEl.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      caseW = rect.width;
+      caseH = rect.height;
+      const cssW = caseW + SPILL_X * 2;
+      const cssH = caseH + SPILL_TOP + SPILL_BOTTOM;
+      spillScale = 1;
+      canvas.width = Math.max(1, Math.round(cssW * spillScale));
+      canvas.height = Math.max(1, Math.round(cssH * spillScale));
+      const rects = keyRects.map((r) => ({
+        x: SPILL_X + (r.left / 100) * caseW,
+        y: SPILL_TOP + (r.top / 100) * caseH,
+        w: (r.width / 100) * caseW,
+        h: (r.height / 100) * caseH,
+      }));
+      glow.resize(cssW, cssH, rects, Math.min(dpr, 1.5));
+      overlay.resize(cssW, cssH, rects, dpr);
+      seam.resize(cssW, cssH, rects, Math.min(dpr, 1.5));
+    };
+    layout();
+
+    const gateAmbient = rateGate(10);
+    const lastVars = { ambient: "", rim: "", bar: "" };
+    const lastLegend: string[] = [];
+
+    const draw = (t: number) => {
+      const { lighting: l, led: ledNow } = live.current;
+      const timeMs = t;
       const bar = barRef.current;
       if (bar) {
-        const s = ledBarSample(led, timeMs);
-        bar.style.setProperty("--lc", `${s.r} ${s.g} ${s.b}`);
-        bar.style.setProperty("--la", s.a.toFixed(3));
-      }
-      const w = canvas.width;
-      const h = canvas.height;
-      const cw = caseW * dpr;
-      const ch = caseH * dpr;
-      ctx.clearRect(0, 0, w, h);
-      if (cw <= 0 || ch <= 0) return;
-
-      const originX = SPILL_X * dpr;
-      const originY = SPILL_TOP * dpr;
-
-      // Per-key CSS lighting: colour/intensity from ledSample(), written only when changed.
-      for (let i = 0; i < coords.length; i++) {
-        const c = coords[i];
-        const s = ledSample(lighting, c.x, c.y, i, timeMs);
-        const rgb = `${Math.round(s.r)} ${Math.round(s.g)} ${Math.round(s.b)}`;
-        const intensity = keyIntensity(lighting, s.intensity).toFixed(3);
-        const tint = capTint(Number(intensity)).toFixed(3);
-        const key = `${rgb}|${intensity}`;
-        if (lastKeyVars.current[i] !== key) {
-          lastKeyVars.current[i] = key;
-          for (const el of [keyRefs.current[i], capRefs.current[i]]) {
-            if (!el) continue;
-            el.style.setProperty("--c", rgb);
-            el.style.setProperty("--i", intensity);
-            el.style.setProperty("--t", tint);
-          }
+        const s = ledBarSample(ledNow, timeMs);
+        const v = `${s.r} ${s.g} ${s.b}|${s.a.toFixed(2)}`;
+        if (v !== lastVars.bar) {
+          lastVars.bar = v;
+          bar.style.setProperty("--lc", `${s.r} ${s.g} ${s.b}`);
+          bar.style.setProperty("--la", s.a.toFixed(3));
         }
       }
+      if (caseW <= 0 || caseH <= 0) return;
+
+      // One LED sample per key per frame feeds the glow, cap tint, spill, rim and ambient light.
+      const avg = sampleFrame(l, coords, timeMs, frame);
+      glow.draw(frame);
+      seam.draw(frame);
+      overlay.draw(frame);
 
       // Outside-the-case spill: a soft animated band below and around the case.
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.globalCompositeOperation = "lighter";
-      const spillY = originY + ch + 6 * dpr;
+      const cw = caseW * spillScale;
+      const ch = caseH * spillScale;
+      const originX = SPILL_X * spillScale;
+      const originY = SPILL_TOP * spillScale;
+      const spillY = originY + ch + 6 * spillScale;
       for (let i = 0; i < 8; i++) {
         const fx = (i + 0.5) / 8;
-        const s = ledSample(lighting, fx, 0.98, i * 11, timeMs);
+        const s = ledSample(l, fx, 0.98, i * 11, timeMs);
         if (s.intensity <= 0.004) continue;
         const cx = originX + fx * cw;
         const r = cw * 0.09;
@@ -342,37 +332,16 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
         ctx.restore();
       }
 
-      caseEl.style.setProperty("--rimk", "0");
-      let ar = 0, ag = 0, ab = 0, aw = 0;
-      for (let i = 0; i < coords.length; i++) {
-        const c = coords[i];
-        const s = ledSample(lighting, c.x, c.y, i, timeMs);
-        const inten = keyIntensity(lighting, s.intensity);
-        if (inten > 0) {
-          ar += s.r * inten;
-          ag += s.g * inten;
-          ab += s.b * inten;
-          aw += inten;
-        }
-      }
-      const root = document.documentElement.style;
-      if (aw <= 0) {
-        const a = ambientFrom(null, 0);
-        root.setProperty("--board-rgb", a.rgb);
-        root.setProperty("--board-k", a.k);
-      }
-      if (aw > 0) {
-        const avgR = Math.round(ar / aw);
-        const avgG = Math.round(ag / aw);
-        const avgB = Math.round(ab / aw);
+      let rimVal = "139 92 246|0";
+      let ambient = ambientFrom(null, 0);
+      if (avg.weight > 0) {
+        const avgR = Math.round(avg.r);
+        const avgG = Math.round(avg.g);
+        const avgB = Math.round(avg.b);
         // Live average brightness drives the rim and the case spill.
-        const k = Math.min(1, aw / coords.length);
-        caseEl.style.setProperty("--rim", `${avgR} ${avgG} ${avgB}`);
-        caseEl.style.setProperty("--rimk", String(Math.min(1, k * 1.8)));
-        // Ambient page colour: only touches the DOM when the quantised value changes.
-        const a = ambientFrom({ r: avgR, g: avgG, b: avgB }, Math.min(1, k * 1.6));
-        if (root.getPropertyValue("--board-rgb") !== a.rgb) root.setProperty("--board-rgb", a.rgb);
-        if (root.getPropertyValue("--board-k") !== a.k) root.setProperty("--board-k", a.k);
+        const k = Math.min(1, avg.weight / coords.length);
+        rimVal = `${quantise(avgR, 4)} ${quantise(avgG, 4)} ${quantise(avgB, 4)}|${(Math.round(Math.min(1, k * 1.8) * 40) / 40).toFixed(3)}`;
+        ambient = ambientFrom({ r: avgR, g: avgG, b: avgB }, Math.min(1, k * 1.6));
         const r = cw * 0.55;
         ctx.save();
         ctx.translate(originX + cw / 2, spillY);
@@ -387,28 +356,130 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
         ctx.restore();
       }
       ctx.globalCompositeOperation = "source-over";
+
+      // Style writes are the expensive part of a frame: only when the quantised value changes,
+      // at most 10 times a second, and on leaf elements so the key subtree is not invalidated.
+      if (gateAmbient(t)) {
+        // Legends pick up the LED colour (up to 17%) like the cap's wash; leaf `color` writes, only on change.
+        for (let k = 0; k < coords.length; k++) {
+          const el = legends.current[k];
+          if (!el) continue;
+          const o = k * FRAME_STRIDE;
+          const tt = frame[o + 4];
+          const mix = (c: number, base: number) => Math.round((base + (c - base) * tt) / 4) * 4;
+          const col = tt > 0.002 ? `rgb(${mix(frame[o], 58)},${mix(frame[o + 1], 63)},${mix(frame[o + 2], 75)})` : "rgb(58,63,75)";
+          if (lastLegend[k] !== col) {
+            lastLegend[k] = col;
+            el.style.color = col;
+          }
+        }
+        const rimEl = rimRef.current;
+        if (rimEl && rimVal !== lastVars.rim) {
+          lastVars.rim = rimVal;
+          const [rgb, kk] = rimVal.split("|");
+          rimEl.style.setProperty("--rim", rgb);
+          rimEl.style.setProperty("--rimk", kk);
+        }
+        const amb = `${ambient.rgb}|${ambient.k}`;
+        if (amb !== lastVars.ambient) {
+          lastVars.ambient = amb;
+          const root = document.documentElement.style;
+          root.setProperty("--board-rgb", ambient.rgb);
+          root.setProperty("--board-k", ambient.k);
+        }
+      }
     };
 
+    // Pacing: adaptive fps tier, sleeping when nobody can see the board.
+    const quality = new AdaptiveQuality();
     let raf = 0;
-    let last = 0;
+    let lastDraw = -Infinity;
     let disposed = false;
+    let onScreen = true;
+    const awake = () => !document.hidden && document.hasFocus() && onScreen;
+    const targetFps = () => {
+      const { activeTab: tab, still } = live.current;
+      if (still) return 0;
+      return tab === "lighting" ? quality.fps : 1;
+    };
     const loop = (t: number) => {
-      if (disposed) return;
-      if (!document.hidden && t - last >= 33) {
-        last = t;
-        draw(t);
+      raf = 0;
+      if (disposed || !awake()) return;
+      const fps = targetFps();
+      if (fps > 0) {
+        const interval = 1000 / fps;
+        if (t - lastDraw >= interval - 3) {
+          const t0 = performance.now();
+          draw(t);
+          const cost = performance.now() - t0;
+          // A late frame means the page (style, raster) is struggling even if our own JS is cheap.
+          const late = lastDraw === -Infinity ? 0 : Math.max(0, t - lastDraw - interval * 1.5);
+          lastDraw = t;
+          if (live.current.activeTab === "lighting") quality.push(cost + late);
+        }
+        raf = requestAnimationFrame(loop);
       }
+    };
+    const start = () => {
+      if (disposed || raf || !awake()) return;
       raf = requestAnimationFrame(loop);
     };
-    // Static frame for reduced motion / paused animations.
-    draw(0);
-    if (!motionPaused) raf = requestAnimationFrame(loop);
+    // Redraw now (state changed or the window came back), then keep animating if allowed.
+    const redraw = () => {
+      if (disposed) return;
+      draw(performance.now());
+      lastDraw = -Infinity;
+      start();
+    };
+    wake.current = redraw;
+    redraw();
+
+    const onVis = () => (awake() ? redraw() : undefined);
+    // Focus can change without an event (embedded webviews), so a slow watchdog restarts a sleeping loop.
+    const watchdog = window.setInterval(() => {
+      if (!raf && !disposed && awake() && targetFps() > 0) redraw();
+    }, 1000);
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("focus", onVis);
+    let io: IntersectionObserver | undefined;
+    if (typeof IntersectionObserver !== "undefined") {
+      io = new IntersectionObserver((entries) => {
+        const was = onScreen;
+        onScreen = entries[entries.length - 1]?.isIntersecting ?? true;
+        if (onScreen && !was) redraw();
+      });
+      io.observe(caseEl);
+    }
+    let resizeTimer = 0;
+    let ro: ResizeObserver | undefined;
+    if (typeof ResizeObserver !== "undefined") {
+      ro = new ResizeObserver(() => {
+        window.clearTimeout(resizeTimer);
+        resizeTimer = window.setTimeout(() => {
+          layout();
+          redraw();
+        }, 120);
+      });
+      ro.observe(caseEl);
+    }
     return () => {
       disposed = true;
       cancelAnimationFrame(raf);
+      window.clearTimeout(resizeTimer);
+      window.clearInterval(watchdog);
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("focus", onVis);
+      io?.disconnect();
       ro?.disconnect();
+      glow.dispose();
+      wake.current = () => {};
     };
-  }, [lighting, led, coords, motionPaused]);
+  }, [coords, keys, board, glowKind]);
+
+  // Lighting edits and screen changes repaint immediately without rebuilding any renderer.
+  useEffect(() => {
+    wake.current();
+  }, [lighting, led, activeTabNow, motionPaused, renderer]);
 
   const recessRect = toPercentRect(board.size, recess.position, recess.size);
   const plateRect = toPercentRect(board.size, plate.position, plate.size);
@@ -473,6 +544,7 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
 
           {/* Rim glow: 1px inner edge in the average LED colour */}
           <div
+            ref={rimRef}
             aria-hidden
             className="pointer-events-none absolute inset-0"
             style={{
@@ -512,39 +584,44 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
             }}
           />
 
-          {/* Outside-the-case underglow spill (per-key lighting lives on each key). */}
+          {/* Outside-the-case underglow spill. */}
           <canvas
             ref={canvasRef}
             aria-hidden
             className="pointer-events-none absolute"
-            style={{ left: -SPILL_X, right: -SPILL_X, top: -SPILL_TOP, bottom: -SPILL_BOTTOM }}
+            style={{ ...SPILL_BOX }}
           />
 
-          {/* Keycaps with per-key LED pool + seam + opaque cap */}
+          {/* Light under every cap: halo, gap light, row bleed and seam, one canvas for all keys */}
+          <canvas
+            key={`glow-${glowKind}`}
+            ref={glowRef}
+            aria-hidden
+            data-renderer={glowKind}
+            className="pointer-events-none absolute"
+            style={{ ...SPILL_BOX, mixBlendMode: "screen" }}
+          />
+
+          {/* The hot seam line under each cap (blended normally, not screened) */}
+          <canvas
+            ref={seamRef}
+            aria-hidden
+            className="pointer-events-none absolute"
+            style={{ ...SPILL_BOX }}
+          />
+
+          {/* Static keycaps */}
           {keys.map((key, index) => (
-            <Keycap
-              key={`glow-${index}`}
-              layer="glow"
-              refSize={board.size}
-              keyBox={key}
-              interactive={false}
-              setKeyRef={(el) => {
-                keyRefs.current[index] = el;
-              }}
-            />
+            <MemoKeycap key={`cap-${index}`} refSize={board.size} keyBox={key} interactive={interactive} index={index} register={registerLegend} />
           ))}
-          {keys.map((key, index) => (
-            <Keycap
-              key={`cap-${index}`}
-              layer="cap"
-              refSize={board.size}
-              keyBox={key}
-              interactive={interactive}
-              setKeyRef={(el) => {
-                capRefs.current[index] = el;
-              }}
-            />
-          ))}
+
+          {/* Cap-level light: the faint wash of LED colour and the unlit-cap shading */}
+          <canvas
+            ref={overlayRef}
+            aria-hidden
+            className="pointer-events-none absolute"
+            style={{ ...SPILL_BOX, zIndex: 3 }}
+          />
 
           {/* Black module panel */}
           <div

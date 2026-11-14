@@ -297,6 +297,7 @@ export function brightnessLabel(v: number): string {
 /** Quantised ambient board colour (r g b, strength 0..1) so CSS vars only change on visible steps. */
 export function ambientFrom(avg: { r: number; g: number; b: number } | null, k: number): { rgb: string; k: string } {
   if (!avg) return { rgb: "120 130 160", k: "0" };
-  const q = (v: number) => Math.max(0, Math.min(255, Math.round(v / 6) * 6));
+  // 4 bits per channel: the page colour only changes in visible steps, so it is rarely rewritten.
+  const q = (v: number) => Math.max(0, Math.min(255, Math.round(v / 17) * 17));
   return { rgb: `${q(avg.r)} ${q(avg.g)} ${q(avg.b)}`, k: (Math.round(Math.max(0, Math.min(1, k)) * 20) / 20).toFixed(2) };
 }

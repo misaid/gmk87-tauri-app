@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Check, CloudOff, Ellipsis, Loader2, Redo2, TriangleAlert, Undo2 } from "lucide-react";
 import { diffSummary, deriveSyncStatus, formatClock } from "@/lib/lightingSync";
+import { LIGHTING_MODES, LIGHTING_MODE_LABEL, getLightingMode, setLightingMode, subscribeLightingMode } from "@/lib/lightingPerf";
 import { OFFLINE_STATE, useAppStore } from "@/store";
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform ?? "");
@@ -30,6 +31,7 @@ export function SyncBar() {
   const redo = useAppStore((s) => s.redo);
 
   const [menuOpen, setMenuOpen] = useState(false);
+  const previewMode = useSyncExternalStore(subscribeLightingMode, getLightingMode);
   const menuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!menuOpen) return;
@@ -118,6 +120,24 @@ export function SyncBar() {
                   <span className="block text-[11px] leading-snug text-[var(--muted)]">Hold edits until Apply.</span>
                 </span>
               </label>
+              <div className="mt-3 border-t border-white/10 pt-3" role="radiogroup" aria-label="Lighting preview">
+                <span className="block font-medium text-[var(--text)]">Lighting preview</span>
+                <span className="mb-2 block text-[11px] leading-snug text-[var(--muted)]">How the board animates here. Static is easiest on the machine.</span>
+                <div className="grid grid-cols-4 gap-1">
+                  {LIGHTING_MODES.map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      role="radio"
+                      aria-checked={previewMode === m}
+                      onClick={() => setLightingMode(m)}
+                      className={`h-7 rounded-md text-[11px] font-medium transition-colors ${previewMode === m ? "bg-white text-[#0b0d12]" : "bg-white/[0.06] text-[var(--muted)] hover:bg-white/[0.1] hover:text-[var(--text)]"}`}
+                    >
+                      {LIGHTING_MODE_LABEL[m]}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           )}
         </div>

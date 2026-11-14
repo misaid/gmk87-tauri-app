@@ -216,7 +216,7 @@ export default function App() {
             <div className="relative mx-auto grid w-full max-w-[1560px] gap-4 px-6 pb-5 pt-5 min-[1200px]:grid-cols-[minmax(0,1fr)_480px] min-[1200px]:items-start min-[1200px]:gap-6">
               <section aria-label="Keyboard preview" className="flex min-w-0 flex-col gap-3 min-[1200px]:sticky min-[1200px]:top-[76px] min-[1200px]:min-h-[calc(100vh-92px)] min-[1200px]:justify-center">
                 <KeyboardPreview className="w-full" hero />
-                <div className="mx-auto w-full rounded-[14px] border border-white/10 bg-[rgba(12,14,20,0.6)] px-4 py-2.5 backdrop-blur-xl" style={{ maxWidth: heroBoardWidth() }}>
+                <div className="relative z-20 mx-auto w-full rounded-[14px] border border-white/10 bg-[rgba(12,14,20,0.6)] px-4 py-2.5 backdrop-blur-xl" style={{ maxWidth: heroBoardWidth() }}>
                   <SyncBar />
                 </div>
                 <p className="mx-auto hidden text-center text-[12px] text-[var(--muted)] min-[1200px]:block" style={{ maxWidth: heroBoardWidth() }}>
