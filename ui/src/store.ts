@@ -2,9 +2,11 @@ import { create } from "zustand";
 import * as ipc from "./lib/ipc";
 import { DEFAULT_CROP, type CropParams } from "./lib/crop";
 import { MAX_TOTAL_FRAMES } from "./lib/budget";
+import type { Profile } from "./lib/profiles";
 
 /** Orders async preview renders so a slow, stale one cannot overwrite a newer. */
 let previewSequence = 0;
+let lastDraftPush = 0;
 
 export type Slot = "slot0" | "slot1";
 
@@ -58,6 +60,8 @@ export interface DisplayHistoryEntry {
 
 const LS_DRAFT = "gmk87.draft.v1";
 const LS_HISTORY = "gmk87.lightingHistory.v1";
+const LS_AUTO = "gmk87.autoApply.v1";
+const LS_ACTIVE_PROFILE = "gmk87.activeProfile.v1";
 const LS_ONBOARDED = "gmk87.onboarded.v1";
 
 function loadJSON<T>(key: string, fallback: T): T {
@@ -165,6 +169,24 @@ interface AppStore {
   /** Transient hover/focus preview of an underglow effect on the hero board. Never written to the device. */
   previewEffect: number | null;
   setPreviewEffect: (effect: number | null) => void;
+  /** Staged (draft) undo/redo: states before/after each edit; null = no draft. */
+  draftPast: Array<ipc.DeviceState | null>;
+  draftFuture: ipc.DeviceState[];
+  /** Applied-write redo stack (states undone from the board). */
+  redoStack: LightingHistoryEntry[];
+  /** A write to the board is in flight. */
+  applying: boolean;
+  /** The last write attempt of the current draft failed. */
+  applyFailed: boolean;
+  /** Write staged edits automatically shortly after the last edit (off by default: Apply is explicit). */
+  autoApply: boolean;
+  setAutoApply: (v: boolean) => void;
+  presetsLoaded: boolean;
+  activeProfileId: string | null;
+  stageProfile: (profile: Profile) => void;
+  undo: () => Promise<void>;
+  redo: () => Promise<void>;
+  rereadState: () => Promise<void>;
   /** Write-confirm modal open (draft commit is destructive — needs a diff). */
   showWriteConfirm: boolean;
 
@@ -313,6 +335,80 @@ export const useAppStore = create<AppStore>((set, get) => {
     previewEffect: null,
     setPreviewEffect: (effect) => set({ previewEffect: effect }),
     showWriteConfirm: false,
+    draftPast: [],
+    draftFuture: [],
+    redoStack: [],
+    applying: false,
+    applyFailed: false,
+    autoApply: loadJSON<boolean>(LS_AUTO, false) === true,
+    setAutoApply: (v) => {
+      saveJSON(LS_AUTO, v);
+      set({ autoApply: v });
+    },
+    presetsLoaded: false,
+    activeProfileId: loadJSON<string | null>(LS_ACTIVE_PROFILE, null),
+    stageProfile: (profile) => {
+      get().setLightingDraft({
+        underglowEffect: profile.lighting.underglow.effect,
+        underglowBrightness: profile.lighting.underglow.brightness,
+        underglowSpeed: profile.lighting.underglow.speed,
+        underglowOrientation: profile.lighting.underglow.orientation,
+        underglowRainbow: profile.lighting.underglow.rainbow,
+        underglowColor: profile.lighting.underglow.color,
+        ledMode: profile.lighting.led.mode,
+        ledSaturation: profile.lighting.led.saturation,
+        ledRainbow: profile.lighting.led.rainbow,
+        ledColor: profile.lighting.led.color,
+        winLock: profile.lighting.winLock,
+      });
+      saveJSON(LS_ACTIVE_PROFILE, profile.id);
+      set({ activeProfileId: profile.id });
+    },
+    undo: async () => {
+      const { draft, draftPast, draftFuture } = get();
+      if (draft) {
+        const prev = draftPast.length ? draftPast[draftPast.length - 1] : null;
+        const { state } = get();
+        const dirty = prev ? (state ? JSON.stringify(patchFromState(prev)) !== JSON.stringify(patchFromState(state)) : true) : false;
+        set({ draft: prev, draftDirty: dirty, draftPast: draftPast.slice(0, -1), draftFuture: [...draftFuture, draft], applyFailed: false });
+        if (prev) saveJSON(LS_DRAFT, prev);
+        else clearKey(LS_DRAFT);
+        return;
+      }
+      await get().undoLighting();
+    },
+    redo: async () => {
+      const { draft, draftPast, draftFuture, redoStack, state } = get();
+      if (draftFuture.length) {
+        const next = draftFuture[draftFuture.length - 1];
+        const dirty = state ? JSON.stringify(patchFromState(next)) !== JSON.stringify(patchFromState(state)) : true;
+        set({ draft: next, draftDirty: dirty, draftFuture: draftFuture.slice(0, -1), draftPast: [...draftPast, draft] });
+        saveJSON(LS_DRAFT, next);
+        return;
+      }
+      const entry = redoStack.at(-1);
+      if (!entry) return;
+      set({ applying: true });
+      try {
+        const next = await ipc.setLighting(patchFromState(entry.state));
+        const history = state ? [...get().lightingHistory.slice(-19), { state, at: Date.now(), label: "before redo" }] : get().lightingHistory;
+        saveJSON(LS_HISTORY, history);
+        set({ state: next, draft: null, draftDirty: false, lightingHistory: history, redoStack: redoStack.slice(0, -1), lastSyncedAt: Date.now(), error: null, errorKind: null, notice: "Lighting redone ✓" });
+        clearKey(LS_DRAFT);
+      } catch (error) {
+        set({ error: message(error), errorKind: kindOf(error) });
+      } finally {
+        set({ applying: false });
+      }
+    },
+    rereadState: async () => {
+      try {
+        const state = await ipc.readState();
+        set({ state, connected: state.connected, error: null, errorKind: null, notice: "Board state re-read ✓" });
+      } catch (error) {
+        set({ error: message(error), errorKind: kindOf(error) });
+      }
+    },
 
     refreshDevices: async () => {
       try {
@@ -494,7 +590,7 @@ export const useAppStore = create<AppStore>((set, get) => {
         const next = await ipc.setLighting(patch);
         const history = prev ? [...get().lightingHistory.slice(-19), { state: prev, at: Date.now(), label: "before write" }] : get().lightingHistory;
         saveJSON(LS_HISTORY, history);
-        set({ state: next, error: null, errorKind: null, draft: null, draftDirty: false, lightingHistory: history, lastSyncedAt: Date.now() });
+        set({ state: next, error: null, errorKind: null, draft: null, draftDirty: false, lightingHistory: history, lastSyncedAt: Date.now(), redoStack: [] });
         clearKey(LS_DRAFT);
       } catch (error) {
         set({ error: message(error), errorKind: kindOf(error) });
@@ -514,9 +610,9 @@ export const useAppStore = create<AppStore>((set, get) => {
     },
     loadPresets: async () => {
       try {
-        set({ presets: await ipc.listPresets() });
+        set({ presets: await ipc.listPresets(), presetsLoaded: true });
       } catch (error) {
-        set({ error: message(error), errorKind: kindOf(error) });
+        set({ error: message(error), errorKind: kindOf(error), presetsLoaded: true });
       }
     },
     syncClock: async () => {
@@ -535,30 +631,44 @@ export const useAppStore = create<AppStore>((set, get) => {
       const dirty = state
         ? JSON.stringify(patchFromState(next)) !== JSON.stringify(patchFromState(state))
         : true;
-      set({ draft: next, draftDirty: dirty, lastDiscardedDraft: null });
+      // Coalesce rapid edits (slider drags) into one undo step.
+      const now = Date.now();
+      const coalesce = get().draft !== null && now - lastDraftPush < 500;
+      lastDraftPush = now;
+      set({
+        draft: next,
+        draftDirty: dirty,
+        lastDiscardedDraft: null,
+        draftFuture: [],
+        applyFailed: false,
+        draftPast: coalesce ? get().draftPast : [...get().draftPast.slice(-29), get().draft],
+      });
       saveJSON(LS_DRAFT, next);
     },
 
     commitDraft: async () => {
       const { draft, state: prev } = get();
       if (!draft) return;
+      set({ applying: true });
       try {
         const next = await ipc.setLighting(patchFromState(draft));
         const history = prev
           ? [...get().lightingHistory.slice(-19), { state: prev, at: Date.now(), label: "before draft write" }]
           : get().lightingHistory;
         saveJSON(LS_HISTORY, history);
-        set({ state: next, draft: null, draftDirty: false, lightingHistory: history, lastSyncedAt: Date.now(), error: null, errorKind: null, notice: "Lighting written ✓" });
+        set({ state: next, draft: null, draftDirty: false, lightingHistory: history, lastSyncedAt: Date.now(), error: null, errorKind: null, notice: "Lighting written ✓", redoStack: [], draftPast: [], draftFuture: [], applyFailed: false });
         clearKey(LS_DRAFT);
       } catch (error) {
-        set({ error: message(error), errorKind: kindOf(error) });
+        set({ error: message(error), errorKind: kindOf(error), applyFailed: true });
+      } finally {
+        set({ applying: false });
       }
     },
 
     discardDraft: () => {
       const { draft } = get();
       if (!draft) return;
-      set({ draft: null, draftDirty: false, lastDiscardedDraft: draft, notice: "Draft discarded — Undo is in the Lighting bar." });
+      set({ draft: null, draftDirty: false, draftPast: [], draftFuture: [], applyFailed: false, lastDiscardedDraft: draft, notice: "Draft discarded — Undo is in the Lighting bar." });
       clearKey(LS_DRAFT);
     },
 
@@ -582,7 +692,8 @@ export const useAppStore = create<AppStore>((set, get) => {
         const next = await ipc.setLighting(patchFromState(prev as ipc.DeviceState));
         const rest = history.slice(0, -1);
         saveJSON(LS_HISTORY, rest);
-        set({ state: next, draft: null, draftDirty: false, lightingHistory: rest, lastSyncedAt: Date.now(), error: null, errorKind: null, notice: "Lighting undone ✓" });
+        const undone = get().state;
+        set({ redoStack: undone ? [...get().redoStack.slice(-19), { state: undone, at: Date.now(), label: "undone" }] : get().redoStack, state: next, draft: null, draftDirty: false, lightingHistory: rest, lastSyncedAt: Date.now(), error: null, errorKind: null, notice: "Lighting undone ✓" });
         clearKey(LS_DRAFT);
       } catch (error) {
         set({ error: message(error), errorKind: kindOf(error) });

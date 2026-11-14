@@ -18,6 +18,7 @@ import { ambientFrom, ledBarSample } from "./lighting";
 import { ledSample, type LedLighting } from "@/lib/ledField";
 import { cn } from "@/lib/utils";
 import { LightBarPopover, OPEN_LIGHT_BAR_EVENT } from "@/components/LightBarPopover";
+import { UNDERGLOW_EFFECTS } from "@/lib/effects";
 import { OFFLINE_STATE, selectEffectiveState, useAppStore } from "@/store";
 
 /** Canvas spill margins around the case: the underglow lives outside it too. */
@@ -404,7 +405,7 @@ export function KeyboardPreview({ className, interactive = true, hero = false }:
   const dragStart = useRef<number | null>(null);
   const dragStage = useRef(0);
 
-  const showPreview = Boolean(effective && effective.show !== 0 && previewUrl);
+  const showPreview = Boolean(previewUrl);
   const clock = effective ? effective.time : OFFLINE_STATE.time;
   const clockLabel = `${String(clock[4]).padStart(2, "0")}:${String(clock[5]).padStart(2, "0")}`;
   const dateLabel = `${new Date(clock[0], Math.max(0, clock[1] - 1), clock[2]).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}`;
@@ -723,6 +724,14 @@ export function KeyboardPreview({ className, interactive = true, hero = false }:
 
       {barOpen && <LightBarPopover anchor={barBtnRef} onClose={() => setBarOpen(false)} />}
 
+      {previewEffect !== null && previewEffect !== (effective ?? OFFLINE_STATE).underglow.effect && (
+        <span
+          role="status"
+          className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 whitespace-nowrap rounded-full border border-white/20 bg-black/65 px-3 py-1 text-[11px] font-medium text-white backdrop-blur"
+        >
+          Previewing {UNDERGLOW_EFFECTS.find((e) => e.value === previewEffect)?.name ?? "effect"} — click to stage
+        </span>
+      )}
       {draftDirty && (
         <span className="absolute bottom-3 left-4 rounded-full border border-[var(--accent)]/40 bg-[var(--accent)]/15 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#c4b5fd]">
           Draft — not on board

@@ -44,7 +44,7 @@ export default function DeviceScreen() {
     return () => window.clearTimeout(t);
   }, [confirmDisconnect]);
 
-  const board = devices[0];
+  const rereadState = useAppStore((st) => st.rereadState);
 
   return (
     <div className="grid gap-4 text-[13px] lg:grid-cols-2 lg:items-start">
@@ -70,6 +70,12 @@ export default function DeviceScreen() {
               <RefreshCw className="size-3.5" aria-hidden />
               Refresh
             </Button>
+            {state && (
+              <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => void rereadState()}>
+                <RefreshCw className="size-3.5" aria-hidden />
+                Test connection
+              </Button>
+            )}
             {state && (
             <Button
               variant={confirmDisconnect ? "destructive" : "secondary"}
@@ -125,15 +131,9 @@ export default function DeviceScreen() {
                       VIA reachable — remapping arrives in a future version.
                     </span>
                   )}
-                  <details className="mt-1 text-[11px] text-[var(--muted)]">
-                    <summary className="cursor-pointer">
-                      Technical details
-                    </summary>
-                    <p className="mt-1">
-                      Product 0x{device.productId.toString(16).padStart(4, "0")}
-                    </p>
-                    <p className="font-mono">{device.path}</p>
-                  </details>
+                  <p className="mt-1 font-mono text-[11px] text-[var(--dim)]">
+                    Product 0x{device.productId.toString(16).padStart(4, "0")} · {device.path}
+                  </p>
                 </div>
                 {connected ? (
                   devices.length === 1 && (
@@ -170,23 +170,32 @@ export default function DeviceScreen() {
         )}
       </section>
 
-      <section className="rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4" aria-labelledby="device-board">
-        <h2 id="device-board" className="text-[13px] font-semibold tracking-[0.01em] text-[var(--text)]">
-          Board
-        </h2>
-        {board ? (
-          <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[12px]">
-            <dt className="text-[var(--muted)]">Transport</dt>
-            <dd className="text-[var(--text)]">{board.transport === "wireless24g" ? "2.4 GHz dongle" : "Wired USB"}</dd>
-            <dt className="text-[var(--muted)]">VIA</dt>
-            <dd className="text-[var(--text)]">{board.hasVia ? "Reachable" : "Not detected"}</dd>
-            <dt className="text-[var(--muted)]">Product ID</dt>
-            <dd className="font-mono text-[var(--text)]">0x{board.productId.toString(16).padStart(4, "0")}</dd>
-          </dl>
-        ) : (
-          <p className="mt-2 text-[var(--muted)]">No board detected.</p>
-        )}
-      </section>
+        <section className="flex flex-col gap-3 rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4">
+          <h2 className="text-[13px] font-semibold tracking-[0.01em] text-[var(--text)]">Advanced</h2>
+          <label className="flex items-center gap-2.5 text-[var(--muted)]">
+            <Switch
+              checked={state?.winLock ?? false}
+              disabled={!state}
+              onCheckedChange={(checked) =>
+                setLightingDraft?.({ winLock: checked })
+              }
+            />
+            Windows key lock
+          </label>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 justify-self-start self-start text-xs"
+            onClick={async () => {
+              const text = await ipc.copyDiagnostics();
+              await navigator.clipboard.writeText(text);
+              setNotice?.("Diagnostics copied ✓");
+            }}
+          >
+            <Clipboard className="size-3.5" aria-hidden />
+            Copy diagnostics
+          </Button>
+        </section>
       </div>
 
       <div className="flex flex-col gap-4">
@@ -221,32 +230,6 @@ export default function DeviceScreen() {
           </dl>
         </section>
 
-        <section className="flex flex-col gap-3 rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4">
-          <h2 className="text-[13px] font-semibold tracking-[0.01em] text-[var(--text)]">Advanced</h2>
-          <label className="flex items-center gap-2.5 text-[var(--muted)]">
-            <Switch
-              checked={state?.winLock ?? false}
-              disabled={!state}
-              onCheckedChange={(checked) =>
-                setLightingDraft?.({ winLock: checked })
-              }
-            />
-            Windows key lock
-          </label>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 justify-self-start self-start text-xs"
-            onClick={async () => {
-              const text = await ipc.copyDiagnostics();
-              await navigator.clipboard.writeText(text);
-              setNotice?.("Diagnostics copied ✓");
-            }}
-          >
-            <Clipboard className="size-3.5" aria-hidden />
-            Copy diagnostics
-          </Button>
-        </section>
       </div>
     </div>
   );

@@ -27,7 +27,19 @@ vi.mock("@/store", () => ({
       state: boardState,
       draft: null,
       draftDirty: false,
+      connected: true,
+      presetsLoaded: true,
       lightingHistory: [],
+      redoStack: [],
+      draftFuture: [],
+      draftPast: [],
+      autoApply: false,
+      activeProfileId: null,
+      setAutoApply: vi.fn(),
+      stageProfile: vi.fn(),
+      undo: vi.fn(),
+      redo: vi.fn(),
+      discardDraft: vi.fn(),
       presets: [
         { name: "gaming", description: "Aggressive red theme with fast effects" },
         { name: "matrix", description: "Green rain effect" },
@@ -47,12 +59,19 @@ vi.mock("@/store", () => ({
 import LightingScreen from "./LightingScreen";
 
 describe("LightingScreen", () => {
-  it("lists all 19 effects directly in the gallery, no expanders or filters", () => {
+  it("lists all 19 effects under the default All filter", () => {
     render(<LightingScreen />);
     const group = screen.getByRole("radiogroup", { name: "Underglow effect" });
     expect(within(group).getAllByRole("radio")).toHaveLength(19);
-    expect(screen.queryByRole("button", { name: /all 19 effects/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "All", selected: true })).toBeInTheDocument();
+  });
+
+  it("filters the grid by category", async () => {
+    render(<LightingScreen />);
+    await userEvent.click(screen.getByRole("tab", { name: "Wave" }));
+    const group = screen.getByRole("radiogroup", { name: "Underglow effect" });
+    expect(within(group).getAllByRole("radio")).toHaveLength(5);
+    expect(within(group).queryByRole("radio", { name: /^Off/ })).not.toBeInTheDocument();
   });
 
   it("stages a preset as a draft (single commit model)", async () => {

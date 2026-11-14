@@ -49,7 +49,7 @@ export function LightingDock() {
     <div
       role="group"
       aria-label="Underglow controls"
-      className="flex w-full flex-wrap items-center justify-between gap-x-5 gap-y-2.5"
+      className="flex w-full flex-wrap items-center justify-between gap-x-4 gap-y-2.5"
     >
       <div className={`flex items-center gap-2 ${rainbowActive ? "opacity-40" : ""}`}>
         {GLOW_COLORS.map((c, i) => {
@@ -100,7 +100,7 @@ export function LightingDock() {
         <Slider
           id="lighting-brightness"
           aria-label="Brightness"
-          className="w-[132px]"
+          className="w-[104px]"
           rangeColor={tint}
           min={0}
           max={9}
@@ -117,7 +117,7 @@ export function LightingDock() {
         <Slider
           id="lighting-speed"
           aria-label="Speed"
-          className="w-[132px]"
+          className="w-[104px]"
           rangeColor={tint}
           disabled={!moving}
           min={0}
@@ -132,15 +132,14 @@ export function LightingDock() {
         <Switch checked={rainbowActive} onCheckedChange={(checked) => stage({ underglowRainbow: checked ? 1 : 0 })} />
         Rainbow
       </label>
-      {canReverse && (
-        <label className="flex items-center gap-2 text-[12px] text-[var(--text)]">
-          <Switch
-            checked={underglow.orientation === 1}
-            onCheckedChange={(checked) => stage({ underglowOrientation: checked ? 1 : 0 })}
-          />
-          Reverse
-        </label>
-      )}
+      <label className={`flex items-center gap-2 text-[12px] ${canReverse ? "text-[var(--text)]" : "opacity-40"}`} title={canReverse ? undefined : "This effect has no direction"}>
+        <Switch
+          checked={underglow.orientation === 1}
+          disabled={!canReverse}
+          onCheckedChange={(checked) => stage({ underglowOrientation: checked ? 1 : 0 })}
+        />
+        Reverse
+      </label>
     </div>
   );
 }

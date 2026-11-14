@@ -304,4 +304,61 @@ describe("store", () => {
     expect(Array.from(useAppStore.getState().entries.slot0.source!)).toEqual([1]);
     expect(useAppStore.getState().displayHistory).toHaveLength(1);
   });
+
+  describe("trust layer", () => {
+    const board = {
+      connected: true,
+      synced: true,
+      underglow: { effect: 6, brightness: 5, speed: 4, orientation: 0, rainbow: 0, color: [0, 0, 255] as [number, number, number] },
+      led: { mode: 3, saturation: 5, rainbow: 0, color: 0 },
+      winLock: false,
+      show: 0,
+      slot0Frames: 1,
+      slot1Frames: 1,
+      frameDelayMs: 100,
+      time: [2026, 11, 9, 0, 12, 0, 0] as [number, number, number, number, number, number, number],
+    };
+
+    it("undoes and redoes staged edits", async () => {
+      useAppStore.setState({ state: board as never, draft: null, draftDirty: false, draftPast: [], draftFuture: [], redoStack: [], lightingHistory: [] });
+      useAppStore.getState().setLightingDraft({ underglowEffect: 11 });
+      expect(useAppStore.getState().draft?.underglow.effect).toBe(11);
+      await useAppStore.getState().undo();
+      expect(useAppStore.getState().draft).toBeNull();
+      expect(useAppStore.getState().draftDirty).toBe(false);
+      await useAppStore.getState().redo();
+      expect(useAppStore.getState().draft?.underglow.effect).toBe(11);
+      expect(useAppStore.getState().draftDirty).toBe(true);
+    });
+
+    it("redoes an undone board write and clears redo on a new commit", async () => {
+      const ipc = await import("./lib/ipc");
+      const current = { ...board, underglow: { ...board.underglow, effect: 11 } };
+      useAppStore.setState({ state: current as never, lightingHistory: [{ state: board as never, at: 1, label: "x" }], draft: null, draftDirty: false, draftPast: [], draftFuture: [], redoStack: [] });
+      vi.mocked(ipc.setLighting).mockResolvedValueOnce(board as never);
+      await useAppStore.getState().undo();
+      expect(useAppStore.getState().redoStack).toHaveLength(1);
+      vi.mocked(ipc.setLighting).mockResolvedValueOnce(current as never);
+      await useAppStore.getState().redo();
+      expect(useAppStore.getState().state?.underglow.effect).toBe(11);
+      expect(useAppStore.getState().redoStack).toHaveLength(0);
+    });
+
+    it("stages a profile into the draft without writing", async () => {
+      const ipc = await import("./lib/ipc");
+      vi.mocked(ipc.setLighting).mockClear();
+      useAppStore.setState({ state: board as never, draft: null, draftDirty: false, draftPast: [], draftFuture: [] });
+      useAppStore.getState().stageProfile({
+        id: "p1",
+        name: "Night",
+        lighting: { underglow: { ...board.underglow, effect: 16, brightness: 2 }, led: board.led, winLock: false },
+        display: { slot: "slot0", delayMs: 100 },
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      expect(vi.mocked(ipc.setLighting)).not.toHaveBeenCalled();
+      expect(useAppStore.getState().draft?.underglow.effect).toBe(16);
+      expect(useAppStore.getState().activeProfileId).toBe("p1");
+    });
+  });
 });

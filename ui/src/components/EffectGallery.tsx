@@ -1,6 +1,7 @@
 import { useEffect, useState, type KeyboardEvent } from "react";
-import { Activity, ArrowRight, Ban, CircleDot, Lightbulb, Orbit, Rainbow, Radio, Sparkles, Waves, Wind, CloudRain, type LucideIcon } from "lucide-react";
-import { EFFECT_DESCRIPTIONS, UNDERGLOW_EFFECTS } from "@/lib/effects";
+import { Activity, ArrowRight, CircleDot, Power, Lightbulb, Orbit, Rainbow, Radio, Sparkles, Waves, Wind, CloudRain, type LucideIcon } from "lucide-react";
+import { EFFECT_DESCRIPTIONS } from "@/lib/effects";
+import { EFFECT_FILTERS, filterEffects, type EffectFilter } from "@/lib/lightingSync";
 import { ledGrid, type LedLighting } from "@/lib/ledField";
 import { thumbIntensity } from "@/lib/thumbPattern";
 import { useAppStore } from "@/store";
@@ -16,7 +17,7 @@ const THUMB_BASE: LedLighting = {
 };
 const ROWS = 4;
 const COLS = 14;
-const GRID_COLS = 5;
+const GRID_COLS = 4;
 const UNLIT = "#1e2733";
 /** Idle cells sit at ~15% of the lit colour over near-black. */
 const IDLE = "#0a0c10";
@@ -74,19 +75,11 @@ function Thumb({
     return (
       <span
         aria-hidden
-        className="flex h-[26px] items-center justify-center gap-1.5 rounded-[4px] text-white/55"
+        className="flex h-[38px] items-center justify-center gap-2 rounded-[5px] text-white/60"
         style={{ background: "#07080b", boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.07)" }}
       >
-        <span className="flex flex-col gap-[2px]">
-          {[0, 1, 2].map((r) => (
-            <span key={r} className="flex gap-[2px]">
-              {Array.from({ length: 6 }, (_, c) => (
-                <span key={c} className="size-[3px] rounded-[1px] bg-white/[0.12]" />
-              ))}
-            </span>
-          ))}
-        </span>
-        <Ban className="size-3" />
+        <Power className="size-4" />
+        <span className="text-[10px] uppercase tracking-[0.14em]">Lights out</span>
       </span>
     );
   }
@@ -97,7 +90,7 @@ function Thumb({
         {Array.from({ length: ROWS }, (_, i) => (
           <span
             key={i}
-            className="h-[5px] rounded-[2px]"
+            className="h-[8px] rounded-[2px]"
             style={{ background: "linear-gradient(90deg, #ff3b30, #ffcc00, #30d158, #40c8e0, #0a84ff, #8b5cf6)", filter: `brightness(${0.7 + 0.15 * i})` }}
           />
         ))}
@@ -112,7 +105,7 @@ function Thumb({
       {Array.from({ length: ROWS }, (_, i) => (
         <span
           key={i}
-          className="flex h-[5px] gap-px overflow-hidden rounded-[2px]"
+          className="flex h-[8px] gap-px overflow-hidden rounded-[2px]"
           style={grid ? { filter: "saturate(1.35) brightness(1.3) contrast(1.15)" } : undefined}
         >
           {Array.from({ length: COLS }, (_, j) => {
@@ -144,6 +137,10 @@ export function EffectGallery({
 }) {
   const [focused, setFocused] = useState(value);
   const [hover, setHover] = useState<number | null>(null);
+  const [filter, setFilter] = useState<EffectFilter>("all");
+  const previewEffect = useAppStore((st) => st.previewEffect);
+  const previewingOther = previewEffect !== null && previewEffect !== value;
+  const list = filterEffects(filter);
   const setPreviewEffect = useAppStore((st) => st.setPreviewEffect) ?? (() => {});
   useEffect(() => () => setPreviewEffect(null), [setPreviewEffect]);
   const rgb = `rgb(${color.map((c) => Math.round(c)).join(",")})`;
@@ -159,15 +156,34 @@ export function EffectGallery({
     const next = options[nextIndex];
     if (!next) return;
     next.focus();
-    setFocused(UNDERGLOW_EFFECTS[nextIndex]?.value ?? value);
+    setFocused(list[nextIndex]?.value ?? value);
   };
 
   return (
-    <div role="radiogroup" aria-label="Underglow effect" className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-      {UNDERGLOW_EFFECTS.map((effect, i) => {
+    <div className="flex flex-col gap-2.5">
+    <div className="flex items-center gap-3">
+      <span className="w-12 shrink-0 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-[var(--dim)]">Effects</span>
+      <div role="tablist" aria-label="Effect category" className="flex gap-1 rounded-full border border-[var(--line)] bg-[var(--panel-2)] p-0.5">
+        {EFFECT_FILTERS.map((f) => (
+          <button
+            key={f.id}
+            type="button"
+            role="tab"
+            aria-selected={filter === f.id}
+            onClick={() => setFilter(f.id)}
+            className={`h-6 rounded-full px-3 text-[12px] font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-white ${filter === f.id ? "bg-[var(--pill)] text-[var(--text)]" : "text-[var(--muted)] hover:text-[var(--text)]"}`}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+      <span className="ml-auto text-[11px] text-[var(--dim)]">{list.length} effects</span>
+    </div>
+    <div role="radiogroup" aria-label="Underglow effect" className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+      {list.map((effect, i) => {
         const selected = effect.value === value;
         const Icon = EFFECT_ICON[effect.value];
-        const span = effect.name === "Off" ? "sm:col-span-2" : "";
+        const span = "";
         return (
           <button
             key={effect.value}
@@ -183,13 +199,13 @@ export function EffectGallery({
             onKeyDown={(e) => {
               switch (e.key) {
                 case "ArrowRight":
-                  moveFocus(e, Math.min(UNDERGLOW_EFFECTS.length - 1, i + 1));
+                  moveFocus(e, Math.min(list.length - 1, i + 1));
                   break;
                 case "ArrowLeft":
                   moveFocus(e, Math.max(0, i - 1));
                   break;
                 case "ArrowDown":
-                  moveFocus(e, Math.min(UNDERGLOW_EFFECTS.length - 1, i + GRID_COLS));
+                  moveFocus(e, Math.min(list.length - 1, i + GRID_COLS));
                   break;
                 case "ArrowUp":
                   moveFocus(e, Math.max(0, i - GRID_COLS));
@@ -198,7 +214,7 @@ export function EffectGallery({
                   moveFocus(e, 0);
                   break;
                 case "End":
-                  moveFocus(e, UNDERGLOW_EFFECTS.length - 1);
+                  moveFocus(e, list.length - 1);
                   break;
               }
             }}
@@ -215,11 +231,11 @@ export function EffectGallery({
               setHover(null);
               setPreviewEffect(null);
             }}
-            style={selected ? { borderColor: rgb, boxShadow: `0 0 14px -2px ${rgb}` } : undefined}
+            style={selected ? { borderColor: rgb, boxShadow: `0 0 14px -2px ${rgb}`, opacity: previewingOther ? 0.55 : 1 } : undefined}
             className={
               selected
-                ? "relative flex min-h-[52px] flex-col justify-between gap-1.5 rounded-[10px] border-2 bg-[var(--panel-2)] p-2 text-left " + span
-                : "relative flex min-h-[52px] flex-col justify-between gap-1.5 rounded-[10px] border-2 border-[var(--line)] bg-[var(--panel-2)] p-2 text-left transition-colors duration-150 hover:border-[var(--line-strong)] " + span
+                ? "relative flex min-h-[72px] flex-col justify-between gap-2 rounded-[10px] border-2 bg-[var(--panel-2)] p-2.5 text-left " + span
+                : "relative flex min-h-[72px] flex-col justify-between gap-2 rounded-[10px] border-2 border-[var(--line)] bg-[var(--panel-2)] p-2.5 text-left transition-colors duration-150 hover:border-[var(--line-strong)] " + span
             }
           >
             <Thumb
@@ -230,12 +246,13 @@ export function EffectGallery({
               live={selected || hover === effect.value || focused === effect.value}
             />
             <span className="flex items-center justify-between gap-1">
-              <span className="text-[11px] font-medium leading-tight text-[var(--text)]">{effect.name}</span>
+              <span className="text-[12px] font-medium leading-tight text-[var(--text)]">{effect.name}</span>
               {Icon && effect.name !== "Off" && <Icon aria-hidden className="size-3.5 shrink-0 text-white/70" />}
             </span>
           </button>
         );
       })}
+    </div>
     </div>
   );
 }

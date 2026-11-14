@@ -43,7 +43,12 @@ export default function App() {
   const draft = useAppStore((s) => s.draft);
   const draftDirty = useAppStore((s) => s.draftDirty);
   const commitDraft = useAppStore((s) => s.commitDraft);
-  const undoLighting = useAppStore((s) => s.undoLighting);
+  const undo = useAppStore((s) => s.undo);
+  const redo = useAppStore((s) => s.redo);
+  const autoApply = useAppStore((s) => s.autoApply);
+  const applying = useAppStore((s) => s.applying);
+  const lastSyncedAt = useAppStore((s) => s.lastSyncedAt);
+  const devices = useAppStore((s) => s.devices);
   const undoDisplayUpload = useAppStore((s) => s.undoDisplayUpload);
   const togglePaused = useAppStore((s) => s.setAnimationsPaused);
   const paused = useAppStore((s) => s.animationsPaused);
@@ -62,22 +67,29 @@ export default function App() {
   }, [connected]);
 
   useEffect(() => {
-    if (!connected || !draftDirty || !draftSignature) return;
+    if (!autoApply || !connected || !draftDirty || !draftSignature) return;
     if (lastAttemptedRef.current === draftSignature) return;
     const id = window.setTimeout(() => {
       lastAttemptedRef.current = draftSignature;
       void commitDraft();
     }, 650);
     return () => window.clearTimeout(id);
-  }, [connected, draftDirty, draftSignature, commitDraft]);
+  }, [autoApply, connected, draftDirty, draftSignature, commitDraft]);
 
   // Shortcuts: 1–4 tabs, ? help, p pause, Cmd/Ctrl+Z undo.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        e.preventDefault();
+        if (connected && draftDirty) void commitDraft();
+        return;
+      }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+        if ((e.target as HTMLElement | null)?.closest("input[type='text'], textarea")) return;
         e.preventDefault();
         if (tab === "display") void undoDisplayUpload();
-        else void undoLighting();
+        else if (e.shiftKey) void redo();
+        else void undo();
         return;
       }
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -97,7 +109,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [setTab, tab, undoLighting, undoDisplayUpload, togglePaused, paused]);
+  }, [setTab, tab, undo, redo, undoDisplayUpload, togglePaused, paused, connected, draftDirty, commitDraft]);
 
   const Screen = SCREENS[tab];
 
@@ -128,7 +140,7 @@ export default function App() {
 
   const chip = connectingPath
     ? { label: "Connecting…", dot: "bg-[var(--warn)] animate-pulse" }
-    : draftDirty && connected
+    : applying
       ? { label: "Applying…", dot: "bg-[var(--accent)] animate-pulse" }
       : connected
         ? { label: "Connected", dot: "bg-[var(--success)]" }
@@ -194,9 +206,15 @@ export default function App() {
             style={{ background: "radial-gradient(70% 65% at 50% 44%, var(--board-glow), transparent 78%)" }}
           />
           <section aria-label="Keyboard preview" className="relative mx-auto flex w-full max-w-[1320px] flex-col gap-2 px-6 pt-5">
-            <div className={tab === "lighting" ? "w-full" : tab === "device" ? "mx-auto w-full max-w-[720px]" : "mx-auto w-full max-w-[600px]"}>
+            <div className={tab === "lighting" ? "w-full" : tab === "device" ? "mx-auto w-full max-w-[900px]" : "mx-auto w-full max-w-[600px]"}>
               <KeyboardPreview className="w-full" hero={tab === "lighting"} />
             </div>
+            {connected && (
+              <p className="flex items-center justify-center gap-2 text-[11.5px] text-[var(--muted)]" aria-label="Device status">
+                <span aria-hidden className={`size-1.5 rounded-full ${applying ? "animate-pulse bg-[var(--accent)]" : draftDirty ? "bg-[var(--warn)]" : "bg-[var(--success)]"}`} />
+                GMK87 · {devices[0]?.transport === "wireless24g" ? "2.4 GHz" : "Wired USB"} · {applying ? "Applying…" : draftDirty ? "Draft" : lastSyncedAt ? "Synced" : "Connected"}
+              </p>
+            )}
             <div className={tab === "lighting" && !draftQueuedOffline ? "hidden" : "flex flex-wrap items-center justify-center gap-1.5"}>
               {tab !== "lighting" && <span className="inline-flex h-6 items-center rounded-full border border-[var(--line-strong)] px-2.5 text-[12px] font-medium text-[var(--text)]">{effectName}</span>}
               {tab !== "lighting" && (
