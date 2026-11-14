@@ -51,6 +51,7 @@ export default function App() {
   const togglePaused = useAppStore((s) => s.setAnimationsPaused);
   const paused = useAppStore((s) => s.animationsPaused);
   const autoConnect = useAppStore((s) => s.autoConnect);
+  const loadStoredDisplay = useAppStore((s) => s.loadStoredDisplay);
   const reduceMotion = useReducedMotion();
   const [helpOpen, setHelpOpen] = useState(false);
 
@@ -60,6 +61,11 @@ export default function App() {
   useEffect(() => {
     void autoConnect();
   }, [autoConnect]);
+
+  // Both display slots come back with the last image and crop that were written to them.
+  useEffect(() => {
+    void loadStoredDisplay();
+  }, [loadStoredDisplay]);
 
   // Shortcuts: 1–4 tabs, ? help, p pause, Cmd/Ctrl+Z undo.
   useEffect(() => {
