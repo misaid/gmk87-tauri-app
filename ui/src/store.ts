@@ -3,9 +3,48 @@ import * as ipc from "./lib/ipc";
 import { DEFAULT_CROP, type CropParams } from "./lib/crop";
 import { MAX_TOTAL_FRAMES } from "./lib/budget";
 import type { Profile } from "./lib/profiles";
+import { cropKey } from "./lib/crop";
+import { makeThumbnail, predecode } from "./lib/bitmapCache";
+import {
+  IndexedDbStorage,
+  MediaLibrary,
+  type LibraryItem,
+} from "./lib/mediaLibrary";
+
+/** The persistent image/GIF log. Swappable so tests can inject an in-memory store. */
+let mediaLibrary = new MediaLibrary(new IndexedDbStorage());
+export function setMediaLibrary(lib: MediaLibrary): void {
+  mediaLibrary = lib;
+}
 
 /** Orders async preview renders so a slow, stale one cannot overwrite a newer. */
-let previewSequence = 0;
+const previewSequence: Record<Slot, number> = { slot0: 0, slot1: 0 };
+const PREVIEW_DEBOUNCE_MS = 200;
+
+/** Log a slot's source in the media library (deduped by content hash). */
+async function registerInLibrary(
+  slot: Slot,
+  bytes: Uint8Array,
+  name: string,
+  info: ipc.SourceInfo,
+  get: () => AppStore,
+  set: (partial: Partial<AppStore>) => void,
+): Promise<void> {
+  const { thumb, width, height } = await makeThumbnail(bytes).catch(() => ({ thumb: "", width: 0, height: 0 }));
+  const inUse = new Set(
+    SLOTS.map((s) => get().entries[s].libraryId).filter((id): id is string => Boolean(id)),
+  );
+  const item = await mediaLibrary.add(
+    bytes,
+    { name, isGif: info.isGif, frames: info.sourceFrames, width, height, thumb },
+    inUse,
+  );
+  if (!item) return;
+  if (get().entries[slot].source === bytes) {
+    set({ entries: { ...get().entries, [slot]: { ...get().entries[slot], libraryId: item.id } } });
+  }
+  set({ library: await mediaLibrary.list() });
+}
 let lastDraftPush = 0;
 
 export type Slot = "slot0" | "slot1";
@@ -36,10 +75,15 @@ export interface SlotEntry {
   info: ipc.SourceInfo | null;
   crop: CropParams;
   delayMs: number;
+  /** Media-library id (content hash) of the source, once logged. */
+  libraryId?: string | null;
+  /** Last device-resolution render and the crop it was rendered for. */
+  previewUrl?: string | null;
+  previewKey?: string | null;
 }
 
 function emptyEntry(): SlotEntry {
-  return { source: null, name: "", info: null, crop: { ...DEFAULT_CROP }, delayMs: 100 };
+  return { source: null, name: "", info: null, crop: { ...DEFAULT_CROP }, delayMs: 100, libraryId: null, previewUrl: null, previewKey: null };
 }
 
 /** One persisted lighting undo step: the previous board state + when it was saved. */
@@ -143,6 +187,7 @@ interface AppStore {
   presets: ipc.Preset[];
   entries: Record<Slot, SlotEntry>;
   slot: Slot;
+  /** Preview URL of the selected slot (mirrors entries[slot].previewUrl). */
   previewUrl: string | null;
   progress: ipc.UploadProgress | null;
   uploads: number;
@@ -196,7 +241,16 @@ interface AppStore {
   disconnectDevice: () => Promise<void>;
   setCrop: (crop: CropParams) => void;
   setSlot: (slot: Slot) => void;
-  loadSource: (bytes: Uint8Array, name: string) => void;
+  loadSource: (
+    bytes: Uint8Array,
+    name: string,
+    opts?: { slot?: Slot; crop?: CropParams; libraryId?: string },
+  ) => void;
+  library: LibraryItem[];
+  loadLibrary: () => Promise<void>;
+  libraryUse: (id: string, slot?: Slot) => Promise<void>;
+  libraryRemove: (id: string) => Promise<void>;
+  libraryClear: () => Promise<void>;
   loadStoredDisplay: () => Promise<void>;
   setDelayMs: (ms: number) => void;
   refreshPreview: () => Promise<void>;
@@ -274,12 +328,16 @@ function cloneEntries(entries: Record<Slot, SlotEntry>): Record<Slot, SlotEntry>
     slot0: {
       ...entries.slot0,
       source: entries.slot0.source ? new Uint8Array(entries.slot0.source) : null,
+      previewUrl: null,
+      previewKey: null,
       crop: { ...entries.slot0.crop },
       info: entries.slot0.info ? { ...entries.slot0.info, dropped: [...entries.slot0.info.dropped] } : null,
     },
     slot1: {
       ...entries.slot1,
       source: entries.slot1.source ? new Uint8Array(entries.slot1.source) : null,
+      previewUrl: null,
+      previewKey: null,
       crop: { ...entries.slot1.crop },
       info: entries.slot1.info ? { ...entries.slot1.info, dropped: [...entries.slot1.info.dropped] } : null,
     },
@@ -312,6 +370,7 @@ export const useAppStore = create<AppStore>((set, get) => {
     entries: { slot0: emptyEntry(), slot1: emptyEntry() },
     slot: "slot0",
     previewUrl: null,
+    library: [],
     progress: null,
     uploads: 0,
     previewTimer: null,
@@ -445,20 +504,64 @@ export const useAppStore = create<AppStore>((set, get) => {
       get().schedulePreview();
     },
     setSlot: (slot) => {
-      set({ slot });
-      void get().refreshPreview();
+      // Both slots keep their source, decoded bitmap, crop and last render in
+      // memory, so switching only changes which entry the editor shows.
+      const entry = get().entries[slot];
+      set({ slot, previewUrl: entry.previewUrl ?? null });
+      predecode(get().entries[other(slot)].source);
+      if (entry.source && (!entry.previewUrl || entry.previewKey !== cropKey(entry.crop))) {
+        void get().refreshPreview();
+      }
     },
-    loadSource: async (bytes, name) => {
-      const { slot } = get();
-      set((state) => withEntry(state, slot, { source: bytes, name, info: null }));
+    loadSource: async (bytes, name, opts) => {
+      const slot = opts?.slot ?? get().slot;
+      const crop = opts?.crop ?? get().entries[slot].crop;
+      set((state) => ({
+        ...withEntry(state, slot, {
+          source: bytes,
+          name,
+          info: null,
+          crop: { ...crop },
+          libraryId: opts?.libraryId ?? null,
+          previewKey: null,
+        }),
+        slot,
+      }));
       void get().refreshPreview();
       try {
         const maxFrames = Math.max(0, selectRemainingFor(get(), slot));
         const info = await ipc.inspectSource(bytes, get().entries[slot].crop, maxFrames);
+        if (get().entries[slot].source !== bytes) return;
         set((state) => withEntry(state, slot, { info, delayMs: info.delayMs }));
+        void registerInLibrary(slot, bytes, name, info, get, set);
       } catch (error) {
         set({ error: message(error), errorKind: kindOf(error) });
       }
+    },
+    loadLibrary: async () => {
+      set({ library: await mediaLibrary.list() });
+    },
+    libraryUse: async (id, slot) => {
+      const item = get().library.find((i) => i.id === id);
+      const bytes = await mediaLibrary.getBytes(id);
+      if (!item || !bytes) {
+        set({ error: "That library item is no longer available." });
+        await get().loadLibrary();
+        return;
+      }
+      await get().loadSource(bytes, item.name, {
+        slot: slot ?? get().slot,
+        crop: item.lastCrop ?? { ...DEFAULT_CROP },
+        libraryId: id,
+      });
+    },
+    libraryRemove: async (id) => {
+      await mediaLibrary.remove(id);
+      await get().loadLibrary();
+    },
+    libraryClear: async () => {
+      await mediaLibrary.clear();
+      await get().loadLibrary();
     },
     loadStoredDisplay: async () => {
       try {
@@ -482,6 +585,10 @@ export const useAppStore = create<AppStore>((set, get) => {
             }),
           );
         }
+        for (const slot of SLOTS) {
+          const e = get().entries[slot];
+          if (e.source && e.info) void registerInLibrary(slot, e.source, e.name, e.info, get, set);
+        }
         // Stored contents are what the board holds — the undo baseline.
         set({ lastUploaded: cloneEntries(get().entries) });
         await get().refreshPreview();
@@ -492,37 +599,49 @@ export const useAppStore = create<AppStore>((set, get) => {
     setDelayMs: (delayMs) => set((state) => withEntry(state, state.slot, { delayMs })),
 
     schedulePreview: () => {
-      // Coalesce renders to one per frame-ish interval. This is a throttle, not
-      // a trailing debounce: a debounce reset the timer on every pointer move,
-      // so a continuous drag showed nothing until the pointer stopped.
-      if (get().previewTimer !== null) return;
+      // Trailing debounce: the live gesture is drawn client-side, so the true
+      // device render only needs to run once the crop has settled.
+      const pending = get().previewTimer;
+      if (pending !== null) window.clearTimeout(pending);
       const id = window.setTimeout(() => {
         set({ previewTimer: null });
         void get().refreshPreview();
-      }, 33);
+      }, PREVIEW_DEBOUNCE_MS);
       set({ previewTimer: id });
     },
 
     refreshPreview: async () => {
-      const sequence = ++previewSequence;
       const { entries, slot } = get();
+      const sequence = ++previewSequence[slot];
       const entry = entries[slot];
       if (!entry.source) {
         set({ previewUrl: null });
         return;
       }
+      const key = cropKey(entry.crop);
+      const source = entry.source;
       try {
-        const png = await ipc.previewDisplay(entry.source, entry.crop);
+        const png = await ipc.previewDisplay(source, entry.crop);
         // A newer crop or slot switch has already started; its result wins.
-        if (sequence !== previewSequence) return;
+        if (sequence !== previewSequence[slot]) return;
         const blob = new Blob([png], { type: "image/png" });
         const url = URL.createObjectURL(blob);
         set((state) => {
-          if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
-          return { previewUrl: url, error: null, errorKind: null };
+          const current = state.entries[slot];
+          if (current.previewUrl) URL.revokeObjectURL(current.previewUrl);
+          if (current.source !== source) {
+            URL.revokeObjectURL(url);
+            return {};
+          }
+          return {
+            ...withEntry(state, slot, { previewUrl: url, previewKey: key }),
+            previewUrl: state.slot === slot ? url : state.previewUrl,
+            error: null,
+            errorKind: null,
+          };
         });
       } catch (error) {
-        if (sequence !== previewSequence) return;
+        if (sequence !== previewSequence[slot]) return;
         set({ error: message(error), errorKind: kindOf(error) });
       }
     },
@@ -561,6 +680,9 @@ export const useAppStore = create<AppStore>((set, get) => {
           displayHistory: [...get().displayHistory.slice(-9), snapshot],
           lastUploaded: cloneEntries(entries),
         });
+        if (entry.libraryId) {
+          void mediaLibrary.touch(entry.libraryId, entry.crop).then(() => get().loadLibrary());
+        }
       } catch (error) {
         set({ error: message(error), errorKind: kindOf(error) });
       } finally {

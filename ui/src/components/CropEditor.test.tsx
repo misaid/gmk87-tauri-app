@@ -1,35 +1,47 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_CROP } from "@/lib/crop";
 
 const setCrop = vi.fn();
-vi.mock("@/store", () => ({
-  useAppStore: (selector: (s: unknown) => unknown) =>
-    selector({
-      slot: "slot0",
-      entries: { slot0: { crop: DEFAULT_CROP }, slot1: { crop: DEFAULT_CROP } },
-      setCrop,
-      previewUrl: null,
-    }),
-}));
+const state = {
+  slot: "slot0",
+  entries: {
+    slot0: { source: null, crop: DEFAULT_CROP, previewUrl: null, previewKey: null },
+    slot1: { source: null, crop: DEFAULT_CROP, previewUrl: null, previewKey: null },
+  },
+  setCrop,
+};
+vi.mock("@/store", () => {
+  const useAppStore = (selector: (s: unknown) => unknown) => selector(state);
+  useAppStore.getState = () => state;
+  return { useAppStore };
+});
 
 import { CropEditor } from "./CropEditor";
 
 describe("CropEditor", () => {
-  it("pans on drag by calling setCrop", () => {
+  beforeEach(() => setCrop.mockClear());
+
+  it("does not touch the store while dragging, then commits once on release", () => {
     render(<CropEditor />);
     const surface = screen.getByTestId("crop-surface");
     fireEvent.pointerDown(surface, { clientX: 0, clientY: 0, pointerId: 1 });
-    fireEvent.pointerMove(surface, { clientX: 40, clientY: 0, pointerId: 1 });
+    for (let x = 1; x <= 40; x++) fireEvent.pointerMove(surface, { clientX: x, clientY: 0, pointerId: 1 });
+    expect(setCrop).not.toHaveBeenCalled();
     fireEvent.pointerUp(surface, { pointerId: 1 });
-    expect(setCrop).toHaveBeenCalled();
-    const next = setCrop.mock.calls.at(-1)![0];
-    expect(next.offsetX).toBeGreaterThan(0);
+    expect(setCrop).toHaveBeenCalledTimes(1);
+    expect(setCrop.mock.calls[0][0].offsetX).toBeGreaterThan(0);
   });
 
-  it("zooms on wheel", () => {
+  it("zooms on wheel and commits once after the wheel goes quiet", () => {
+    vi.useFakeTimers();
     render(<CropEditor />);
-    fireEvent.wheel(screen.getByTestId("crop-surface"), { deltaY: -100 });
-    expect(setCrop).toHaveBeenCalled();
+    const surface = screen.getByTestId("crop-surface");
+    for (let i = 0; i < 10; i++) fireEvent.wheel(surface, { deltaY: -40 });
+    expect(setCrop).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(200);
+    expect(setCrop).toHaveBeenCalledTimes(1);
+    expect(setCrop.mock.calls[0][0].zoom).toBeGreaterThan(1);
+    vi.useRealTimers();
   });
 });

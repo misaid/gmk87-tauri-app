@@ -149,7 +149,7 @@ describe("store", () => {
     revoke.mockRestore();
   });
 
-  it("throttles the preview during a continuous drag", async () => {
+  it("debounces the backend preview until the crop settles", async () => {
     vi.useFakeTimers();
     const ipc = await import("./lib/ipc");
     vi.mocked(ipc.previewDisplay).mockClear();
@@ -159,16 +159,31 @@ describe("store", () => {
         slot0: { ...s.entries.slot0, source: new Uint8Array([1]), name: "x.png" },
       },
     }));
-    // A stream of pointer moves must still refresh while the drag continues,
-    // rather than only after the pointer stops.
-    useAppStore.getState().setCrop({ offsetX: 0.1, offsetY: 0, zoom: 1, fit: "cover" });
-    useAppStore.getState().setCrop({ offsetX: 0.2, offsetY: 0, zoom: 1, fit: "cover" });
-    await vi.advanceTimersByTimeAsync(40);
+    for (let i = 1; i <= 20; i++) {
+      useAppStore.getState().setCrop({ offsetX: i / 100, offsetY: 0, zoom: 1, fit: "cover" });
+      await vi.advanceTimersByTimeAsync(16);
+    }
+    expect(vi.mocked(ipc.previewDisplay)).toHaveBeenCalledTimes(0);
+    await vi.advanceTimersByTimeAsync(250);
     expect(vi.mocked(ipc.previewDisplay)).toHaveBeenCalledTimes(1);
-    useAppStore.getState().setCrop({ offsetX: 0.3, offsetY: 0, zoom: 1, fit: "cover" });
-    await vi.advanceTimersByTimeAsync(40);
-    expect(vi.mocked(ipc.previewDisplay)).toHaveBeenCalledTimes(2);
     vi.useRealTimers();
+  });
+
+  it("switches slots without any backend call once both are rendered", async () => {
+    const ipc = await import("./lib/ipc");
+    useAppStore.getState().loadSource(new Uint8Array([1]), "a.png");
+    useAppStore.getState().setSlot("slot1");
+    useAppStore.getState().loadSource(new Uint8Array([2]), "b.png");
+    await vi.waitFor(() => expect(useAppStore.getState().entries.slot1.previewUrl).toBeTruthy());
+    await vi.waitFor(() => expect(useAppStore.getState().entries.slot0.previewUrl).toBeTruthy());
+    const spies = [ipc.previewDisplay, ipc.inspectSource, ipc.loadDisplayStore].map((f) => vi.mocked(f));
+    spies.forEach((f) => f.mockClear());
+    for (let i = 0; i < 10; i++) {
+      useAppStore.getState().setSlot(i % 2 ? "slot1" : "slot0");
+    }
+    await new Promise((r) => setTimeout(r, 50));
+    spies.forEach((f) => expect(f).not.toHaveBeenCalled());
+    expect(useAppStore.getState().previewUrl).toBe(useAppStore.getState().entries.slot1.previewUrl);
   });
 
   it("tracks connectingPath while a connect is in flight and clears it on success", async () => {

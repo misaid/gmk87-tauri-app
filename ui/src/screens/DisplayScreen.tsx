@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { CropEditor } from "@/components/CropEditor";
 import { UploadControls } from "@/components/UploadControls";
+import { LIBRARY_DRAG_TYPE, MediaLibraryPanel } from "@/components/MediaLibraryPanel";
 import { budgetError } from "@/lib/budget";
 import { selectTotalFrames, useAppStore } from "@/store";
 
@@ -14,6 +15,7 @@ export default function DisplayScreen() {
   const entries = useAppStore((s) => s.entries);
   const totalFrames = useAppStore(selectTotalFrames);
   const loadSource = useAppStore((s) => s.loadSource);
+  const libraryUse = useAppStore((s) => s.libraryUse);
   const setDelayMs = useAppStore((s) => s.setDelayMs);
   const connected = useAppStore((s) => s.connected);
   const setActiveTab = useAppStore((s) => s.setActiveTab);
@@ -30,7 +32,19 @@ export default function DisplayScreen() {
 
   return (
     <div className="grid gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
-      <section className="flex flex-col gap-3 rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4" aria-labelledby="display-crop">
+      <section
+        className="flex flex-col gap-3 rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4"
+        aria-labelledby="display-crop"
+        onDragOver={(ev) => {
+          if (ev.dataTransfer.types.includes("Files")) ev.preventDefault();
+        }}
+        onDrop={(ev) => {
+          const file = ev.dataTransfer.files?.[0];
+          if (!file) return;
+          ev.preventDefault();
+          void onFile(file);
+        }}
+      >
         <h2 id="display-crop" className="text-[13px] font-semibold tracking-[0.01em] text-[var(--text)]">
           Image & crop
         </h2>
@@ -42,6 +56,16 @@ export default function DisplayScreen() {
                 key={s}
                 type="button"
                 onClick={() => setSlot(s)}
+                onDragOver={(ev) => {
+                  if (ev.dataTransfer.types.includes(LIBRARY_DRAG_TYPE)) ev.preventDefault();
+                }}
+                onDrop={(ev) => {
+                  const id = ev.dataTransfer.getData(LIBRARY_DRAG_TYPE);
+                  if (!id) return;
+                  ev.preventDefault();
+                  ev.stopPropagation();
+                  void libraryUse(id, s);
+                }}
                 aria-pressed={slot === s}
                 className={
                   slot === s
@@ -159,6 +183,8 @@ export default function DisplayScreen() {
           </button>
         )}
       </section>
+
+      <MediaLibraryPanel />
     </div>
   );
 }
