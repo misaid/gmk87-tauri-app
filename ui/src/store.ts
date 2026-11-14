@@ -2,9 +2,55 @@ import { create } from "zustand";
 import * as ipc from "./lib/ipc";
 import { DEFAULT_CROP, type CropParams } from "./lib/crop";
 import { MAX_TOTAL_FRAMES } from "./lib/budget";
+import type { Profile } from "./lib/profiles";
+import { cropKey } from "./lib/crop";
+import { decodeUrl, makeThumbnail, predecode } from "./lib/bitmapCache";
+import {
+  IndexedDbStorage,
+  MediaLibrary,
+  type LibraryItem,
+} from "./lib/mediaLibrary";
+
+/** The persistent image/GIF log. Swappable so tests can inject an in-memory store. */
+let mediaLibrary = new MediaLibrary(new IndexedDbStorage());
+export function setMediaLibrary(lib: MediaLibrary): void {
+  mediaLibrary = lib;
+}
 
 /** Orders async preview renders so a slow, stale one cannot overwrite a newer. */
-let previewSequence = 0;
+const previewSequence: Record<Slot, number> = { slot0: 0, slot1: 0 };
+
+/** Revoke a replaced preview URL a moment later, once no <img> can still be showing it. */
+function retireUrl(url: string): void {
+  window.setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+const PREVIEW_DEBOUNCE_MS = 200;
+
+/** Log a slot's source in the media library (deduped by content hash). */
+async function registerInLibrary(
+  slot: Slot,
+  bytes: Uint8Array,
+  name: string,
+  info: ipc.SourceInfo,
+  get: () => AppStore,
+  set: (partial: Partial<AppStore>) => void,
+): Promise<void> {
+  const { thumb, width, height } = await makeThumbnail(bytes).catch(() => ({ thumb: "", width: 0, height: 0 }));
+  const inUse = new Set(
+    SLOTS.map((s) => get().entries[s].libraryId).filter((id): id is string => Boolean(id)),
+  );
+  const item = await mediaLibrary.add(
+    bytes,
+    { name, isGif: info.isGif, frames: info.sourceFrames, width, height, thumb },
+    inUse,
+  );
+  if (!item) return;
+  if (get().entries[slot].source === bytes) {
+    set({ entries: { ...get().entries, [slot]: { ...get().entries[slot], libraryId: item.id } } });
+  }
+  set({ library: await mediaLibrary.list() });
+}
+let lastDraftPush = 0;
 
 export type Slot = "slot0" | "slot1";
 
@@ -34,10 +80,15 @@ export interface SlotEntry {
   info: ipc.SourceInfo | null;
   crop: CropParams;
   delayMs: number;
+  /** Media-library id (content hash) of the source, once logged. */
+  libraryId?: string | null;
+  /** Last device-resolution render and the crop it was rendered for. */
+  previewUrl?: string | null;
+  previewKey?: string | null;
 }
 
 function emptyEntry(): SlotEntry {
-  return { source: null, name: "", info: null, crop: { ...DEFAULT_CROP }, delayMs: 100 };
+  return { source: null, name: "", info: null, crop: { ...DEFAULT_CROP }, delayMs: 100, libraryId: null, previewUrl: null, previewKey: null };
 }
 
 /** One persisted lighting undo step: the previous board state + when it was saved. */
@@ -58,6 +109,9 @@ export interface DisplayHistoryEntry {
 
 const LS_DRAFT = "gmk87.draft.v1";
 const LS_HISTORY = "gmk87.lightingHistory.v1";
+/** v2: live apply is the default; the old v1 key meant "opt in to auto-apply". */
+const LS_AUTO = "gmk87.autoApply.v2";
+const LS_ACTIVE_PROFILE = "gmk87.activeProfile.v1";
 const LS_ONBOARDED = "gmk87.onboarded.v1";
 
 function loadJSON<T>(key: string, fallback: T): T {
@@ -138,6 +192,7 @@ interface AppStore {
   presets: ipc.Preset[];
   entries: Record<Slot, SlotEntry>;
   slot: Slot;
+  /** Preview URL of the selected slot (mirrors entries[slot].previewUrl). */
   previewUrl: string | null;
   progress: ipc.UploadProgress | null;
   uploads: number;
@@ -162,20 +217,56 @@ interface AppStore {
   noticeKind: "success" | "error" | null;
   /** When set, all ambient animations render once and stay still. */
   animationsPaused: boolean;
+  /** Transient hover/focus preview of an underglow effect on the hero board. Never written to the device. */
+  previewEffect: number | null;
+  setPreviewEffect: (effect: number | null) => void;
+  /** Staged (draft) undo/redo: states before/after each edit; null = no draft. */
+  draftPast: Array<ipc.DeviceState | null>;
+  draftFuture: ipc.DeviceState[];
+  /** Applied-write redo stack (states undone from the board). */
+  redoStack: LightingHistoryEntry[];
+  /** A write to the board is in flight. */
+  applying: boolean;
+  /** The last write attempt of the current draft failed. */
+  applyFailed: boolean;
+  /** Live apply (default on): staged edits are written shortly after the last edit. Off = Draft mode, held until Apply. */
+  autoApply: boolean;
+  setAutoApply: (v: boolean) => void;
+  presetsLoaded: boolean;
+  activeProfileId: string | null;
+  stageProfile: (profile: Profile) => void;
+  undo: () => Promise<void>;
+  redo: () => Promise<void>;
+  rereadState: () => Promise<void>;
   /** Write-confirm modal open (draft commit is destructive — needs a diff). */
   showWriteConfirm: boolean;
 
   refreshDevices: () => Promise<void>;
   connectTo: (path: string) => Promise<void>;
+  /** Launch helper: scan, and connect straight away when exactly one keyboard is found. */
+  autoConnect: () => Promise<void>;
   disconnectDevice: () => Promise<void>;
   setCrop: (crop: CropParams) => void;
   setSlot: (slot: Slot) => void;
-  loadSource: (bytes: Uint8Array, name: string) => void;
+  loadSource: (
+    bytes: Uint8Array,
+    name: string,
+    opts?: { slot?: Slot; crop?: CropParams; libraryId?: string },
+  ) => void;
+  library: LibraryItem[];
+  loadLibrary: () => Promise<void>;
+  libraryUse: (id: string, slot?: Slot) => Promise<void>;
+  libraryRemove: (id: string) => Promise<void>;
+  libraryClear: () => Promise<void>;
   loadStoredDisplay: () => Promise<void>;
   setDelayMs: (ms: number) => void;
   refreshPreview: () => Promise<void>;
   schedulePreview: () => void;
   upload: (delayMs: number, showAfter: boolean) => Promise<void>;
+  /** Write every slot that changed since its last successful write, one call each. */
+  uploadChanged: (showAfter?: boolean) => Promise<void>;
+  /** Progress through a multi-slot write, or null. */
+  batch: { index: number; total: number; slot: Slot } | null;
   cancel: () => Promise<void>;
   setProgress: (progress: ipc.UploadProgress) => void;
   handleDisconnected: () => void;
@@ -248,16 +339,49 @@ function cloneEntries(entries: Record<Slot, SlotEntry>): Record<Slot, SlotEntry>
     slot0: {
       ...entries.slot0,
       source: entries.slot0.source ? new Uint8Array(entries.slot0.source) : null,
+      previewUrl: null,
+      previewKey: null,
       crop: { ...entries.slot0.crop },
       info: entries.slot0.info ? { ...entries.slot0.info, dropped: [...entries.slot0.info.dropped] } : null,
     },
     slot1: {
       ...entries.slot1,
       source: entries.slot1.source ? new Uint8Array(entries.slot1.source) : null,
+      previewUrl: null,
+      previewKey: null,
       crop: { ...entries.slot1.crop },
       info: entries.slot1.info ? { ...entries.slot1.info, dropped: [...entries.slot1.info.dropped] } : null,
     },
   };
+}
+
+function sameBytes(a: Uint8Array | null, b: Uint8Array | null): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+/**
+ * Slots whose source, crop or delay differ from their last successful write,
+ * in write order: the viewed slot goes last so it is the one the board shows.
+ */
+export function dirtySlots(
+  entries: Record<Slot, SlotEntry>,
+  lastUploaded: Record<Slot, SlotEntry> | null,
+  viewed: Slot,
+): Slot[] {
+  const dirty = SLOTS.filter((s) => {
+    const e = entries[s];
+    if (!e.source) return false;
+    const last = lastUploaded?.[s];
+    return !last || !sameBytes(e.source, last.source) || cropKey(e.crop) !== cropKey(last.crop) || e.delayMs !== last.delayMs;
+  });
+  return [...dirty.filter((s) => s !== viewed), ...dirty.filter((s) => s === viewed)];
+}
+
+function slotLabel(slot: Slot): string {
+  return slot === "slot0" ? "Slot 0" : "Slot 1";
 }
 
 function withEntry(
@@ -273,21 +397,61 @@ export const useAppStore = create<AppStore>((set, get) => {
   const initialHistory = loadJSON<ipc.DeviceState[]>(LS_HISTORY, []);
   const initialDraft = loadJSON<ipc.DeviceState | null>(LS_DRAFT, null);
 
+  /** Write one slot and record it (alone) as what the board now holds. Throws on failure. */
+  async function writeSlot(slot: Slot, delayMs: number, showAfter: boolean): Promise<void> {
+    const { entries, lastUploaded } = get();
+    const entry = entries[slot];
+    if (!entry.source) return;
+    // Undo snapshot = what the board showed BEFORE this write overwrote it.
+    const previousBoard = lastUploaded ?? { slot0: emptyEntry(), slot1: emptyEntry() };
+    const snapshot: DisplayHistoryEntry = {
+      entries: cloneEntries(previousBoard),
+      slot,
+      delayMs: previousBoard[slot]?.delayMs ?? delayMs,
+      at: Date.now(),
+      label: previousBoard[slot]?.name || `${slotLabel(slot)} (previous)`,
+    };
+    await ipc.uploadDisplay({
+      slot,
+      name: entry.name,
+      bytes: entry.source,
+      crop: entry.crop,
+      delayMs,
+      showAfter,
+    });
+    // Only this slot becomes "written"; the source is shared (never mutated) so dirty checks stay cheap.
+    const written: SlotEntry = { ...entry, crop: { ...entry.crop }, delayMs, previewUrl: null, previewKey: null };
+    set({
+      lastUploaded: { ...previousBoard, [slot]: written },
+      displayHistory: [...get().displayHistory.slice(-9), snapshot],
+    });
+    set({ state: await ipc.readState(), error: null, errorKind: null });
+    if (entry.libraryId) {
+      void mediaLibrary.touch(entry.libraryId, entry.crop).then(() => get().loadLibrary());
+    }
+  }
+
   return {
     devices: [],
     state: null,
     connected: false,
     connectingPath: null,
     activeTab: "device",
-    setActiveTab: (activeTab) => set({ activeTab }),
+    // Pairing comes first: nothing but the Device screen opens until connected.
+    setActiveTab: (activeTab) => {
+      if (activeTab !== "device" && !get().connected) return;
+      set({ activeTab });
+    },
     error: null,
     errorKind: null,
     presets: [],
     entries: { slot0: emptyEntry(), slot1: emptyEntry() },
     slot: "slot0",
     previewUrl: null,
+    library: [],
     progress: null,
     uploads: 0,
+    batch: null,
     previewTimer: null,
     draft: initialDraft,
     draftDirty: initialDraft !== null,
@@ -307,7 +471,83 @@ export const useAppStore = create<AppStore>((set, get) => {
     notice: null,
     noticeKind: null,
     animationsPaused: false,
+    previewEffect: null,
+    setPreviewEffect: (effect) => set({ previewEffect: effect }),
     showWriteConfirm: false,
+    draftPast: [],
+    draftFuture: [],
+    redoStack: [],
+    applying: false,
+    applyFailed: false,
+    autoApply: loadJSON<boolean>(LS_AUTO, true) !== false,
+    setAutoApply: (v) => {
+      saveJSON(LS_AUTO, v);
+      set({ autoApply: v });
+    },
+    presetsLoaded: false,
+    activeProfileId: loadJSON<string | null>(LS_ACTIVE_PROFILE, null),
+    stageProfile: (profile) => {
+      get().setLightingDraft({
+        underglowEffect: profile.lighting.underglow.effect,
+        underglowBrightness: profile.lighting.underglow.brightness,
+        underglowSpeed: profile.lighting.underglow.speed,
+        underglowOrientation: profile.lighting.underglow.orientation,
+        underglowRainbow: profile.lighting.underglow.rainbow,
+        underglowColor: profile.lighting.underglow.color,
+        ledMode: profile.lighting.led.mode,
+        ledSaturation: profile.lighting.led.saturation,
+        ledRainbow: profile.lighting.led.rainbow,
+        ledColor: profile.lighting.led.color,
+        winLock: profile.lighting.winLock,
+      });
+      saveJSON(LS_ACTIVE_PROFILE, profile.id);
+      set({ activeProfileId: profile.id });
+    },
+    undo: async () => {
+      const { draft, draftPast, draftFuture } = get();
+      if (draft) {
+        const prev = draftPast.length ? draftPast[draftPast.length - 1] : null;
+        const { state } = get();
+        const dirty = prev ? (state ? JSON.stringify(patchFromState(prev)) !== JSON.stringify(patchFromState(state)) : true) : false;
+        set({ draft: prev, draftDirty: dirty, draftPast: draftPast.slice(0, -1), draftFuture: [...draftFuture, draft], applyFailed: false });
+        if (prev) saveJSON(LS_DRAFT, prev);
+        else clearKey(LS_DRAFT);
+        return;
+      }
+      await get().undoLighting();
+    },
+    redo: async () => {
+      const { draft, draftPast, draftFuture, redoStack, state } = get();
+      if (draftFuture.length) {
+        const next = draftFuture[draftFuture.length - 1];
+        const dirty = state ? JSON.stringify(patchFromState(next)) !== JSON.stringify(patchFromState(state)) : true;
+        set({ draft: next, draftDirty: dirty, draftFuture: draftFuture.slice(0, -1), draftPast: [...draftPast, draft] });
+        saveJSON(LS_DRAFT, next);
+        return;
+      }
+      const entry = redoStack.at(-1);
+      if (!entry) return;
+      set({ applying: true });
+      try {
+        const next = await ipc.setLighting(patchFromState(entry.state));
+        const history = state ? [...get().lightingHistory.slice(-19), { state, at: Date.now(), label: "before redo" }] : get().lightingHistory;
+        saveJSON(LS_HISTORY, history);
+        set({ state: next, draft: null, draftDirty: false, lightingHistory: history, redoStack: redoStack.slice(0, -1), lastSyncedAt: Date.now(), error: null, errorKind: null, notice: "Lighting redone ✓" });
+        clearKey(LS_DRAFT);
+      } catch (error) {
+        set({ error: message(error), errorKind: kindOf(error) });
+      } finally {
+        set({ applying: false });
+      }
+    },
+    rereadState: async () => {
+      try {
+        const state = await ipc.readState();
+        set({ state, connected: state.connected, error: null, errorKind: null, notice: "Board state re-read ✓" });
+      } catch (error) {
+        set({ error: message(error), errorKind: kindOf(error) });
+      }
+    },
 
     refreshDevices: async () => {
       try {
@@ -317,12 +557,20 @@ export const useAppStore = create<AppStore>((set, get) => {
       }
     },
 
+    autoConnect: async () => {
+      await get().refreshDevices();
+      const { devices, connected, connectingPath } = get();
+      if (devices.length === 1 && !connected && connectingPath === null) {
+        await get().connectTo(devices[0].path);
+      }
+    },
+
     connectTo: async (path) => {
       set({ connectingPath: path });
       try {
         const state = await ipc.connect(path);
         const queued = get().draft;
-        set({ state, connected: state.connected, error: null, errorKind: null, draft: queued, draftDirty: queued != null ? JSON.stringify(patchFromState(queued)) !== JSON.stringify(patchFromState(state)) : false });
+        set({ state, connected: state.connected, activeTab: state.connected ? "lighting" : "device", error: null, errorKind: null, draft: queued, draftDirty: queued != null ? JSON.stringify(patchFromState(queued)) !== JSON.stringify(patchFromState(state)) : false });
         if (queued == null) clearKey(LS_DRAFT);
         await get().refreshPreview();
       } catch (error) {
@@ -335,7 +583,7 @@ export const useAppStore = create<AppStore>((set, get) => {
     disconnectDevice: async () => {
       await ipc.disconnect();
       // Keep any staged draft — disconnect is not discard.
-      set({ state: null, connected: false });
+      set({ state: null, connected: false, activeTab: "device" });
     },
 
     setCrop: (crop) => {
@@ -343,20 +591,64 @@ export const useAppStore = create<AppStore>((set, get) => {
       get().schedulePreview();
     },
     setSlot: (slot) => {
-      set({ slot });
-      void get().refreshPreview();
+      // Both slots keep their source, decoded bitmap, crop and last render in
+      // memory, so switching only changes which entry the editor shows.
+      const entry = get().entries[slot];
+      set({ slot, previewUrl: entry.previewUrl ?? null });
+      predecode(get().entries[other(slot)].source);
+      if (entry.source && (!entry.previewUrl || entry.previewKey !== cropKey(entry.crop))) {
+        void get().refreshPreview();
+      }
     },
-    loadSource: async (bytes, name) => {
-      const { slot } = get();
-      set((state) => withEntry(state, slot, { source: bytes, name, info: null }));
+    loadSource: async (bytes, name, opts) => {
+      const slot = opts?.slot ?? get().slot;
+      const crop = opts?.crop ?? get().entries[slot].crop;
+      set((state) => ({
+        ...withEntry(state, slot, {
+          source: bytes,
+          name,
+          info: null,
+          crop: { ...crop },
+          libraryId: opts?.libraryId ?? null,
+          previewKey: null,
+        }),
+        slot,
+      }));
       void get().refreshPreview();
       try {
         const maxFrames = Math.max(0, selectRemainingFor(get(), slot));
         const info = await ipc.inspectSource(bytes, get().entries[slot].crop, maxFrames);
+        if (get().entries[slot].source !== bytes) return;
         set((state) => withEntry(state, slot, { info, delayMs: info.delayMs }));
+        void registerInLibrary(slot, bytes, name, info, get, set);
       } catch (error) {
         set({ error: message(error), errorKind: kindOf(error) });
       }
+    },
+    loadLibrary: async () => {
+      set({ library: await mediaLibrary.list() });
+    },
+    libraryUse: async (id, slot) => {
+      const item = get().library.find((i) => i.id === id);
+      const bytes = await mediaLibrary.getBytes(id);
+      if (!item || !bytes) {
+        set({ error: "That library item is no longer available." });
+        await get().loadLibrary();
+        return;
+      }
+      await get().loadSource(bytes, item.name, {
+        slot: slot ?? get().slot,
+        crop: item.lastCrop ?? { ...DEFAULT_CROP },
+        libraryId: id,
+      });
+    },
+    libraryRemove: async (id) => {
+      await mediaLibrary.remove(id);
+      await get().loadLibrary();
+    },
+    libraryClear: async () => {
+      await mediaLibrary.clear();
+      await get().loadLibrary();
     },
     loadStoredDisplay: async () => {
       try {
@@ -380,6 +672,10 @@ export const useAppStore = create<AppStore>((set, get) => {
             }),
           );
         }
+        for (const slot of SLOTS) {
+          const e = get().entries[slot];
+          if (e.source && e.info) void registerInLibrary(slot, e.source, e.name, e.info, get, set);
+        }
         // Stored contents are what the board holds — the undo baseline.
         set({ lastUploaded: cloneEntries(get().entries) });
         await get().refreshPreview();
@@ -390,79 +686,94 @@ export const useAppStore = create<AppStore>((set, get) => {
     setDelayMs: (delayMs) => set((state) => withEntry(state, state.slot, { delayMs })),
 
     schedulePreview: () => {
-      // Coalesce renders to one per frame-ish interval. This is a throttle, not
-      // a trailing debounce: a debounce reset the timer on every pointer move,
-      // so a continuous drag showed nothing until the pointer stopped.
-      if (get().previewTimer !== null) return;
+      // Trailing debounce: the live gesture is drawn client-side, so the true
+      // device render only needs to run once the crop has settled.
+      const pending = get().previewTimer;
+      if (pending !== null) window.clearTimeout(pending);
       const id = window.setTimeout(() => {
         set({ previewTimer: null });
         void get().refreshPreview();
-      }, 33);
+      }, PREVIEW_DEBOUNCE_MS);
       set({ previewTimer: id });
     },
 
     refreshPreview: async () => {
-      const sequence = ++previewSequence;
       const { entries, slot } = get();
+      const sequence = ++previewSequence[slot];
       const entry = entries[slot];
       if (!entry.source) {
         set({ previewUrl: null });
         return;
       }
+      const key = cropKey(entry.crop);
+      const source = entry.source;
       try {
-        const png = await ipc.previewDisplay(entry.source, entry.crop);
+        const png = await ipc.previewDisplay(source, entry.crop);
         // A newer crop or slot switch has already started; its result wins.
-        if (sequence !== previewSequence) return;
+        if (sequence !== previewSequence[slot]) return;
         const blob = new Blob([png], { type: "image/png" });
         const url = URL.createObjectURL(blob);
+        // Keep the previous frame on screen until this one is decoded: swapping an
+        // <img> to a still-loading blob URL paints a blank (black) frame.
+        await decodeUrl(url);
+        if (sequence !== previewSequence[slot]) {
+          URL.revokeObjectURL(url);
+          return;
+        }
         set((state) => {
-          if (state.previewUrl) URL.revokeObjectURL(state.previewUrl);
-          return { previewUrl: url, error: null, errorKind: null };
+          const current = state.entries[slot];
+          if (current.previewUrl) retireUrl(current.previewUrl);
+          if (current.source !== source) {
+            URL.revokeObjectURL(url);
+            return {};
+          }
+          return {
+            ...withEntry(state, slot, { previewUrl: url, previewKey: key }),
+            previewUrl: state.slot === slot ? url : state.previewUrl,
+            error: null,
+            errorKind: null,
+          };
         });
       } catch (error) {
-        if (sequence !== previewSequence) return;
+        if (sequence !== previewSequence[slot]) return;
         set({ error: message(error), errorKind: kindOf(error) });
       }
     },
 
     upload: async (delayMs, showAfter) => {
-      const { entries, slot, lastUploaded } = get();
-      const entry = entries[slot];
-      if (!entry.source) {
+      const { entries, slot } = get();
+      if (!entries[slot].source) {
         set({ error: "Choose an image or GIF first." });
         return;
       }
-      // Undo snapshot = what the board showed BEFORE this upload overwrote it,
-      // not the staging entries (which already contain the new image).
-      const previousBoard = lastUploaded ?? { slot0: emptyEntry(), slot1: emptyEntry() };
-      const snapshot: DisplayHistoryEntry = {
-        entries: cloneEntries(previousBoard),
-        slot,
-        delayMs: previousBoard[slot]?.delayMs ?? delayMs,
-        at: Date.now(),
-        label: previousBoard[slot]?.name || `Slot ${slot === "slot0" ? "0" : "1"} (previous)`,
-      };
       set({ uploads: get().uploads + 1, progress: { bytesSent: 0, totalBytes: 0 } });
       try {
-        await ipc.uploadDisplay({
-          slot,
-          name: entry.name,
-          bytes: entry.source,
-          crop: entry.crop,
-          delayMs,
-          showAfter,
-        });
-        set({
-          state: await ipc.readState(),
-          error: null,
-          errorKind: null,
-          displayHistory: [...get().displayHistory.slice(-9), snapshot],
-          lastUploaded: cloneEntries(entries),
-        });
+        await writeSlot(slot, delayMs, showAfter);
       } catch (error) {
         set({ error: message(error), errorKind: kindOf(error) });
       } finally {
         set({ uploads: Math.max(0, get().uploads - 1), progress: null });
+      }
+    },
+
+    uploadChanged: async (showAfter = true) => {
+      const { entries, lastUploaded, slot } = get();
+      const queue = dirtySlots(entries, lastUploaded, slot);
+      if (queue.length === 0) return;
+      set({ uploads: get().uploads + 1, progress: { bytesSent: 0, totalBytes: 0 } });
+      try {
+        for (const [i, s] of queue.entries()) {
+          set({ batch: { index: i + 1, total: queue.length, slot: s }, progress: { bytesSent: 0, totalBytes: 0 } });
+          try {
+            await writeSlot(s, get().entries[s].delayMs, showAfter && i === queue.length - 1);
+          } catch (error) {
+            // Earlier slots stay recorded as written; name the one that failed.
+            set({ error: `${slotLabel(s)}: ${message(error)}`, errorKind: kindOf(error) });
+            return;
+          }
+        }
+      } finally {
+        set({ uploads: Math.max(0, get().uploads - 1), progress: null, batch: null });
       }
     },
 
@@ -475,11 +786,12 @@ export const useAppStore = create<AppStore>((set, get) => {
     handleDisconnected: () =>
       set({
         connected: false,
+        activeTab: "device",
         connectingPath: null,
         state: null,
         draft: null,
         draftDirty: false,
-        error: "The keyboard was disconnected. Reconnect from the Device screen.",
+        error: "Keyboard disconnected.",
         errorKind: null,
       }),
 
@@ -489,7 +801,7 @@ export const useAppStore = create<AppStore>((set, get) => {
         const next = await ipc.setLighting(patch);
         const history = prev ? [...get().lightingHistory.slice(-19), { state: prev, at: Date.now(), label: "before write" }] : get().lightingHistory;
         saveJSON(LS_HISTORY, history);
-        set({ state: next, error: null, errorKind: null, draft: null, draftDirty: false, lightingHistory: history, lastSyncedAt: Date.now() });
+        set({ state: next, error: null, errorKind: null, draft: null, draftDirty: false, lightingHistory: history, lastSyncedAt: Date.now(), redoStack: [] });
         clearKey(LS_DRAFT);
       } catch (error) {
         set({ error: message(error), errorKind: kindOf(error) });
@@ -509,9 +821,9 @@ export const useAppStore = create<AppStore>((set, get) => {
     },
     loadPresets: async () => {
       try {
-        set({ presets: await ipc.listPresets() });
+        set({ presets: await ipc.listPresets(), presetsLoaded: true });
       } catch (error) {
-        set({ error: message(error), errorKind: kindOf(error) });
+        set({ error: message(error), errorKind: kindOf(error), presetsLoaded: true });
       }
     },
     syncClock: async () => {
@@ -530,30 +842,53 @@ export const useAppStore = create<AppStore>((set, get) => {
       const dirty = state
         ? JSON.stringify(patchFromState(next)) !== JSON.stringify(patchFromState(state))
         : true;
-      set({ draft: next, draftDirty: dirty, lastDiscardedDraft: null });
+      // Coalesce rapid edits (slider drags) into one undo step.
+      const now = Date.now();
+      const coalesce = get().draft !== null && now - lastDraftPush < 500;
+      lastDraftPush = now;
+      set({
+        draft: next,
+        draftDirty: dirty,
+        lastDiscardedDraft: null,
+        draftFuture: [],
+        applyFailed: false,
+        draftPast: coalesce ? get().draftPast : [...get().draftPast.slice(-29), get().draft],
+      });
       saveJSON(LS_DRAFT, next);
     },
 
     commitDraft: async () => {
-      const { draft, state: prev } = get();
-      if (!draft) return;
+      const { draft, state: prev, applying } = get();
+      // One write at a time: edits made mid-write stay staged and go out next.
+      if (!draft || applying) return;
+      set({ applying: true });
       try {
         const next = await ipc.setLighting(patchFromState(draft));
         const history = prev
           ? [...get().lightingHistory.slice(-19), { state: prev, at: Date.now(), label: "before draft write" }]
           : get().lightingHistory;
         saveJSON(LS_HISTORY, history);
-        set({ state: next, draft: null, draftDirty: false, lightingHistory: history, lastSyncedAt: Date.now(), error: null, errorKind: null, notice: "Lighting written ✓" });
-        clearKey(LS_DRAFT);
+        const latest = get().draft;
+        const edited = latest !== null && latest !== draft;
+        if (edited) {
+          const dirty = JSON.stringify(patchFromState(latest)) !== JSON.stringify(patchFromState(next));
+          set({ state: next, draft: dirty ? latest : null, draftDirty: dirty, lightingHistory: history, lastSyncedAt: Date.now(), error: null, errorKind: null, redoStack: [], applyFailed: false });
+          if (!dirty) clearKey(LS_DRAFT);
+        } else {
+          set({ state: next, draft: null, draftDirty: false, lightingHistory: history, lastSyncedAt: Date.now(), error: null, errorKind: null, ...(get().autoApply ? {} : { notice: "Lighting written ✓" }), redoStack: [], draftPast: [], draftFuture: [], applyFailed: false });
+          clearKey(LS_DRAFT);
+        }
       } catch (error) {
-        set({ error: message(error), errorKind: kindOf(error) });
+        set({ error: message(error), errorKind: kindOf(error), applyFailed: true });
+      } finally {
+        set({ applying: false });
       }
     },
 
     discardDraft: () => {
       const { draft } = get();
       if (!draft) return;
-      set({ draft: null, draftDirty: false, lastDiscardedDraft: draft, notice: "Draft discarded — Undo is in the Lighting bar." });
+      set({ draft: null, draftDirty: false, draftPast: [], draftFuture: [], applyFailed: false, lastDiscardedDraft: draft, notice: "Draft discarded — Undo is in the Lighting bar." });
       clearKey(LS_DRAFT);
     },
 
@@ -577,7 +912,8 @@ export const useAppStore = create<AppStore>((set, get) => {
         const next = await ipc.setLighting(patchFromState(prev as ipc.DeviceState));
         const rest = history.slice(0, -1);
         saveJSON(LS_HISTORY, rest);
-        set({ state: next, draft: null, draftDirty: false, lightingHistory: rest, lastSyncedAt: Date.now(), error: null, errorKind: null, notice: "Lighting undone ✓" });
+        const undone = get().state;
+        set({ redoStack: undone ? [...get().redoStack.slice(-19), { state: undone, at: Date.now(), label: "undone" }] : get().redoStack, state: next, draft: null, draftDirty: false, lightingHistory: rest, lastSyncedAt: Date.now(), error: null, errorKind: null, notice: "Lighting undone ✓" });
         clearKey(LS_DRAFT);
       } catch (error) {
         set({ error: message(error), errorKind: kindOf(error) });

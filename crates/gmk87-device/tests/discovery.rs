@@ -1,4 +1,6 @@
-use gmk87_device::discovery::{select_devices, RawHidDevice, TransportKind};
+use gmk87_device::discovery::{
+    is_filesystem_path, listed_contains, select_devices, RawHidDevice, TransportKind,
+};
 
 fn raw(pid: u16, usage_page: u16, path: &str) -> RawHidDevice {
     RawHidDevice {
@@ -44,4 +46,27 @@ fn lists_wired_and_wireless_separately_when_both_are_present() {
     assert_eq!(devices.len(), 2);
     assert_eq!(devices[0].label(), "GMK87 (wired)");
     assert_eq!(devices[1].label(), "GMK87 (2.4 GHz)");
+}
+
+#[test]
+fn linux_device_nodes_are_filesystem_paths_but_windows_interfaces_are_not() {
+    assert!(is_filesystem_path("/run/udev/gmk87-node"));
+    assert!(!is_filesystem_path(
+        r"\\?\hid#vid_320f&pid_5055#8&2f0e3c1&0&0000"
+    ));
+}
+
+#[test]
+fn presence_is_matched_case_insensitively_against_the_enumeration() {
+    let devices = [raw(0x5055, 0xff1c, r"\\?\hid#vid_320f&pid_5055#ABC")];
+    assert!(listed_contains(&devices, r"\\?\hid#vid_320f&pid_5055#abc"));
+    assert!(!listed_contains(&devices, r"\\?\hid#vid_320f&pid_5055#def"));
+}
+
+#[test]
+fn an_unplugged_filesystem_device_is_not_present() {
+    assert!(
+        !gmk87_device::discovery::device_present("/tmp/gmk87-node-that-does-not-exist")
+            .expect("a filesystem probe cannot fail")
+    );
 }

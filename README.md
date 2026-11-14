@@ -43,8 +43,12 @@ scope.
 - **Clock:** writes the system time to the keyboard in the device's packed-BCD
   format.
 
-Not in scope: keymap remapping, firmware updates, Windows/macOS, and reading the
-device's current settings — the hardware cannot be read at all (see below).
+Not in scope: keymap remapping, firmware updates, and reading the device's
+current settings — the hardware cannot be read at all (see below).
+
+The desktop app runs on Linux, macOS and Windows. Only Linux has been verified
+against hardware; the permission setup below is Linux-specific, and on Windows
+and macOS the keyboard is reached through the OS HID stack with no udev rule.
 
 ## Crate layout
 
@@ -204,6 +208,16 @@ Each slot's name, crop position and source bytes are stored under the app data
 directory; a source over 25 MB keeps its metadata but not its bytes, so that
 slot cannot be restored. (The device cannot be read back, so the saved copy is
 the only record of what each slot holds.)
+
+Connection monitoring is platform-aware. A healthy session is watched by
+re-enumerating HID devices rather than by testing the device path as a file:
+`/dev/hidraw*` is a filesystem node, but Windows reports paths such as
+`\\?\hid#vid_320f…` that `stat` can never resolve, and probing them as files
+dropped every Windows session about two seconds after it connected. A probe
+that cannot answer (an enumeration error) is treated as *inconclusive*, not as
+absence, two consecutive misses are required before a session is dropped, and
+each connect carries a generation counter so a stale watchdog cannot tear down
+a newer session.
 
 ### Run it
 

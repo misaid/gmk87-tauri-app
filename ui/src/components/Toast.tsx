@@ -21,14 +21,17 @@ export function Toast() {
     <div
       className={
         isError
-          ? "fixed right-4 top-14 z-40 rounded-lg border border-red-400/40 bg-red-950/90 px-4 py-2 text-sm text-red-200 shadow-lg"
-          : "fixed right-4 top-14 z-40 rounded-lg border border-emerald-400/40 bg-emerald-950/90 px-4 py-2 text-sm text-emerald-200 shadow-lg"
+          ? "fixed right-4 top-16 z-50 flex items-center gap-3 rounded-full border border-[var(--danger)]/40 bg-[#180d0d]/95 px-4 py-2 text-xs text-[#fecaca] shadow-lg backdrop-blur"
+          : "fixed right-4 top-16 z-50 flex items-center gap-3 rounded-full border border-[var(--success)]/30 bg-[#0c1512]/95 px-4 py-2 text-xs text-[#bbf7d0] shadow-lg backdrop-blur"
       }
       role={isError ? "alert" : "status"}
       aria-live="polite"
     >
       <span>{notice}</span>
-      <button className={`ml-3 underline ${isError ? "text-red-200/70" : "text-emerald-200/70"}`} onClick={() => setNotice(null)}>
+      <button
+        className={`underline underline-offset-2 ${isError ? "text-[#fecaca]/70" : "text-[#bbf7d0]/70"}`}
+        onClick={() => setNotice(null)}
+      >
         Dismiss
       </button>
     </div>

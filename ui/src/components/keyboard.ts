@@ -26,7 +26,7 @@ export interface PlateBox {
 type KeySpec = [col: number, row: number, width: number, height: number, label: string];
 
 const PITCH = 0.21;
-const GAP = 0.02;
+const GAP = 0.034;
 
 /** Pitch-cell width minus keycap width: the gap between adjacent keycaps. */
 export const KEY_GAP = GAP;
@@ -42,6 +42,32 @@ const FN_ROW_END = 15;
 const NAV_X0 = FN_ROW_END + 0.25;
 const NAV_W = 3;
 const TOTAL_W = NAV_X0 + NAV_W;
+
+// Board geometry in keyboard units (u), origin at the top-left of the key field.
+const CASE = { x: -0.35, y: -0.6, w: 18.95, h: 7.1 };
+const RECESS = { x: CASE.x + 0.1, y: CASE.y + 0.1, w: CASE.w - 0.2, h: CASE.h - 0.2 };
+// Plate exactly covers the key field.
+const PLATE = { x: 0, y: 0, w: TOTAL_W, h: ROWS };
+// Raised silver module (right end flush with key field's right edge).
+const MODULE = { x: 15.4, y: 0.04, w: 2.78, h: 0.8 };
+const SCREEN_RECESS = { x: 15.5, y: 0.1, w: 1.4, h: 0.68 };
+const SCREEN_ACTIVE = { x: 15.58, y: 0.15, w: 1.24, h: 0.58 };
+const KNOB = { cx: 17.68, cy: 0.44, d: 0.7 };
+const LIGHT_RECESS = { x: 16.47, y: 3.27, w: 1.56, h: 0.32 };
+const LIGHT_CAPSULE = { x: 16.55, y: 3.34, w: 1.4, h: 0.18 };
+
+function centerOf(box: { x: number; y: number; w: number; h: number }) {
+  return [box.x + box.w / 2, box.y + box.h / 2] as const;
+}
+
+function uToSceneCenter(x: number, y: number, w: number, h: number, ref = CASE): [number, number] {
+  const [rcx, rcy] = centerOf(ref);
+  return [((x + w / 2) - rcx) * PITCH, ((y + h / 2) - rcy) * PITCH];
+}
+
+function uBox(x: number, y: number, w: number, h: number, ref = CASE): PlateBox {
+  return { position: uToSceneCenter(x, y, w, h, ref), size: [w * PITCH, h * PITCH] };
+}
 
 const KEYS: KeySpec[] = [
   // Function row
@@ -78,18 +104,10 @@ const KEYS: KeySpec[] = [
   [NAV_X0, 5, 1, 1, "←"], [NAV_X0 + 1, 5, 1, 1, "↓"], [NAV_X0 + 2, 5, 1, 1, "→"],
 ];
 
-function sceneX(col: number, width: number): number {
-  return (col + width / 2 - TOTAL_W / 2) * PITCH;
-}
-
-function sceneY(row: number, height: number): number {
-  return (row + height / 2 - ROWS / 2) * PITCH;
-}
-
 /** A procedurally-built GMK87 key grid: no external model asset. */
 export function keyboardLayout(): KeyBox[] {
   return KEYS.map(([col, row, width, height]) => ({
-    position: [sceneX(col, width), sceneY(row, height)],
+    position: uToSceneCenter(col, row, width, height),
     size: [width * PITCH - GAP, height * PITCH - GAP],
   }));
 }
@@ -97,60 +115,69 @@ export function keyboardLayout(): KeyBox[] {
 /** Keycaps with their legends, for rendering labels on the flat 2D board. */
 export function labeledKeys(): LabeledKey[] {
   return KEYS.map(([col, row, width, height, label]) => ({
-    position: [sceneX(col, width), sceneY(row, height)],
+    position: uToSceneCenter(col, row, width, height),
     size: [width * PITCH - GAP, height * PITCH - GAP],
     label,
   }));
 }
 
-/** The status LCD, mounted above the Ins/Home/PgUp columns at function-row height. */
-export function displayLayout(): DisplayBox {
-  const col = NAV_X0;
-  const width = 2;
-  return {
-    position: [sceneX(col, width), sceneY(0, 1)],
-    size: [width * PITCH - GAP, 1 * PITCH - GAP],
-  };
+/** The case outer shell, sized to the full board including bezel. */
+export function caseLayout(): PlateBox {
+  return uBox(CASE.x, CASE.y, CASE.w, CASE.h);
 }
 
-/** The top-right plate carrying the display; the knob protrudes from its right end. */
-export function displayPlateLayout(): KeyBox {
-  return {
-    position: [sceneX(NAV_X0, NAV_W), sceneY(0, 1)],
-    size: [NAV_W * PITCH - GAP, PITCH - GAP],
-  };
+/** The inset recess inside the case lip. */
+export function recessLayout(): PlateBox {
+  return uBox(RECESS.x, RECESS.y, RECESS.w, RECESS.h);
 }
 
-/** The horizontal side LED strip, one key wide directly below PgDn. */
-export function ledBarLayout(): KeyBox {
-  const col = NAV_X0 + 2;
-  return {
-    position: [sceneX(col, 1), 0.065],
-    size: [PITCH - GAP, 0.18 * PITCH],
-  };
-}
-
-/** The rotary knob, mounted on the display plate in line with PgUp/PgDn. */
-export function knobLayout(): KnobBox {
-  const col = NAV_X0 + 2;
-  return {
-    position: [sceneX(col, 1), sceneY(0, 1)],
-    radius: 0.55 * PITCH,
-  };
-}
-
-/** The case/plate beneath the keys, sized to the full key cluster bounds. */
+/** The plate/switch mounting surface covering the key field. */
 export function plateLayout(): PlateBox {
-  const margin = 0.12;
+  return uBox(PLATE.x, PLATE.y, PLATE.w, PLATE.h);
+}
+
+/** The raised silver module panel (display + knob). */
+export function displayPlateLayout(): KeyBox {
+  return uBox(MODULE.x, MODULE.y, MODULE.w, MODULE.h);
+}
+
+/** The screen's black inset recess inside the module. */
+export function displayRecessLayout(): DisplayBox {
+  return uBox(SCREEN_RECESS.x, SCREEN_RECESS.y, SCREEN_RECESS.w, SCREEN_RECESS.h);
+}
+
+/** The 240×135 active screen area. */
+export function displayLayout(): DisplayBox {
+  return uBox(SCREEN_ACTIVE.x, SCREEN_ACTIVE.y, SCREEN_ACTIVE.w, SCREEN_ACTIVE.h);
+}
+
+/** The rotary knob, mounted on the module panel. */
+export function knobLayout(): KnobBox {
+  const [rcx, rcy] = centerOf(CASE);
   return {
-    position: [0, 0],
-    size: [TOTAL_W * PITCH + margin, ROWS * PITCH + margin],
+    position: [(KNOB.cx - rcx) * PITCH, (KNOB.cy - rcy) * PITCH],
+    radius: (KNOB.d / 2) * PITCH,
   };
+}
+
+/** The recessed pocket for the side LED bar. */
+export function ledBarRecessLayout(): KeyBox {
+  return uBox(LIGHT_RECESS.x, LIGHT_RECESS.y, LIGHT_RECESS.w, LIGHT_RECESS.h);
+}
+
+/** The frosted capsule inside the side LED pocket. */
+export function ledBarLayout(): KeyBox {
+  return uBox(LIGHT_CAPSULE.x, LIGHT_CAPSULE.y, LIGHT_CAPSULE.w, LIGHT_CAPSULE.h);
 }
 
 /** The key field's extent, for sizing the board panel to match. */
 export function fieldSize(): [number, number] {
   return [TOTAL_W * PITCH, ROWS * PITCH];
+}
+
+/** Board aspect ratio (case outer). */
+export function caseAspect(): number {
+  return CASE.w / CASE.h;
 }
 
 interface UnderglowInput {
@@ -165,4 +192,18 @@ export function underglowColor(state: UnderglowInput, brightnessOverride?: numbe
   if (state.underglow.rainbow === 1) return "#8b5cf6";
   const [r, g, b] = state.underglow.color;
   return `rgb(${Math.round(r * scale)}, ${Math.round(g * scale)}, ${Math.round(b * scale)})`;
+}
+
+export interface PartAnchor {
+  /** Centre of the part as a percentage of the case (0..100). */
+  x: number;
+  y: number;
+}
+
+/** Where the callout pins sit on the case: screen, knob, side light bar and the Win key. */
+export function partAnchors(): { screen: PartAnchor; knob: PartAnchor; bar: PartAnchor; win: PartAnchor } {
+  const [cw, ch] = caseLayout().size;
+  const pct = (p: [number, number]): PartAnchor => ({ x: ((p[0] + cw / 2) / cw) * 100, y: ((p[1] + ch / 2) / ch) * 100 });
+  const win = labeledKeys().find((k) => k.label === "WIN") ?? labeledKeys()[0];
+  return { screen: pct(displayLayout().position), knob: pct(knobLayout().position), bar: pct(ledBarLayout().position), win: pct(win.position) };
 }

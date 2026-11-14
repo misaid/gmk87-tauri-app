@@ -32,7 +32,7 @@ vi.mock("./lib/ipc", () => ({
 }));
 
 import { DEFAULT_CROP } from "./lib/crop";
-import { useAppStore, type SlotEntry } from "./store";
+import { dirtySlots, useAppStore, type SlotEntry } from "./store";
 
 function emptyEntry(): SlotEntry {
   return { source: null, name: "", info: null, crop: { ...DEFAULT_CROP }, delayMs: 100 };
@@ -135,6 +135,7 @@ describe("store", () => {
   });
 
   it("revokes the previous preview URL", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
     const revoke = vi.spyOn(URL, "revokeObjectURL");
     useAppStore.setState((s) => ({
       entries: {
@@ -145,11 +146,15 @@ describe("store", () => {
     await useAppStore.getState().refreshPreview();
     const first = useAppStore.getState().previewUrl;
     await useAppStore.getState().refreshPreview();
+    // The old URL is retired after a grace period so an <img> never blanks mid-swap.
+    expect(revoke).not.toHaveBeenCalledWith(first);
+    vi.advanceTimersByTime(2100);
     expect(revoke).toHaveBeenCalledWith(first);
+    vi.useRealTimers();
     revoke.mockRestore();
   });
 
-  it("throttles the preview during a continuous drag", async () => {
+  it("debounces the backend preview until the crop settles", async () => {
     vi.useFakeTimers();
     const ipc = await import("./lib/ipc");
     vi.mocked(ipc.previewDisplay).mockClear();
@@ -159,16 +164,31 @@ describe("store", () => {
         slot0: { ...s.entries.slot0, source: new Uint8Array([1]), name: "x.png" },
       },
     }));
-    // A stream of pointer moves must still refresh while the drag continues,
-    // rather than only after the pointer stops.
-    useAppStore.getState().setCrop({ offsetX: 0.1, offsetY: 0, zoom: 1, fit: "cover" });
-    useAppStore.getState().setCrop({ offsetX: 0.2, offsetY: 0, zoom: 1, fit: "cover" });
-    await vi.advanceTimersByTimeAsync(40);
+    for (let i = 1; i <= 20; i++) {
+      useAppStore.getState().setCrop({ offsetX: i / 100, offsetY: 0, zoom: 1, fit: "cover" });
+      await vi.advanceTimersByTimeAsync(16);
+    }
+    expect(vi.mocked(ipc.previewDisplay)).toHaveBeenCalledTimes(0);
+    await vi.advanceTimersByTimeAsync(250);
     expect(vi.mocked(ipc.previewDisplay)).toHaveBeenCalledTimes(1);
-    useAppStore.getState().setCrop({ offsetX: 0.3, offsetY: 0, zoom: 1, fit: "cover" });
-    await vi.advanceTimersByTimeAsync(40);
-    expect(vi.mocked(ipc.previewDisplay)).toHaveBeenCalledTimes(2);
     vi.useRealTimers();
+  });
+
+  it("switches slots without any backend call once both are rendered", async () => {
+    const ipc = await import("./lib/ipc");
+    useAppStore.getState().loadSource(new Uint8Array([1]), "a.png");
+    useAppStore.getState().setSlot("slot1");
+    useAppStore.getState().loadSource(new Uint8Array([2]), "b.png");
+    await vi.waitFor(() => expect(useAppStore.getState().entries.slot1.previewUrl).toBeTruthy());
+    await vi.waitFor(() => expect(useAppStore.getState().entries.slot0.previewUrl).toBeTruthy());
+    const spies = [ipc.previewDisplay, ipc.inspectSource, ipc.loadDisplayStore].map((f) => vi.mocked(f));
+    spies.forEach((f) => f.mockClear());
+    for (let i = 0; i < 10; i++) {
+      useAppStore.getState().setSlot(i % 2 ? "slot1" : "slot0");
+    }
+    await new Promise((r) => setTimeout(r, 50));
+    spies.forEach((f) => expect(f).not.toHaveBeenCalled());
+    expect(useAppStore.getState().previewUrl).toBe(useAppStore.getState().entries.slot1.previewUrl);
   });
 
   it("tracks connectingPath while a connect is in flight and clears it on success", async () => {
@@ -243,6 +263,32 @@ describe("store", () => {
     expect(useAppStore.getState().lightingHistory[0].state.underglow.effect).toBe(6);
   });
 
+  it("keeps an edit made while a write is in flight, and applies live by default", async () => {
+    const ipc = await import("./lib/ipc");
+    expect(useAppStore.getState().autoApply).toBe(true);
+    vi.mocked(ipc.setLighting).mockClear();
+    const mk = (effect: number) => ({
+      connected: true, synced: true,
+      underglow: { effect, brightness: 5, speed: 4, orientation: 0, rainbow: 0, color: [0, 0, 255] as [number, number, number] },
+      led: { mode: 3, saturation: 5, rainbow: 0, color: 0 }, winLock: false, show: 0, slot0Frames: 1, slot1Frames: 1, frameDelayMs: 100,
+      time: [2026, 11, 9, 0, 12, 0, 0] as [number, number, number, number, number, number, number],
+    });
+    let release: (v: never) => void = () => {};
+    vi.mocked(ipc.setLighting).mockImplementationOnce(() => new Promise((r) => { release = r as never; }));
+    useAppStore.setState({ state: mk(6) as never, draft: null, draftDirty: false, lightingHistory: [] });
+    useAppStore.getState().setLightingDraft({ underglowEffect: 11 });
+    const writing = useAppStore.getState().commitDraft();
+    // A second commit while one is in flight is ignored; a newer edit stays staged.
+    void useAppStore.getState().commitDraft();
+    useAppStore.getState().setLightingDraft({ underglowEffect: 14 });
+    release(mk(11) as never);
+    await writing;
+    expect(vi.mocked(ipc.setLighting)).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().state?.underglow.effect).toBe(11);
+    expect(useAppStore.getState().draftDirty).toBe(true);
+    expect(useAppStore.getState().draft?.underglow.effect).toBe(14);
+  });
+
   it("undoes a lighting write to the previous board state", async () => {
     const ipc = await import("./lib/ipc");
     const prev = {
@@ -303,5 +349,132 @@ describe("store", () => {
     expect(useAppStore.getState().entries.slot0.name).toBe("first.png");
     expect(Array.from(useAppStore.getState().entries.slot0.source!)).toEqual([1]);
     expect(useAppStore.getState().displayHistory).toHaveLength(1);
+  });
+
+  describe("write changed slots", () => {
+    const boardState = { connected: true } as never;
+    const entryOf = (b: number, name: string): SlotEntry => ({
+      ...emptyEntry(),
+      source: new Uint8Array([b]),
+      name,
+      info: { isGif: false, frames: 1, delayMs: 100, sourceFrames: 1, dropped: [] },
+    });
+    async function setup(slot1: SlotEntry | null) {
+      const ipc = await import("./lib/ipc");
+      vi.mocked(ipc.uploadDisplay).mockClear();
+      vi.mocked(ipc.readState).mockResolvedValue(boardState);
+      useAppStore.setState({
+        connected: true,
+        state: boardState,
+        slot: "slot1",
+        entries: { slot0: entryOf(1, "a.png"), slot1: slot1 ?? emptyEntry() },
+        lastUploaded: null,
+        displayHistory: [],
+      });
+      return ipc;
+    }
+
+    it("writes every changed slot in order from one call, viewed slot last", async () => {
+      const ipc = await setup(entryOf(2, "b.png"));
+      await useAppStore.getState().uploadChanged(true);
+      const calls = vi.mocked(ipc.uploadDisplay).mock.calls.map(([a]) => [a.slot, a.showAfter]);
+      expect(calls).toEqual([["slot0", false], ["slot1", true]]);
+      expect(dirtySlots(useAppStore.getState().entries, useAppStore.getState().lastUploaded, "slot1")).toEqual([]);
+    });
+
+    it("writes only the one changed slot", async () => {
+      const ipc = await setup(null);
+      await useAppStore.getState().uploadChanged(true);
+      expect(vi.mocked(ipc.uploadDisplay)).toHaveBeenCalledTimes(1);
+    });
+
+    it("does nothing when nothing changed", async () => {
+      const ipc = await setup(entryOf(2, "b.png"));
+      await useAppStore.getState().uploadChanged(true);
+      vi.mocked(ipc.uploadDisplay).mockClear();
+      await useAppStore.getState().uploadChanged(true);
+      expect(vi.mocked(ipc.uploadDisplay)).not.toHaveBeenCalled();
+    });
+
+    it("keeps the first slot clean and names the second when it fails", async () => {
+      const ipc = await setup(entryOf(2, "b.png"));
+      useAppStore.setState({ slot: "slot1" });
+      vi.mocked(ipc.uploadDisplay).mockResolvedValueOnce(undefined as never).mockRejectedValueOnce("boom");
+      await useAppStore.getState().uploadChanged(true);
+      const { entries, lastUploaded, error } = useAppStore.getState();
+      expect(error).toContain("Slot 1");
+      expect(dirtySlots(entries, lastUploaded, "slot1")).toEqual(["slot1"]);
+    });
+  });
+
+  it("locks other tabs until connected and opens Lighting after connecting", async () => {
+    useAppStore.getState().setActiveTab("display");
+    expect(useAppStore.getState().activeTab).toBe("device");
+    await useAppStore.getState().connectTo("/dev/hidraw12");
+    expect(useAppStore.getState().activeTab).toBe("lighting");
+    useAppStore.getState().handleDisconnected();
+    expect(useAppStore.getState().activeTab).toBe("device");
+  });
+
+  it("auto-connects only when exactly one device is found", async () => {
+    await useAppStore.getState().autoConnect();
+    expect(useAppStore.getState().connected).toBe(true);
+  });
+
+  describe("trust layer", () => {
+    const board = {
+      connected: true,
+      synced: true,
+      underglow: { effect: 6, brightness: 5, speed: 4, orientation: 0, rainbow: 0, color: [0, 0, 255] as [number, number, number] },
+      led: { mode: 3, saturation: 5, rainbow: 0, color: 0 },
+      winLock: false,
+      show: 0,
+      slot0Frames: 1,
+      slot1Frames: 1,
+      frameDelayMs: 100,
+      time: [2026, 11, 9, 0, 12, 0, 0] as [number, number, number, number, number, number, number],
+    };
+
+    it("undoes and redoes staged edits", async () => {
+      useAppStore.setState({ state: board as never, draft: null, draftDirty: false, draftPast: [], draftFuture: [], redoStack: [], lightingHistory: [] });
+      useAppStore.getState().setLightingDraft({ underglowEffect: 11 });
+      expect(useAppStore.getState().draft?.underglow.effect).toBe(11);
+      await useAppStore.getState().undo();
+      expect(useAppStore.getState().draft).toBeNull();
+      expect(useAppStore.getState().draftDirty).toBe(false);
+      await useAppStore.getState().redo();
+      expect(useAppStore.getState().draft?.underglow.effect).toBe(11);
+      expect(useAppStore.getState().draftDirty).toBe(true);
+    });
+
+    it("redoes an undone board write and clears redo on a new commit", async () => {
+      const ipc = await import("./lib/ipc");
+      const current = { ...board, underglow: { ...board.underglow, effect: 11 } };
+      useAppStore.setState({ state: current as never, lightingHistory: [{ state: board as never, at: 1, label: "x" }], draft: null, draftDirty: false, draftPast: [], draftFuture: [], redoStack: [] });
+      vi.mocked(ipc.setLighting).mockResolvedValueOnce(board as never);
+      await useAppStore.getState().undo();
+      expect(useAppStore.getState().redoStack).toHaveLength(1);
+      vi.mocked(ipc.setLighting).mockResolvedValueOnce(current as never);
+      await useAppStore.getState().redo();
+      expect(useAppStore.getState().state?.underglow.effect).toBe(11);
+      expect(useAppStore.getState().redoStack).toHaveLength(0);
+    });
+
+    it("stages a profile into the draft without writing", async () => {
+      const ipc = await import("./lib/ipc");
+      vi.mocked(ipc.setLighting).mockClear();
+      useAppStore.setState({ state: board as never, draft: null, draftDirty: false, draftPast: [], draftFuture: [] });
+      useAppStore.getState().stageProfile({
+        id: "p1",
+        name: "Night",
+        lighting: { underglow: { ...board.underglow, effect: 16, brightness: 2 }, led: board.led, winLock: false },
+        display: { slot: "slot0", delayMs: 100 },
+        createdAt: 1,
+        updatedAt: 1,
+      });
+      expect(vi.mocked(ipc.setLighting)).not.toHaveBeenCalled();
+      expect(useAppStore.getState().draft?.underglow.effect).toBe(16);
+      expect(useAppStore.getState().activeProfileId).toBe("p1");
+    });
   });
 });
