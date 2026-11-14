@@ -46,7 +46,7 @@ export function peakTime(effect: number): number {
   if (hit !== undefined) return hit;
   let best = 0;
   let bestScore = -1;
-  for (let t = 0; t < 1600; t += 40) {
+  for (let t = 0; t < 6400; t += 160) {
     const is = thumbFrame({ effect, brightness: 9, speed: 3, orientation: 0, rainbow: 0, color: [255, 255, 255] }, t).map((k) => k.i);
     const mean = is.reduce((a, v) => a + v, 0) / is.length;
     const score = is.reduce((a, v) => a + (v - mean) ** 2, 0) / is.length;

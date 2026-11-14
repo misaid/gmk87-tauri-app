@@ -20,7 +20,7 @@ function lighting(overrides: Partial<LedLighting> = {}): LedLighting {
 
 /** The gallery's canonical thumbnail base and fixed sample time. */
 const THUMB_BASE: LedLighting = { ...lighting(), brightness: 6 };
-const THUMB_TIME_MS = 1600;
+const THUMB_TIME_MS = 6400;
 
 describe("ledSample", () => {
   it("is deterministic: the same inputs always yield the same sample", () => {
@@ -115,10 +115,10 @@ describe("ledSample", () => {
   it("mirrors the horizontal gradient when orientation flips", () => {
     const forward = lighting({ effect: 1, orientation: 0 });
     const reversed = lighting({ effect: 1, orientation: 1 });
-    const fwdLeft = ledSample(forward, 0.1, 0.5, 0, 500);
-    const revRight = ledSample(reversed, 0.9, 0.5, 80, 500);
+    const fwdLeft = ledSample(forward, 0.1, 0.5, 0, 2000);
+    const revRight = ledSample(reversed, 0.9, 0.5, 80, 2000);
     expect(fwdLeft).toEqual(revRight);
-    const fwdRight = ledSample(forward, 0.9, 0.5, 80, 500);
+    const fwdRight = ledSample(forward, 0.9, 0.5, 80, 2000);
     expect(fwdLeft).not.toEqual(fwdRight);
   });
 

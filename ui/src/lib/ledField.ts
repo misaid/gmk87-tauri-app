@@ -48,8 +48,8 @@ function wave(x: number): number {
   return 0.5 + 0.5 * Math.cos(TAU * x);
 }
 
-/** The real board runs its effects at about half the speed the preview first used. */
-export const BOARD_TIME_SCALE = 0.5;
+/** The real board runs its effects at about a quarter of the speed the preview first used. */
+export const BOARD_TIME_SCALE = 0.25;
 
 /** Animation rate in cycles/second. Device speed 0 is the fastest. */
 function rate(speed: number): number {
