@@ -570,7 +570,7 @@ export const useAppStore = create<AppStore>((set, get) => {
       try {
         const state = await ipc.connect(path);
         const queued = get().draft;
-        set({ state, connected: state.connected, activeTab: state.connected ? "lighting" : "device", error: null, errorKind: null, draft: queued, draftDirty: queued != null ? JSON.stringify(patchFromState(queued)) !== JSON.stringify(patchFromState(state)) : false });
+        set({ state, connected: state.connected, error: null, errorKind: null, draft: queued, draftDirty: queued != null ? JSON.stringify(patchFromState(queued)) !== JSON.stringify(patchFromState(state)) : false });
         if (queued == null) clearKey(LS_DRAFT);
         await get().refreshPreview();
       } catch (error) {

@@ -407,11 +407,11 @@ describe("store", () => {
     });
   });
 
-  it("locks other tabs until connected and opens Lighting after connecting", async () => {
+  it("locks other tabs until connected and stays on the current page after connecting", async () => {
     useAppStore.getState().setActiveTab("display");
     expect(useAppStore.getState().activeTab).toBe("device");
     await useAppStore.getState().connectTo("/dev/hidraw12");
-    expect(useAppStore.getState().activeTab).toBe("lighting");
+    expect(useAppStore.getState().activeTab).toBe("device");
     useAppStore.getState().handleDisconnected();
     expect(useAppStore.getState().activeTab).toBe("device");
   });

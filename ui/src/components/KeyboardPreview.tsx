@@ -45,8 +45,6 @@ const SPILL_BOX: CSSProperties = {
   width: `calc(100% + ${SPILL_X * 2}px)`,
   height: `calc(100% + ${SPILL_TOP + SPILL_BOTTOM}px)`,
 };
-/** How much vertical knob drag equals one brightness step. */
-const KNOB_STEP_PX = 18;
 
 /** Width in px of the hero board, so panels under it can match it exactly. */
 export function heroBoardWidth(): number {
@@ -155,7 +153,6 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
   const draftRim = draftDirty && (!autoApply || !connectedNow);
   const previewEffect = useAppStore((s) => s.previewEffect);
   const setActiveTab = useAppStore((s) => s.setActiveTab);
-  const setLightingDraft = useAppStore((s) => s.setLightingDraft);
   const reduceMotion = useReducedMotion();
   const motionPaused = reduceMotion || paused;
 
@@ -216,13 +213,6 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
   const registerLegend = useRef((i: number, el: HTMLSpanElement | null) => {
     legends.current[i] = el;
   }).current;
-
-  const nudgeBrightness = (delta: number) => {
-    if (!interactive) return;
-    const base = effective ?? OFFLINE_STATE;
-    const next = Math.min(9, Math.max(0, base.underglow.brightness + delta));
-    if (next !== base.underglow.brightness) setLightingDraft({ underglowBrightness: next });
-  };
 
   // The case is sized by the board's aspect ratio; the canvas is the case plus
   // spill margins so the underglow can be drawn outside the board's footprint.
@@ -499,14 +489,11 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
     return () => window.removeEventListener(OPEN_LIGHT_BAR_EVENT, open);
   }, []);
 
-  const dragStart = useRef<number | null>(null);
-  const dragStage = useRef(0);
 
   const showPreview = Boolean(previewUrl);
   const clock = effective ? effective.time : OFFLINE_STATE.time;
   const clockLabel = `${String(clock[4]).padStart(2, "0")}:${String(clock[5]).padStart(2, "0")}`;
   const dateLabel = `${new Date(clock[0], Math.max(0, clock[1] - 1), clock[2]).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}`;
-  const brightness = state.underglow.brightness;
 
   // Plain matte-black knob with one notch, like the real one.
   const knobFace = "radial-gradient(circle at 36% 28%, #3b3e46 0%, #1b1d22 55%, #0f1013 100%)";
@@ -516,8 +503,8 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
       role="group"
       aria-label={
         effective
-          ? `Keyboard preview: underglow effect ${effective.underglow.effect}, brightness ${effective.underglow.brightness} of 9${draftDirty ? ", draft not yet on board" : ""}. Knob controls brightness.`
-          : "Keyboard preview: disconnected. Knob controls brightness."
+          ? `Keyboard preview: underglow effect ${effective.underglow.effect}, brightness ${effective.underglow.brightness} of 9${draftDirty ? ", draft not yet on board" : ""}.`
+          : "Keyboard preview: disconnected."
       }
       className={cn("relative w-full p-2", hero && "overflow-hidden", className)}
     >
@@ -697,16 +684,10 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
             />
           </div>
 
-          {/* Rotary knob */}
+          {/* Knob: decorative only */}
           <div
-            role="slider"
-            tabIndex={0}
-            aria-label="Brightness"
-            aria-valuemin={0}
-            aria-valuemax={9}
-            aria-valuenow={brightness}
-            aria-disabled={!interactive}
-            className={cn("absolute rounded-full", interactive && "cursor-ns-resize")}
+            aria-hidden
+            className="pointer-events-none absolute rounded-full"
             style={{
               left: `${knobRect.left}%`,
               top: `${knobRect.top}%`,
@@ -715,36 +696,8 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
               backgroundImage: knobFace,
               boxShadow: "inset 0 1px 1px rgba(255,255,255,0.14), 0 0 0 1px #2a2d34, 0 2px 4px rgba(0,0,0,0.6)",
             }}
-            onPointerDown={(e) => {
-              if (!interactive) return;
-              dragStart.current = e.clientY;
-              dragStage.current = 0;
-              e.currentTarget.setPointerCapture?.(e.pointerId);
-            }}
-            onPointerMove={(e) => {
-              if (dragStart.current === null) return;
-              const stage = Math.trunc((dragStart.current - e.clientY) / KNOB_STEP_PX);
-              if (stage !== dragStage.current) {
-                nudgeBrightness(stage - dragStage.current);
-                dragStage.current = stage;
-              }
-            }}
-            onPointerUp={() => {
-              dragStart.current = null;
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "ArrowUp") { e.preventDefault(); nudgeBrightness(1); }
-              else if (e.key === "ArrowDown") { e.preventDefault(); nudgeBrightness(-1); }
-            }}
           >
-            {/* Notch: turns with brightness (0 = lower-left, 9 = lower-right) */}
-            <span
-              aria-hidden
-              className="pointer-events-none absolute inset-0"
-              style={{ transform: `rotate(${-135 + (brightness / 9) * 270}deg)` }}
-            >
-              <span className="absolute left-1/2 top-[10%] h-[24%] w-[7%] -translate-x-1/2 rounded-full bg-white/80" />
-            </span>
+            <span className="absolute left-1/2 top-[10%] h-[24%] w-[7%] -translate-x-1/2 rounded-full bg-white/80" />
           </div>
 
           {/* Light bar recess */}
