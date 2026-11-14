@@ -359,10 +359,8 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
   const clockLabel = `${clock[4]}:${String(clock[5]).padStart(2, "0")}:${String(clock[6]).padStart(2, "0")}`;
   const brightness = state.underglow.brightness;
 
-  // Coarse knurling (28 ridges, not 300+) under a domed shade: at ~52px per key
-  // fine stops alias into noise instead of reading as machined metal.
-  const knobFace =
-    "radial-gradient(circle at 34% 26%, rgba(255,255,255,0.34) 0%, rgba(255,255,255,0.08) 26%, rgba(0,0,0,0.10) 58%, rgba(0,0,0,0.55) 100%), repeating-conic-gradient(from 8deg, #b9c0ca 0deg 6.4deg, #6d7481 6.4deg 12.8deg)";
+  // Plain matte-black knob with one notch, like the real one.
+  const knobFace = "radial-gradient(circle at 36% 28%, #3b3e46 0%, #1b1d22 55%, #0f1013 100%)";
 
   return (
     <div
@@ -469,7 +467,7 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
             />
           ))}
 
-          {/* Raised silver module panel */}
+          {/* Black module panel */}
           <div
             aria-hidden
             className="pointer-events-none absolute"
@@ -480,11 +478,9 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
               height: `${moduleRect.height}%`,
               borderRadius: "4%",
               backgroundImage:
-                "linear-gradient(180deg, #aeafaa 0%, #979893 42%, #76776f 100%), repeating-linear-gradient(90deg, rgba(255,255,255,0.04) 0 1px, transparent 1px 3px)",
-              backgroundBlendMode: "normal, soft-light",
-              boxShadow:
-                "inset 0 1px 0 rgba(255,255,255,0.30), inset 0 0 9px rgba(0,0,0,0.38), 0 1px 0 rgba(255,255,255,0.06), 0 3px 6px rgba(0,0,0,0.5)",
-              border: "1px solid rgba(255,255,255,0.10)",
+                "linear-gradient(180deg, #1c1e24 0%, #121418 100%)",
+              boxShadow: "inset 0 1px 0 rgba(255,255,255,0.07), 0 2px 5px rgba(0,0,0,0.5)",
+              border: "1px solid rgba(255,255,255,0.06)",
             }}
           />
 
@@ -551,9 +547,7 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
               width: `${knobRect.width}%`,
               height: `${knobRect.height}%`,
               backgroundImage: knobFace,
-              backgroundBlendMode: "overlay",
-              boxShadow:
-                "inset 0 1px 2px rgba(255,255,255,0.22), 0 0 0 1px #2a2d34, 0 3px 6px rgba(0,0,0,0.55), 0 1px 2px rgba(0,0,0,0.35)",
+              boxShadow: "inset 0 1px 1px rgba(255,255,255,0.14), 0 0 0 1px #2a2d34, 0 2px 4px rgba(0,0,0,0.6)",
             }}
             onPointerDown={(e) => {
               if (!interactive) return;
@@ -576,7 +570,16 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
               if (e.key === "ArrowUp") { e.preventDefault(); nudgeBrightness(1); }
               else if (e.key === "ArrowDown") { e.preventDefault(); nudgeBrightness(-1); }
             }}
-          />
+          >
+            {/* Notch: turns with brightness (0 = lower-left, 9 = lower-right) */}
+            <span
+              aria-hidden
+              className="pointer-events-none absolute inset-0"
+              style={{ transform: `rotate(${-135 + (brightness / 9) * 270}deg)` }}
+            >
+              <span className="absolute left-1/2 top-[10%] h-[24%] w-[7%] -translate-x-1/2 rounded-full bg-white/80" />
+            </span>
+          </div>
 
           {/* Light bar recess */}
           <div
