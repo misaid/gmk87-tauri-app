@@ -16,7 +16,7 @@ const THUMB_BASE: LedLighting = {
 };
 const ROWS = 4;
 const COLS = 14;
-const GRID_COLS = 4;
+const GRID_COLS = 5;
 const UNLIT = "#1e2733";
 /** Idle cells sit at ~15% of the lit colour over near-black. */
 const IDLE = "#0a0c10";
@@ -74,10 +74,33 @@ function Thumb({
     return (
       <span
         aria-hidden
-        className="flex h-[26px] items-center justify-center rounded-[4px] text-white/45"
-        style={{ background: UNLIT }}
+        className="flex h-[26px] items-center justify-center gap-1.5 rounded-[4px] text-white/55"
+        style={{ background: "#07080b", boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.07)" }}
       >
-        <Ban className="size-3.5" />
+        <span className="flex flex-col gap-[2px]">
+          {[0, 1, 2].map((r) => (
+            <span key={r} className="flex gap-[2px]">
+              {Array.from({ length: 6 }, (_, c) => (
+                <span key={c} className="size-[3px] rounded-[1px] bg-white/[0.12]" />
+              ))}
+            </span>
+          ))}
+        </span>
+        <Ban className="size-3" />
+      </span>
+    );
+  }
+  if (effect === 11) {
+    // Rainbow breathe cycles every hue, so show the hue sweep rather than the single colour.
+    return (
+      <span aria-hidden className="flex flex-col gap-[2px]">
+        {Array.from({ length: ROWS }, (_, i) => (
+          <span
+            key={i}
+            className="h-[5px] rounded-[2px]"
+            style={{ background: "linear-gradient(90deg, #ff3b30, #ffcc00, #30d158, #40c8e0, #0a84ff, #8b5cf6)", filter: `brightness(${0.7 + 0.15 * i})` }}
+          />
+        ))}
       </span>
     );
   }
@@ -140,11 +163,11 @@ export function EffectGallery({
   };
 
   return (
-    <div role="radiogroup" aria-label="Underglow effect" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+    <div role="radiogroup" aria-label="Underglow effect" className="grid grid-cols-2 gap-2 sm:grid-cols-5">
       {UNDERGLOW_EFFECTS.map((effect, i) => {
         const selected = effect.value === value;
         const Icon = EFFECT_ICON[effect.value];
-        const span = effect.value === 0 ? "col-span-2" : "";
+        const span = "";
         return (
           <button
             key={effect.value}

@@ -5,6 +5,7 @@ import { CircleHelp } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { KeyboardPreview } from "@/components/KeyboardPreview";
+import { LightingDock } from "@/components/LightingDock";
 import { HelpDialog } from "@/components/HelpDialog";
 import { Toast } from "@/components/Toast";
 import { useDeviceEvents } from "@/lib/useDeviceEvents";
@@ -100,6 +101,22 @@ export default function App() {
 
   const Screen = SCREENS[tab];
 
+  const chipBtn =
+    "inline-flex h-6 items-center rounded-full border border-[var(--line-strong)] px-2.5 text-[12px] text-[var(--text)] transition-colors hover:border-white/40 hover:bg-white/[0.06] focus-visible:outline focus-visible:outline-2 focus-visible:outline-white";
+  /** Switch to Lighting if needed, then scroll to and focus the matching control. */
+  function jumpTo(selector: string) {
+    const go = () => {
+      const el = document.querySelector<HTMLElement>(selector);
+      if (!el) return;
+      el.scrollIntoView({ block: "center", behavior: reduceMotion ? "auto" : "smooth" });
+      el.focus({ preventScroll: true });
+    };
+    if (tab !== "lighting") {
+      setTab("lighting");
+      window.setTimeout(go, 450);
+    } else go();
+  }
+
   const effectName = effective
     ? UNDERGLOW_EFFECTS.find((e) => e.value === effective.underglow.effect)?.name ?? "Off"
     : "—";
@@ -180,12 +197,17 @@ export default function App() {
             <div className={tab === "lighting" ? "w-full" : "mx-auto w-full max-w-[600px]"}>
               <KeyboardPreview className="w-full" hero={tab === "lighting"} />
             </div>
-            <div className="flex flex-wrap items-center justify-center gap-1.5 text-[var(--muted)]">
-              <span className="inline-flex h-6 items-center rounded-full border border-[var(--line)] px-2.5 text-[12px] font-medium text-[var(--text)]">{effectName}</span>
-              <span className="inline-flex h-6 items-center rounded-full border border-[var(--line)] px-2.5 text-[12px]">{effective ? brightnessLabel(effective.underglow.brightness) : "—"}</span>
-              <span className="inline-flex h-6 items-center rounded-full border border-[var(--line)] px-2.5 text-[12px]">{sideLedName}</span>
+            {tab === "lighting" && <LightingDock />}
+            <div className="flex flex-wrap items-center justify-center gap-1.5">
+              {tab !== "lighting" && <span className="inline-flex h-6 items-center rounded-full border border-[var(--line-strong)] px-2.5 text-[12px] font-medium text-[var(--text)]">{effectName}</span>}
+              <button type="button" onClick={() => jumpTo("#lighting-brightness [role='slider']")} className={chipBtn}>
+                {effective ? brightnessLabel(effective.underglow.brightness) : "—"}
+              </button>
+              <button type="button" onClick={() => jumpTo("#side-light-bar")} className={chipBtn}>
+                {sideLedName}
+              </button>
               {draftQueuedOffline && (
-                <span className="inline-flex h-6 items-center rounded-full border border-[var(--line)] px-2.5 text-[12px] border-[var(--accent)]/40 font-medium text-[var(--accent)]">Will apply when connected</span>
+                <span className="inline-flex h-6 items-center rounded-full border border-[var(--accent)]/40 px-2.5 text-[12px] font-medium text-[var(--accent)]">Will apply when connected</span>
               )}
             </div>
           </section>

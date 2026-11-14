@@ -405,7 +405,8 @@ export function KeyboardPreview({ className, interactive = true, hero = false }:
 
   const showPreview = Boolean(effective && effective.show !== 0 && previewUrl);
   const clock = effective ? effective.time : OFFLINE_STATE.time;
-  const clockLabel = `${clock[4]}:${String(clock[5]).padStart(2, "0")}:${String(clock[6]).padStart(2, "0")}`;
+  const clockLabel = `${String(clock[4]).padStart(2, "0")}:${String(clock[5]).padStart(2, "0")}`;
+  const dateLabel = `${new Date(clock[0], Math.max(0, clock[1] - 1), clock[2]).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}`;
   const brightness = state.underglow.brightness;
 
   // Plain matte-black knob with one notch, like the real one.
@@ -419,14 +420,8 @@ export function KeyboardPreview({ className, interactive = true, hero = false }:
           ? `Keyboard preview: underglow effect ${effective.underglow.effect}, brightness ${effective.underglow.brightness} of 9${draftDirty ? ", draft not yet on board" : ""}. Knob controls brightness.`
           : "Keyboard preview: disconnected. Knob controls brightness."
       }
-      className={cn("relative w-full overflow-hidden p-2", className)}
+      className={cn("relative w-full p-2", hero && "overflow-hidden", className)}
     >
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0"
-        style={{ background: "radial-gradient(60% 55% at 50% 42%, rgba(255,255,255,0.05), transparent 70%)" }}
-      />
-
       <div className="relative flex justify-center">
         <div
           ref={caseRef}
@@ -571,10 +566,20 @@ export function KeyboardPreview({ className, interactive = true, hero = false }:
               <img src={previewUrl} alt="" className="h-full w-full object-cover" draggable={false} />
             ) : (
               <span
-                className="flex h-full w-full items-center justify-center font-mono font-semibold"
-                style={{ color: "#d9ecff", fontSize: "clamp(9px, 2.1cqw, 12px)", letterSpacing: "-0.06em", textShadow: "0 0 10px rgba(150,200,255,0.4)" }}
+                className="flex h-full w-full flex-col items-center justify-center gap-[3%] bg-[radial-gradient(ellipse_at_50%_40%,rgba(90,150,255,0.22),transparent_75%)]"
+                style={{ color: "#e6f1ff" }}
               >
-                {clockLabel}
+                <span
+                  className="font-semibold leading-none"
+                  style={{ fontSize: "clamp(8px, 26cqw, 40px)", fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em", textShadow: "0 0 14px rgba(120,180,255,0.65)" }}
+                >
+                  {clockLabel}
+                </span>
+                {hero && (
+                  <span className="leading-none opacity-80" style={{ fontSize: "clamp(9px, 9cqw, 13px)" }}>
+                    {dateLabel}
+                  </span>
+                )}
               </span>
             )}
             <div
@@ -582,7 +587,7 @@ export function KeyboardPreview({ className, interactive = true, hero = false }:
               className="pointer-events-none absolute inset-0"
               style={{
                 backgroundImage:
-                  "linear-gradient(120deg, rgba(255,255,255,0.08), transparent 30%), repeating-linear-gradient(0deg, rgba(255,255,255,0.045) 0 1px, transparent 1px 3px)",
+                  "linear-gradient(120deg, rgba(255,255,255,0.08), transparent 30%)",
               }}
             />
           </div>

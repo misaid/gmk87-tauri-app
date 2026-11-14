@@ -1,10 +1,7 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { Plus } from "lucide-react";
+import { useEffect, type ReactNode } from "react";
 import { Slider } from "@/components/ui/slider";
-import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { EffectGallery } from "@/components/EffectGallery";
-import { brightnessWord, underglowCategory } from "@/components/lighting";
 import { LED_COLORS, LED_COLOR_SWATCHES, LED_MODES, PRESET_VALUES } from "@/lib/effects";
 import { OFFLINE_STATE, selectEffectiveState, useAppStore } from "@/store";
 
@@ -16,26 +13,6 @@ function Panel({ title, children, className, id }: { title: string; children: Re
     </section>
   );
 }
-
-/** Displayed speed runs slow→fast; the device's 0 is fastest, so invert. */
-function speedWord(displayed: number): string {
-  if (displayed === 0) return "Slowest";
-  if (displayed <= 3) return "Slow";
-  if (displayed <= 6) return "Medium";
-  if (displayed <= 8) return "Fast";
-  return "Fastest";
-}
-
-const GLOW_COLORS: ReadonlyArray<{ name: string; rgb: [number, number, number] }> = [
-  { name: "Red", rgb: [255, 59, 48] },
-  { name: "Orange", rgb: [255, 149, 0] },
-  { name: "Amber", rgb: [255, 204, 0] },
-  { name: "Green", rgb: [48, 209, 88] },
-  { name: "Teal", rgb: [64, 200, 224] },
-  { name: "Sky", rgb: [10, 132, 255] },
-  { name: "Violet", rgb: [139, 92, 246] },
-  { name: "White", rgb: [255, 255, 255] },
-];
 
 const TINT: Record<string, string> = { gaming: "#ff9f0a", relaxed: "#0a84ff", minimal: "", productivity: "#40c8e0", "purple-wave": "#0a84ff", matrix: "#a7ffb0", sunset: "#ff3b30" };
 
@@ -71,22 +48,7 @@ export default function LightingScreen() {
     void loadPresets();
   }, [loadPresets]);
 
-  const current = effective ?? committed ?? OFFLINE_STATE;
-  const { underglow, led } = current;
-  const rainbowActive = underglow.rainbow === 1;
-  const category = underglowCategory(underglow.effect);
-  const canReverse = category === "wave" || category === "rainbow";
-  const hex = `#${underglow.color.map((c) => Math.round(c).toString(16).padStart(2, "0")).join("")}`;
-  const displayedSpeed = 9 - underglow.speed;
-
-  const [hexText, setHexText] = useState(hex);
-  useEffect(() => setHexText(hex), [hex]);
-
-  function stageHex(v: string) {
-    stage({
-      underglowColor: [parseInt(v.slice(1, 3), 16), parseInt(v.slice(3, 5), 16), parseInt(v.slice(5, 7), 16)],
-    });
-  }
+  const { underglow, led } = effective ?? committed ?? OFFLINE_STATE;
 
   function stage(patch: Parameters<typeof setLightingDraft>[0]) {
     if (typeof setLightingDraft === "function") setLightingDraft(patch);
@@ -110,114 +72,6 @@ export default function LightingScreen() {
       <Panel title="Effect">
         <EffectGallery value={underglow.effect} color={underglow.color} rainbow={underglow.rainbow} onSelect={(v) => stage({ underglowEffect: v })} />
       </Panel>
-
-      <Panel title="Brightness & speed">
-        <div className="grid grid-cols-1 gap-5">
-          <div>
-            <Label htmlFor="lighting-brightness" className="text-[13px] text-[var(--muted)]">
-              Brightness <b className="ml-1 font-semibold text-[var(--text)]">{brightnessWord(underglow.brightness)} · {underglow.brightness}/9</b>
-            </Label>
-            <Slider
-              id="lighting-brightness"
-              className="mt-1.5"
-              min={0}
-              max={9}
-              step={1}
-              value={[underglow.brightness]}
-              onValueChange={([v]) => stage({ underglowBrightness: v })}
-            />
-          </div>
-          <div>
-            <Label htmlFor="lighting-speed" className="text-[13px] text-[var(--muted)]">
-              Speed <b className="ml-1 font-semibold text-[var(--text)]">{speedWord(displayedSpeed)}</b>
-            </Label>
-            <Slider
-              id="lighting-speed"
-              className="mt-1.5"
-              min={0}
-              max={9}
-              step={1}
-              value={[displayedSpeed]}
-              onValueChange={([v]) => stage({ underglowSpeed: 9 - v })}
-            />
-          </div>
-        </div>
-      </Panel>
-
-      <Panel title="Colour">
-        <div className={rainbowActive ? "flex flex-wrap items-center gap-2.5 opacity-40" : "flex flex-wrap items-center gap-2.5"}>
-          {GLOW_COLORS.map((c) => {
-            const selected =
-              !rainbowActive &&
-              underglow.color[0] === c.rgb[0] &&
-              underglow.color[1] === c.rgb[1] &&
-              underglow.color[2] === c.rgb[2];
-            return (
-              <button
-                key={c.name}
-                type="button"
-                aria-label={c.name}
-                aria-pressed={selected}
-                disabled={rainbowActive}
-                title={c.name}
-                onClick={() => stage({ underglowColor: c.rgb })}
-                className={
-                  selected
-                    ? "size-8 rounded-full ring-2 ring-white ring-offset-2 ring-offset-[#0c0e13]"
-                    : "size-8 rounded-full ring-1 ring-white/20 transition-transform duration-150 hover:scale-110"
-                }
-                style={{ background: `rgb(${c.rgb.join(",")})` }}
-              />
-            );
-          })}
-          <label
-            title="Custom colour"
-            className={`relative grid size-8 place-items-center rounded-full ring-1 ring-white/25 focus-within:ring-2 focus-within:ring-white ${rainbowActive ? "pointer-events-none" : "cursor-pointer"}`}
-            style={{ background: "conic-gradient(#ff3b30, #ffcc00, #30d158, #40c8e0, #0a84ff, #8b5cf6, #ff3b30)" }}
-          >
-            <Plus className="size-4 text-white drop-shadow" aria-hidden />
-            <input
-              type="color"
-              aria-label="Custom underglow colour"
-              disabled={rainbowActive}
-              className="sr-only"
-              value={hex}
-              onChange={(e) => stageHex(e.target.value)}
-            />
-          </label>
-          <input
-            type="text"
-            aria-label="Hex colour"
-            spellCheck={false}
-            disabled={rainbowActive}
-            maxLength={7}
-            value={hexText}
-            onChange={(e) => {
-              setHexText(e.target.value);
-              if (/^#[0-9a-fA-F]{6}$/.test(e.target.value)) stageHex(e.target.value);
-            }}
-            onBlur={() => setHexText(hex)}
-            className="h-8 w-[84px] rounded-[8px] border border-[var(--line)] bg-[var(--panel-2)] px-2 font-mono text-xs text-[var(--text)] outline-none focus:border-[var(--accent)]"
-          />
-        </div>
-        <div className="mt-4 flex flex-wrap items-center gap-x-8 gap-y-3">
-          <label className="flex items-center gap-2.5 text-[var(--text)]">
-            <Switch checked={underglow.rainbow === 1} onCheckedChange={(checked) => stage({ underglowRainbow: checked ? 1 : 0 })} />
-            Rainbow
-          </label>
-          {canReverse && (
-            <label className="flex items-center gap-2.5 text-[var(--text)]">
-              <Switch
-                checked={underglow.orientation === 1}
-                onCheckedChange={(checked) => stage({ underglowOrientation: checked ? 1 : 0 })}
-              />
-              Reverse direction
-            </label>
-          )}
-        </div>
-      </Panel>
-
-
       </div>
 
       <div className="flex min-w-0 flex-col gap-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">

@@ -45,9 +45,9 @@ export default function DeviceScreen() {
   }, [confirmDisconnect]);
 
   return (
-    <div className="grid gap-4 text-[13px] lg:grid-cols-2 lg:items-stretch">
+    <div className="grid gap-4 text-[13px] lg:grid-cols-2 lg:items-start">
       <section
-        className="h-full rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4"
+        className="rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4"
         aria-labelledby="device-heading"
       >
         <div className="mb-3 flex items-center justify-between gap-3">
