@@ -181,7 +181,7 @@ describe("ledGrid", () => {
   });
 });
 
-import { KEY_FLOOR, keyIntensity } from "./ledField";
+import { CAP_TINT_MAX, KEY_FLOOR, capTint, keyIntensity } from "./ledField";
 
 describe("keyIntensity", () => {
   it("keeps a dim floor under every key for effects that are on, brighter when lit", () => {
@@ -194,5 +194,21 @@ describe("keyIntensity", () => {
   it("stays dark for Off and brightness 0", () => {
     expect(keyIntensity({ effect: 0, brightness: 9 }, 1)).toBe(0);
     expect(keyIntensity({ effect: 8, brightness: 0 }, 1)).toBe(0);
+  });
+});
+
+describe("contrast and cap tint", () => {
+  it("separates lit keys from unlit ones with a cubic curve", () => {
+    const l = { effect: 8, brightness: 9 };
+    expect(keyIntensity(l, 0.1)).toBeLessThan(KEY_FLOOR + 0.01);
+    expect(keyIntensity(l, 0.5)).toBeCloseTo(KEY_FLOOR + (1 - KEY_FLOOR) * 0.125, 5);
+    expect(keyIntensity(l, 0.9)).toBeGreaterThan(0.75);
+  });
+  it("caps the cap tint so caps still read white", () => {
+    expect(capTint(0)).toBe(0);
+    expect(capTint(1)).toBeCloseTo(CAP_TINT_MAX, 5);
+    expect(capTint(5)).toBeLessThanOrEqual(CAP_TINT_MAX);
+    expect(capTint(-1)).toBe(0);
+    expect(CAP_TINT_MAX).toBeLessThanOrEqual(0.18);
   });
 });

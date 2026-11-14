@@ -56,7 +56,7 @@ function Pin({ n, label, x, y, tx, ty, hot, setHot, children }: { n: number; lab
   );
 }
 
-function Callout({ n, title, hot, setHot, className = "", children }: { n: number; title: string; hot: number | null; setHot: (n: number | null) => void; className?: string; children: React.ReactNode }) {
+function Callout({ n, title, icon, hot, setHot, className = "", children }: { n: number; title: string; icon?: React.ReactNode; hot: number | null; setHot: (n: number | null) => void; className?: string; children: React.ReactNode }) {
   return (
     <section
       aria-labelledby={`callout-${n}`}
@@ -67,6 +67,7 @@ function Callout({ n, title, hot, setHot, className = "", children }: { n: numbe
       <h2 id={`callout-${n}`} tabIndex={-1} className="mb-2.5 flex items-center gap-2 text-[13px] font-semibold tracking-[0.01em] text-[var(--text)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-white">
         <span aria-hidden className="flex size-5 items-center justify-center rounded-full bg-white text-[11px] font-bold text-[#0b0d12]">{n}</span>
         {title}
+        {icon}
       </h2>
       {children}
     </section>
@@ -102,11 +103,9 @@ export default function DeviceScreen() {
 
   const pins = (
     <>
-      <Pin n={1} label="USB connection" x={50} y={-9} tx={50} ty={0} hot={hot} setHot={setHot}>
-        <Usb className="size-3.5" aria-hidden />
-      </Pin>
+      <Pin n={1} label="USB connection" x={50} y={-9} tx={50} ty={0} hot={hot} setHot={setHot} />
       <Pin n={2} label="Screen and board clock" x={anchors.screen.x - 2} y={-9} tx={anchors.screen.x} ty={anchors.screen.y} hot={hot} setHot={setHot} />
-      <Pin n={3} label="Windows key lock" x={anchors.win.x} y={110} tx={anchors.win.x} ty={anchors.win.y + 4} hot={hot} setHot={setHot} />
+      <Pin n={3} label="Windows key lock" x={anchors.win.x} y={99} tx={anchors.win.x} ty={anchors.win.y + 4} hot={hot} setHot={setHot} />
       <Pin n={4} label="Knob and brightness" x={anchors.knob.x + 3} y={-9} tx={anchors.knob.x} ty={anchors.knob.y} hot={hot} setHot={setHot} />
     </>
   );
@@ -121,7 +120,7 @@ export default function DeviceScreen() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-6">
-        <Callout n={1} title="Connection" hot={hot} setHot={setHot} className="lg:col-span-4">
+        <Callout n={1} title="Connection" icon={<Usb className="size-3.5 text-[var(--muted)]" aria-hidden />} hot={hot} setHot={setHot} className="lg:col-span-4">
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${connected ? "bg-emerald-400/15 text-emerald-300" : "bg-white/[0.07] text-[var(--muted)]"}`}>
               <span aria-hidden className={`size-1.5 rounded-full ${connected ? "bg-emerald-300" : "bg-[var(--dim)]"}`} />

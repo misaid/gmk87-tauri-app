@@ -15,7 +15,7 @@ import {
   type LabeledKey,
 } from "./keyboard";
 import { ambientFrom, ledBarSample } from "./lighting";
-import { keyIntensity, ledSample, type LedLighting } from "@/lib/ledField";
+import { capTint, keyIntensity, ledSample, type LedLighting } from "@/lib/ledField";
 import { cn } from "@/lib/utils";
 import { LightBarPopover, OPEN_LIGHT_BAR_EVENT } from "@/components/LightBarPopover";
 import { UNDERGLOW_EFFECTS } from "@/lib/effects";
@@ -82,55 +82,60 @@ function Keycap({
     zIndex: 2,
     width: "100%",
     height: "100%",
-    backgroundImage: "linear-gradient(180deg, #fbfbfc 0%, #eceef2 60%, #dcdfe6 100%)",
+    // White cap; the lower third picks up a faint wash of the LED colour from underneath
+    // (alpha --t is capped at ~17% so the cap always reads white).
+    backgroundImage:
+      "linear-gradient(180deg, rgb(var(--c, 139 92 246) / 0) 55%, rgb(var(--c, 139 92 246) / var(--t, 0)) 100%), linear-gradient(180deg, #fbfbfc 0%, #eceef2 60%, #dcdfe6 100%)",
     // Corner radius from the key's own height, so wide keys (space, shift)
     // keep the same corners as a 1u key instead of turning into pills.
     borderRadius: `${(16 * (refSize[1] * rect.height)) / (refSize[0] * rect.width)}% / 16%`,
-    boxShadow:
-      "inset 0 1px 0 rgba(255,255,255,0.9), inset 0 -0.7em 0.6em -0.35em rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 1.1)), inset 0 0 0.5em 0 rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 0.3)), 0 0.1em 0.16em rgba(0,0,0,0.6)",
+    // Unlit caps sit a touch darker than lit ones, widening the board-wide contrast.
+    filter: "brightness(calc(0.9 + var(--i, 0) * 0.1))",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.9), 0 0.1em 0.16em rgba(0,0,0,0.6)",
   };
 
   if (layer === "glow") {
     return (
       <div ref={setKeyRef} aria-hidden className="pointer-events-none absolute [container-type:inline-size]" style={keyStyle}>
-        {/* Halo: light that spills past the cap into the gaps, so waves read across the whole board */}
+        {/* Halo: light spills out of the cap's bottom edge, almost none from the top or sides */}
         <div
           className="absolute"
           style={{
-            left: "-16%",
-            right: "-16%",
-            top: "-30%",
-            bottom: "-34%",
+            left: "-5%",
+            right: "-5%",
+            top: "-2%",
+            bottom: "-70%",
+            transform: "translateY(3px)",
             background:
-              "radial-gradient(closest-side, rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 1.4)) 0%, rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 0.75)) 60%, rgb(var(--c, 139 92 246) / 0) 100%)",
+              "radial-gradient(70% 62% at 50% 62%, rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 2)) 0%, rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 1.2)) 55%, rgb(var(--c, 139 92 246) / 0) 100%)",
             filter: "blur(3px)",
             mixBlendMode: "screen",
           }}
         />
-        {/* Soft pool of light on the black case below the key */}
+        {/* Light through the gap below the key, pooling on the black case */}
         <div
           className="absolute"
           style={{
-            left: "-8%",
-            right: "-8%",
-            bottom: "-30%",
-            height: "70%",
+            left: "-6%",
+            right: "-6%",
+            bottom: "-55%",
+            height: "80%",
             background:
-              "radial-gradient(60% 70% at 50% 35%, rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 1)) 0%, rgb(var(--c, 139 92 246) / 0) 75%)",
+              "radial-gradient(62% 70% at 50% 30%, rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 1.4)) 0%, rgb(var(--c, 139 92 246) / 0) 78%)",
             filter: "blur(4px)",
             mixBlendMode: "screen",
           }}
         />
-        {/* Row-gap underglow: light bleeding between rows */}
+        {/* Row-gap bleed: a wide soft band under the cap */}
         <div
           className="absolute"
           style={{
-            left: "0%",
-            right: "0%",
-            bottom: "-24%",
-            height: "30%",
-            background: "rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 0.35))",
-            filter: "blur(10px)",
+            left: "-4%",
+            right: "-4%",
+            bottom: "-34%",
+            height: "34%",
+            background: "rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 0.9))",
+            filter: "blur(9px)",
             mixBlendMode: "screen",
           }}
         />
@@ -138,14 +143,14 @@ function Keycap({
         <div
           className="absolute"
           style={{
-            left: "10%",
-            right: "10%",
-            bottom: "-9%",
-            height: "10%",
+            left: "8%",
+            right: "8%",
+            bottom: "-12%",
+            height: "12%",
             borderRadius: "50%",
-            background: "color-mix(in srgb, rgb(var(--c, 139 92 246)) 85%, white)",
+            background: "color-mix(in srgb, rgb(var(--c, 139 92 246)) 80%, white)",
             opacity: "var(--i, 0)",
-            boxShadow: "0 0 6px 2px rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 1))",
+            boxShadow: "0 1px 9px 3px rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 1))",
           }}
         />
       </div>
@@ -169,7 +174,7 @@ function Keycap({
             style={{
               // Sized from the key's width in 1u so every legend shares one scale.
               fontSize: `clamp(3px, ${(keyBox.label.length <= 1 ? 29 : 25) / widthU}cqw, 20px)`,
-              color: "#3a3f4b",
+              color: "color-mix(in srgb, rgb(var(--c, 139 92 246)) calc(var(--t, 0) * 100%), #3a3f4b)",
               ...(widthU >= 1.5
                 ? { position: "absolute", left: `${20 / widthU}%`, top: `${18 / widthU}%`, textAlign: "left" }
                 : {}),
@@ -302,6 +307,7 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
         const s = ledSample(lighting, c.x, c.y, i, timeMs);
         const rgb = `${Math.round(s.r)} ${Math.round(s.g)} ${Math.round(s.b)}`;
         const intensity = keyIntensity(lighting, s.intensity).toFixed(3);
+        const tint = capTint(Number(intensity)).toFixed(3);
         const key = `${rgb}|${intensity}`;
         if (lastKeyVars.current[i] !== key) {
           lastKeyVars.current[i] = key;
@@ -309,6 +315,7 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
             if (!el) continue;
             el.style.setProperty("--c", rgb);
             el.style.setProperty("--i", intensity);
+            el.style.setProperty("--t", tint);
           }
         }
       }

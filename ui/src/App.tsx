@@ -13,7 +13,7 @@ import { useLiveApply } from "@/lib/useLiveApply";
 import { SyncBar } from "@/components/SyncBar";
 import DeviceScreen from "@/screens/DeviceScreen";
 import DisplayScreen from "@/screens/DisplayScreen";
-import LightingScreen from "@/screens/LightingScreen";
+import LightingScreen, { EffectsPanel, LightingPanels } from "@/screens/LightingScreen";
 import ProfilesScreen from "@/screens/ProfilesScreen";
 import { EFFECT_DESCRIPTIONS, LED_MODES, UNDERGLOW_EFFECTS } from "@/lib/effects";
 import { brightnessLabel } from "@/components/lighting";
@@ -200,8 +200,8 @@ export default function App() {
             style={{ background: "radial-gradient(70% 65% at 50% 44%, var(--board-glow), transparent 78%)" }}
           />
           {tab === "lighting" ? (
-            <div className="relative mx-auto grid w-full max-w-[1560px] gap-4 px-6 pb-5 pt-5 min-[1200px]:grid-cols-[minmax(0,1fr)_420px] min-[1200px]:items-start min-[1200px]:gap-6">
-              <section aria-label="Keyboard preview" className="flex min-w-0 flex-col gap-3 min-[1200px]:sticky min-[1200px]:top-[76px] min-[1200px]:pt-[7vh]">
+            <div className="relative mx-auto grid w-full max-w-[1560px] gap-4 px-6 pb-5 pt-5 min-[1200px]:grid-cols-[minmax(0,1fr)_480px] min-[1200px]:items-start min-[1200px]:gap-6">
+              <section aria-label="Keyboard preview" className="flex min-w-0 flex-col gap-3 min-[1200px]:sticky min-[1200px]:top-[76px] min-[1200px]:min-h-[calc(100vh-92px)] min-[1200px]:justify-center">
                 {!connected && (
                   <div role="note" className="flex items-center justify-between gap-3 rounded-[12px] border border-[var(--warn)]/30 bg-[var(--warn)]/10 px-3 py-2 text-[12px] text-[var(--text)]">
                     <span>Keyboard not connected. You can keep editing; changes stay as a draft and apply once you connect.</span>
@@ -218,8 +218,9 @@ export default function App() {
                   <span className="font-semibold text-[var(--text)]">{effectName}</span>
                   {effective && EFFECT_DESCRIPTIONS[effective.underglow.effect] ? ` — ${EFFECT_DESCRIPTIONS[effective.underglow.effect]}` : ""}
                 </p>
+                <LightingPanels />
               </section>
-              <main className="min-w-0 min-[1200px]:max-h-[calc(100vh-96px)] min-[1200px]:overflow-y-auto min-[1200px]:pr-1">{panel}</main>
+              <main aria-label="Lighting controls" className="min-w-0 min-[1200px]:sticky min-[1200px]:top-[76px] min-[1200px]:max-h-[calc(100vh-92px)] min-[1200px]:overflow-y-auto min-[1200px]:pr-1"><EffectsPanel /></main>
             </div>
           ) : (
             <>

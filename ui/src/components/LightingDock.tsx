@@ -35,6 +35,7 @@ export function LightingDock() {
   const displayedSpeed = 9 - underglow.speed;
   const activeIdx = activeSwatchIndex(underglow.color, underglow.rainbow);
   const customActive = !rainbowActive && activeIdx === -1;
+  const customFill = `rgb(${underglow.color.map((c) => Math.round(c)).join(",")})`;
   const tint = `rgb(${underglow.color.map((c) => Math.round(c)).join(",")})`;
   const moving = !["static", "off"].includes(underglowCategory(underglow.effect));
 
@@ -52,7 +53,7 @@ export function LightingDock() {
       aria-label="Underglow controls"
       className="flex w-full flex-col gap-3 @[640px]:flex-row @[640px]:flex-wrap @[640px]:items-center @[640px]:justify-between @[640px]:gap-x-4 @[640px]:gap-y-2.5"
     >
-      <div className={`flex items-center gap-2 ${rainbowActive ? "opacity-40" : ""}`}>
+      <div className="flex items-center gap-2">
         {GLOW_COLORS.map((c, i) => {
           const selected = i === activeIdx;
           return (
@@ -67,17 +68,17 @@ export function LightingDock() {
               className={
                 selected
                   ? `size-7 rounded-full ring-2 ring-white ring-offset-2 ${RING_OFFSET}`
-                  : "size-7 rounded-full ring-1 ring-white/25 transition-transform duration-150 hover:scale-110"
+                  : `size-7 rounded-full ring-1 ring-white/25 transition-transform duration-150 hover:scale-110 ${rainbowActive ? "opacity-40" : ""}`
               }
               style={{ background: `rgb(${c.rgb.join(",")})` }}
             />
           );
         })}
         <label
-          title="Custom colour"
+          title={rainbowActive ? "Rainbow is on" : "Custom colour"}
           data-active={customActive || undefined}
-          className={`relative grid size-7 place-items-center rounded-full focus-within:ring-2 focus-within:ring-white ${customActive ? `ring-2 ring-white ring-offset-2 ${RING_OFFSET}` : "ring-1 ring-white/30"} ${rainbowActive ? "pointer-events-none" : "cursor-pointer"}`}
-          style={{ background: "conic-gradient(#ff3b30, #ffcc00, #30d158, #40c8e0, #0a84ff, #8b5cf6, #ff3b30)" }}
+          className={`relative grid size-7 place-items-center rounded-full focus-within:ring-2 focus-within:ring-white ${customActive || rainbowActive ? `ring-2 ring-white ring-offset-2 ${RING_OFFSET}` : "ring-1 ring-white/30"} ${rainbowActive ? "pointer-events-none" : "cursor-pointer"}`}
+          style={{ background: customActive ? customFill : "conic-gradient(#ff3b30, #ffcc00, #30d158, #40c8e0, #0a84ff, #8b5cf6, #ff3b30)" }}
         >
           <Plus className="size-3.5 text-white drop-shadow" aria-hidden />
           <input

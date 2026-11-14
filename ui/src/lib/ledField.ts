@@ -308,5 +308,16 @@ export function keyIntensity(l: Pick<LedLighting, "effect" | "brightness">, samp
   if (bn === 0) return 0;
   const v = clamp01(sampled / bn);
   const scale = 0.4 + 0.6 * bn;
-  return clamp01((KEY_FLOOR + (1 - KEY_FLOOR) * Math.pow(v, 2)) * scale);
+  return clamp01((KEY_FLOOR + (1 - KEY_FLOOR) * Math.pow(v, KEY_CONTRAST)) * scale);
+}
+
+/** Exponent of the contrast curve: lit keys pull well clear of unlit ones. */
+export const KEY_CONTRAST = 3;
+
+/** Most a cap's lower third may pick up its LED colour, so caps always read white. */
+export const CAP_TINT_MAX = 0.17;
+
+/** Cap tint alpha (0..CAP_TINT_MAX) for a key intensity; used for the lower-third wash and legend. */
+export function capTint(intensity: number): number {
+  return clamp01(intensity) * CAP_TINT_MAX;
 }
