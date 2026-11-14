@@ -60,7 +60,8 @@ export interface DisplayHistoryEntry {
 
 const LS_DRAFT = "gmk87.draft.v1";
 const LS_HISTORY = "gmk87.lightingHistory.v1";
-const LS_AUTO = "gmk87.autoApply.v1";
+/** v2: live apply is the default; the old v1 key meant "opt in to auto-apply". */
+const LS_AUTO = "gmk87.autoApply.v2";
 const LS_ACTIVE_PROFILE = "gmk87.activeProfile.v1";
 const LS_ONBOARDED = "gmk87.onboarded.v1";
 
@@ -178,7 +179,7 @@ interface AppStore {
   applying: boolean;
   /** The last write attempt of the current draft failed. */
   applyFailed: boolean;
-  /** Write staged edits automatically shortly after the last edit (off by default: Apply is explicit). */
+  /** Live apply (default on): staged edits are written shortly after the last edit. Off = Draft mode, held until Apply. */
   autoApply: boolean;
   setAutoApply: (v: boolean) => void;
   presetsLoaded: boolean;
@@ -340,7 +341,7 @@ export const useAppStore = create<AppStore>((set, get) => {
     redoStack: [],
     applying: false,
     applyFailed: false,
-    autoApply: loadJSON<boolean>(LS_AUTO, false) === true,
+    autoApply: loadJSON<boolean>(LS_AUTO, true) !== false,
     setAutoApply: (v) => {
       saveJSON(LS_AUTO, v);
       set({ autoApply: v });
@@ -647,8 +648,9 @@ export const useAppStore = create<AppStore>((set, get) => {
     },
 
     commitDraft: async () => {
-      const { draft, state: prev } = get();
-      if (!draft) return;
+      const { draft, state: prev, applying } = get();
+      // One write at a time: edits made mid-write stay staged and go out next.
+      if (!draft || applying) return;
       set({ applying: true });
       try {
         const next = await ipc.setLighting(patchFromState(draft));
@@ -656,8 +658,16 @@ export const useAppStore = create<AppStore>((set, get) => {
           ? [...get().lightingHistory.slice(-19), { state: prev, at: Date.now(), label: "before draft write" }]
           : get().lightingHistory;
         saveJSON(LS_HISTORY, history);
-        set({ state: next, draft: null, draftDirty: false, lightingHistory: history, lastSyncedAt: Date.now(), error: null, errorKind: null, notice: "Lighting written ✓", redoStack: [], draftPast: [], draftFuture: [], applyFailed: false });
-        clearKey(LS_DRAFT);
+        const latest = get().draft;
+        const edited = latest !== null && latest !== draft;
+        if (edited) {
+          const dirty = JSON.stringify(patchFromState(latest)) !== JSON.stringify(patchFromState(next));
+          set({ state: next, draft: dirty ? latest : null, draftDirty: dirty, lightingHistory: history, lastSyncedAt: Date.now(), error: null, errorKind: null, redoStack: [], applyFailed: false });
+          if (!dirty) clearKey(LS_DRAFT);
+        } else {
+          set({ state: next, draft: null, draftDirty: false, lightingHistory: history, lastSyncedAt: Date.now(), error: null, errorKind: null, ...(get().autoApply ? {} : { notice: "Lighting written ✓" }), redoStack: [], draftPast: [], draftFuture: [], applyFailed: false });
+          clearKey(LS_DRAFT);
+        }
       } catch (error) {
         set({ error: message(error), errorKind: kindOf(error), applyFailed: true });
       } finally {

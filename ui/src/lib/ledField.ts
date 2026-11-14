@@ -292,3 +292,21 @@ export function ledGrid(l: LedLighting, timeMs: number, rows: number, cols: numb
   }
   return out;
 }
+
+/** Dim base underglow every lit key keeps so the whole board reads as an LED field. */
+export const KEY_FLOOR = 0.18;
+
+/**
+ * The visible intensity (0..1) a key's LED is drawn at. Effects that do not
+ * turn the board off keep a dim floor under every key; lit keys are pushed up
+ * with a contrast curve so waves, ripples and rain stand out against it.
+ * Brightness 0 and the Off effect stay fully dark.
+ */
+export function keyIntensity(l: Pick<LedLighting, "effect" | "brightness">, sampled: number): number {
+  if (l.effect === 0) return 0;
+  const bn = clamp01(l.brightness / 9);
+  if (bn === 0) return 0;
+  const v = clamp01(sampled / bn);
+  const scale = 0.4 + 0.6 * bn;
+  return clamp01((KEY_FLOOR + (1 - KEY_FLOOR) * Math.pow(v, 2)) * scale);
+}

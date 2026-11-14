@@ -17,7 +17,6 @@ const THUMB_BASE: LedLighting = {
 };
 const ROWS = 4;
 const COLS = 14;
-const GRID_COLS = 4;
 const UNLIT = "#1e2733";
 /** Idle cells sit at ~15% of the lit colour over near-black. */
 const IDLE = "#0a0c10";
@@ -149,6 +148,13 @@ export function EffectGallery({
     setFocused(value);
   }, [value]);
 
+  /** Columns the grid currently renders (it is container-responsive). */
+  const columnsOf = (e: KeyboardEvent) => {
+    const group = e.currentTarget.closest('[role="radiogroup"]');
+    const n = group ? getComputedStyle(group).gridTemplateColumns.split(" ").filter(Boolean).length : 0;
+    return n > 0 ? n : 4;
+  };
+
   const moveFocus = (e: KeyboardEvent, nextIndex: number) => {
     e.preventDefault();
     const group = e.currentTarget.closest('[role="radiogroup"]');
@@ -160,10 +166,10 @@ export function EffectGallery({
   };
 
   return (
-    <div className="flex flex-col gap-2.5">
-    <div className="flex items-center gap-3">
-      <span className="w-12 shrink-0 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-[var(--dim)]">Effects</span>
-      <div role="tablist" aria-label="Effect category" className="flex gap-1 rounded-full border border-[var(--line)] bg-[var(--panel-2)] p-0.5">
+    <div className="@container flex flex-col gap-2.5">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+      <span className="shrink-0 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-[var(--dim)]">Effects</span>
+      <div role="tablist" aria-label="Effect category" className="order-last flex w-full gap-1 rounded-full border border-[var(--line)] bg-[var(--panel-2)] p-0.5 @[560px]:order-none @[560px]:w-auto">
         {EFFECT_FILTERS.map((f) => (
           <button
             key={f.id}
@@ -171,7 +177,7 @@ export function EffectGallery({
             role="tab"
             aria-selected={filter === f.id}
             onClick={() => setFilter(f.id)}
-            className={`h-6 rounded-full px-3 text-[12px] font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-white ${filter === f.id ? "bg-[var(--pill)] text-[var(--text)]" : "text-[var(--muted)] hover:text-[var(--text)]"}`}
+            className={`h-6 flex-1 rounded-full px-2 text-[12px] font-medium @[560px]:flex-none @[560px]:px-3 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-white ${filter === f.id ? "bg-[var(--pill)] text-[var(--text)]" : "text-[var(--muted)] hover:text-[var(--text)]"}`}
           >
             {f.label}
           </button>
@@ -179,7 +185,7 @@ export function EffectGallery({
       </div>
       <span className="ml-auto text-[11px] text-[var(--dim)]">{list.length} effects</span>
     </div>
-    <div role="radiogroup" aria-label="Underglow effect" className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+    <div role="radiogroup" aria-label="Underglow effect" className="grid grid-cols-2 gap-2.5 @[560px]:grid-cols-4">
       {list.map((effect, i) => {
         const selected = effect.value === value;
         const Icon = EFFECT_ICON[effect.value];
@@ -192,6 +198,7 @@ export function EffectGallery({
             aria-checked={selected}
             tabIndex={effect.value === focused ? 0 : -1}
             aria-label={`${effect.name} — ${EFFECT_DESCRIPTIONS[effect.value] ?? ""}`}
+            title={EFFECT_DESCRIPTIONS[effect.value] ? `${effect.name}: ${EFFECT_DESCRIPTIONS[effect.value]}` : effect.name}
             onClick={() => {
               setFocused(effect.value);
               onSelect(effect.value);
@@ -205,10 +212,10 @@ export function EffectGallery({
                   moveFocus(e, Math.max(0, i - 1));
                   break;
                 case "ArrowDown":
-                  moveFocus(e, Math.min(list.length - 1, i + GRID_COLS));
+                  moveFocus(e, Math.min(list.length - 1, i + columnsOf(e)));
                   break;
                 case "ArrowUp":
-                  moveFocus(e, Math.max(0, i - GRID_COLS));
+                  moveFocus(e, Math.max(0, i - columnsOf(e)));
                   break;
                 case "Home":
                   moveFocus(e, 0);

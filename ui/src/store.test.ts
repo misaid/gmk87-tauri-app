@@ -243,6 +243,32 @@ describe("store", () => {
     expect(useAppStore.getState().lightingHistory[0].state.underglow.effect).toBe(6);
   });
 
+  it("keeps an edit made while a write is in flight, and applies live by default", async () => {
+    const ipc = await import("./lib/ipc");
+    expect(useAppStore.getState().autoApply).toBe(true);
+    vi.mocked(ipc.setLighting).mockClear();
+    const mk = (effect: number) => ({
+      connected: true, synced: true,
+      underglow: { effect, brightness: 5, speed: 4, orientation: 0, rainbow: 0, color: [0, 0, 255] as [number, number, number] },
+      led: { mode: 3, saturation: 5, rainbow: 0, color: 0 }, winLock: false, show: 0, slot0Frames: 1, slot1Frames: 1, frameDelayMs: 100,
+      time: [2026, 11, 9, 0, 12, 0, 0] as [number, number, number, number, number, number, number],
+    });
+    let release: (v: never) => void = () => {};
+    vi.mocked(ipc.setLighting).mockImplementationOnce(() => new Promise((r) => { release = r as never; }));
+    useAppStore.setState({ state: mk(6) as never, draft: null, draftDirty: false, lightingHistory: [] });
+    useAppStore.getState().setLightingDraft({ underglowEffect: 11 });
+    const writing = useAppStore.getState().commitDraft();
+    // A second commit while one is in flight is ignored; a newer edit stays staged.
+    void useAppStore.getState().commitDraft();
+    useAppStore.getState().setLightingDraft({ underglowEffect: 14 });
+    release(mk(11) as never);
+    await writing;
+    expect(vi.mocked(ipc.setLighting)).toHaveBeenCalledTimes(1);
+    expect(useAppStore.getState().state?.underglow.effect).toBe(11);
+    expect(useAppStore.getState().draftDirty).toBe(true);
+    expect(useAppStore.getState().draft?.underglow.effect).toBe(14);
+  });
+
   it("undoes a lighting write to the previous board state", async () => {
     const ipc = await import("./lib/ipc");
     const prev = {

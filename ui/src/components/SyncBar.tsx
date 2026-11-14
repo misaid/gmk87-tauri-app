@@ -1,4 +1,5 @@
-import { Check, CloudOff, Loader2, Redo2, TriangleAlert, Undo2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Check, CloudOff, Ellipsis, Loader2, Redo2, TriangleAlert, Undo2 } from "lucide-react";
 import { diffSummary, deriveSyncStatus, formatClock } from "@/lib/lightingSync";
 import { OFFLINE_STATE, useAppStore } from "@/store";
 
@@ -28,16 +29,36 @@ export function SyncBar() {
   const undo = useAppStore((s) => s.undo);
   const redo = useAppStore((s) => s.redo);
 
-  const status = deriveSyncStatus({ connected, draftDirty, applying, applyFailed });
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: PointerEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenuOpen(false);
+    };
+    window.addEventListener("pointerdown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
+
+  const base = deriveSyncStatus({ connected, draftDirty, applying, applyFailed });
+  // Live mode: a pending edit is about to be written, so call it Applying, not Draft.
+  const status = autoApply && base === "draft" ? "applying" : base;
   const changes = draft && draftDirty ? diffSummary(committed ?? OFFLINE_STATE, draft) : [];
   const canUndo = draft ? true : (history?.length ?? 0) > 0;
   const canRedo = (draftFuture?.length ?? 0) > 0 || (redoStack?.length ?? 0) > 0;
 
   const pill =
     status === "synced"
-      ? { icon: <Check className="size-3.5" aria-hidden />, tone: "text-[var(--success)]", label: "On keyboard", sub: lastSyncedAt ? `Last synced ${formatClock(lastSyncedAt)}` : "Matches the board" }
+      ? { icon: <Check className="size-3.5" aria-hidden />, tone: "text-[var(--success)]", label: "Synced", sub: lastSyncedAt ? `Last synced ${formatClock(lastSyncedAt)}` : autoApply ? "Live — edits apply as you make them" : "Matches the board" }
       : status === "draft"
-        ? { icon: <span aria-hidden className="size-2 rounded-full bg-[var(--accent)]" />, tone: "text-[#c4b5fd]", label: "Unsaved changes", sub: "" }
+        ? { icon: <span aria-hidden className="size-2 rounded-full bg-[var(--warn)]" />, tone: "text-[var(--warn)]", label: "Draft — not on board", sub: "" }
         : status === "applying"
           ? { icon: <Loader2 className="size-3.5 animate-spin" aria-hidden />, tone: "text-[var(--text)]", label: "Applying…", sub: "Writing to the keyboard" }
           : status === "offline"
@@ -76,10 +97,30 @@ export function SyncBar() {
       </div>
 
       <div className="ml-auto flex items-center gap-1">
-        <label className="mr-1 flex cursor-pointer items-center gap-1.5 text-[11px] text-[var(--muted)]" title="Write edits to the keyboard automatically">
-          <input type="checkbox" className="accent-[var(--accent)]" checked={autoApply} onChange={(e) => setAutoApply(e.target.checked)} />
-          Auto-apply
-        </label>
+        <div ref={menuRef} className="relative">
+          <button
+            type="button"
+            className={icon}
+            aria-label="Sync options"
+            aria-haspopup="true"
+            aria-expanded={menuOpen}
+            title="Sync options"
+            onClick={() => setMenuOpen((o) => !o)}
+          >
+            <Ellipsis className="size-4" aria-hidden />
+          </button>
+          {menuOpen && (
+            <div className="absolute right-0 top-full z-40 mt-2 w-[250px] rounded-[12px] border border-white/10 bg-[rgba(14,16,22,0.96)] p-3 text-[12px] shadow-[0_18px_50px_-12px_rgba(0,0,0,0.85)] backdrop-blur-xl">
+              <label className="flex cursor-pointer items-start gap-2 text-[var(--text)]">
+                <input type="checkbox" className="mt-0.5 accent-[var(--accent)]" checked={!autoApply} onChange={(e) => setAutoApply(!e.target.checked)} />
+                <span>
+                  <span className="block font-medium">Draft mode</span>
+                  <span className="block text-[11px] leading-snug text-[var(--muted)]">Hold changes until you press Apply. Off means edits go to the keyboard live.</span>
+                </span>
+              </label>
+            </div>
+          )}
+        </div>
         <button type="button" className={icon} aria-label="Undo" title={`Undo (${MOD}+Z)`} disabled={!canUndo || applying} onClick={() => void undo()}>
           <Undo2 className="size-4" aria-hidden />
         </button>
@@ -89,6 +130,7 @@ export function SyncBar() {
         <button type="button" className={`${btn} text-[var(--muted)] hover:bg-white/[0.07] hover:text-[var(--text)]`} disabled={!draftDirty || applying} onClick={discardDraft}>
           Revert
         </button>
+        {!autoApply && (
         <button
           type="button"
           className={`${btn} bg-white text-[#0b0d12] shadow-[0_0_18px_-6px_rgba(255,255,255,0.7)] hover:bg-white/90`}
@@ -98,6 +140,7 @@ export function SyncBar() {
           Apply to keyboard
           <Kbd>{`${MOD}↵`}</Kbd>
         </button>
+        )}
       </div>
     </div>
   );

@@ -25,6 +25,8 @@ vi.mock("@/store", () => ({
   useAppStore: (selector: (s: unknown) => unknown) => selector(mockState),
 }));
 
+vi.mock("@/components/KeyboardPreview", () => ({ KeyboardPreview: ({ overlay }: { overlay?: React.ReactNode }) => <div>{overlay}</div> }));
+
 import DeviceScreen from "./DeviceScreen";
 
 describe("DeviceScreen", () => {
@@ -74,6 +76,14 @@ describe("DeviceScreen", () => {
     expect(screen.getByRole("button", { name: /connecting/i })).toBeDisabled();
     // The second row's Connect is disabled during connect but shows no spinner.
     expect(screen.getAllByRole("button", { name: "Connect" })).toHaveLength(1);
+  });
+
+  it("exposes a labelled, keyboard-reachable pin for each board part", () => {
+    render(<DeviceScreen />);
+    for (const name of [/^1\. USB connection/, /^2\. Screen and board clock/, /^3\. Windows key lock/, /^4\. Knob and brightness/]) {
+      expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    }
+    expect(screen.getByText("Last written")).toBeInTheDocument();
   });
 
   it("shows the VIA notice when the interface is present", () => {

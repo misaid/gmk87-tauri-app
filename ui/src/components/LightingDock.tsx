@@ -46,10 +46,11 @@ export function LightingDock() {
   const value = "font-semibold text-[var(--text)]";
 
   return (
+    <div className="@container w-full">
     <div
       role="group"
       aria-label="Underglow controls"
-      className="flex w-full flex-wrap items-center justify-between gap-x-4 gap-y-2.5"
+      className="flex w-full flex-col gap-3 @[640px]:flex-row @[640px]:flex-wrap @[640px]:items-center @[640px]:justify-between @[640px]:gap-x-4 @[640px]:gap-y-2.5"
     >
       <div className={`flex items-center gap-2 ${rainbowActive ? "opacity-40" : ""}`}>
         {GLOW_COLORS.map((c, i) => {
@@ -93,14 +94,15 @@ export function LightingDock() {
         </label>
       </div>
 
-      <div className="flex items-center gap-2.5">
+      <div className="grid grid-cols-2 gap-4 @[640px]:contents">
+      <div className="flex flex-col gap-0.5 @[640px]:flex-row @[640px]:items-center @[640px]:gap-2.5">
         <label htmlFor="lighting-brightness" className={label}>
           Bright · <span className={value}>{underglow.brightness}/9</span>
         </label>
         <Slider
           id="lighting-brightness"
           aria-label="Brightness"
-          className="w-[104px]"
+          className="w-full @[640px]:w-[104px]"
           rangeColor={tint}
           min={0}
           max={9}
@@ -110,14 +112,14 @@ export function LightingDock() {
         />
       </div>
 
-      <div className={`flex items-center gap-2.5 transition-opacity ${moving ? "" : "opacity-40"}`} title={moving ? undefined : "This effect has no motion"}>
+      <div className={`flex flex-col gap-0.5 @[640px]:flex-row @[640px]:items-center @[640px]:gap-2.5 transition-opacity ${moving ? "" : "opacity-40"}`} title={moving ? undefined : "This effect has no motion"}>
         <label htmlFor="lighting-speed" className={label}>
           Speed · <span className={value}>{displayedSpeed}/9</span>
         </label>
         <Slider
           id="lighting-speed"
           aria-label="Speed"
-          className="w-[104px]"
+          className="w-full @[640px]:w-[104px]"
           rangeColor={tint}
           disabled={!moving}
           min={0}
@@ -127,7 +129,9 @@ export function LightingDock() {
           onValueChange={([v]) => stage({ underglowSpeed: 9 - v })}
         />
       </div>
+      </div>
 
+      <div className="flex items-center gap-5 @[640px]:contents">
       <label className="flex items-center gap-2 text-[12px] text-[var(--text)]">
         <Switch checked={rainbowActive} onCheckedChange={(checked) => stage({ underglowRainbow: checked ? 1 : 0 })} />
         Rainbow
@@ -140,6 +144,8 @@ export function LightingDock() {
         />
         Reverse
       </label>
+      </div>
+    </div>
     </div>
   );
 }

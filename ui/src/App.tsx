@@ -1,19 +1,21 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { ComponentType } from "react";
 import { AnimatePresence, MotionConfig, motion, useReducedMotion } from "framer-motion";
 import { CircleHelp } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ErrorBanner } from "@/components/ErrorBanner";
-import { KeyboardPreview } from "@/components/KeyboardPreview";
+import { KeyboardPreview, heroBoardWidth } from "@/components/KeyboardPreview";
 import { openLightBar } from "@/components/LightBarPopover";
 import { HelpDialog } from "@/components/HelpDialog";
 import { Toast } from "@/components/Toast";
 import { useDeviceEvents } from "@/lib/useDeviceEvents";
+import { useLiveApply } from "@/lib/useLiveApply";
+import { SyncBar } from "@/components/SyncBar";
 import DeviceScreen from "@/screens/DeviceScreen";
 import DisplayScreen from "@/screens/DisplayScreen";
 import LightingScreen from "@/screens/LightingScreen";
 import ProfilesScreen from "@/screens/ProfilesScreen";
-import { LED_MODES, UNDERGLOW_EFFECTS } from "@/lib/effects";
+import { EFFECT_DESCRIPTIONS, LED_MODES, UNDERGLOW_EFFECTS } from "@/lib/effects";
 import { brightnessLabel } from "@/components/lighting";
 import { selectEffectiveState, useAppStore } from "@/store";
 
@@ -40,41 +42,18 @@ export default function App() {
   const effective = useAppStore(selectEffectiveState);
   const connected = useAppStore((s) => s.connected);
   const connectingPath = useAppStore((s) => s.connectingPath ?? null);
-  const draft = useAppStore((s) => s.draft);
   const draftDirty = useAppStore((s) => s.draftDirty);
   const commitDraft = useAppStore((s) => s.commitDraft);
   const undo = useAppStore((s) => s.undo);
   const redo = useAppStore((s) => s.redo);
-  const autoApply = useAppStore((s) => s.autoApply);
   const applying = useAppStore((s) => s.applying);
-  const lastSyncedAt = useAppStore((s) => s.lastSyncedAt);
-  const devices = useAppStore((s) => s.devices);
   const undoDisplayUpload = useAppStore((s) => s.undoDisplayUpload);
   const togglePaused = useAppStore((s) => s.setAnimationsPaused);
   const paused = useAppStore((s) => s.animationsPaused);
   const reduceMotion = useReducedMotion();
   const [helpOpen, setHelpOpen] = useState(false);
 
-  // Auto-apply: a staged draft is written to the board shortly after the last
-  // edit. The draft signature is the debounce key, so each distinct edit
-  // restarts the timer. A failed write is not retried for the same signature —
-  // a new edit or a reconnect clears that memory and tries again.
-  const draftSignature = useMemo(() => (draft ? JSON.stringify(draft) : ""), [draft]);
-  const lastAttemptedRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (!connected) lastAttemptedRef.current = null;
-  }, [connected]);
-
-  useEffect(() => {
-    if (!autoApply || !connected || !draftDirty || !draftSignature) return;
-    if (lastAttemptedRef.current === draftSignature) return;
-    const id = window.setTimeout(() => {
-      lastAttemptedRef.current = draftSignature;
-      void commitDraft();
-    }, 650);
-    return () => window.clearTimeout(id);
-  }, [autoApply, connected, draftDirty, draftSignature, commitDraft]);
+  useLiveApply();
 
   // Shortcuts: 1–4 tabs, ? help, p pause, Cmd/Ctrl+Z undo.
   useEffect(() => {
@@ -146,6 +125,21 @@ export default function App() {
         ? { label: "Connected", dot: "bg-[var(--success)]" }
         : { label: "Not connected", dot: "bg-[var(--dim)]" };
 
+  const panel = (
+    <AnimatePresence mode="wait" initial={false}>
+      <motion.div
+        key={tab}
+        role="tabpanel"
+        initial={reduceMotion ? undefined : { opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={reduceMotion ? undefined : { opacity: 0, y: -8 }}
+        transition={{ duration: 0.18, ease: "easeOut" }}
+      >
+        <Screen />
+      </motion.div>
+    </AnimatePresence>
+  );
+
   return (
     <MotionConfig reducedMotion="user">
       <div className="flex min-h-full flex-col">
@@ -205,51 +199,55 @@ export default function App() {
             className="pointer-events-none absolute inset-x-0 top-0 h-[560px]"
             style={{ background: "radial-gradient(70% 65% at 50% 44%, var(--board-glow), transparent 78%)" }}
           />
-          <section aria-label="Keyboard preview" className="relative mx-auto flex w-full max-w-[1320px] flex-col gap-2 px-6 pt-5">
-            <div className={tab === "lighting" ? "w-full" : tab === "device" ? "mx-auto w-full max-w-[900px]" : "mx-auto w-full max-w-[600px]"}>
-              <KeyboardPreview className="w-full" hero={tab === "lighting"} />
+          {tab === "lighting" ? (
+            <div className="relative mx-auto grid w-full max-w-[1560px] gap-4 px-6 pb-5 pt-5 min-[1200px]:grid-cols-[minmax(0,1fr)_420px] min-[1200px]:items-start min-[1200px]:gap-6">
+              <section aria-label="Keyboard preview" className="flex min-w-0 flex-col gap-3 min-[1200px]:sticky min-[1200px]:top-[76px] min-[1200px]:pt-[7vh]">
+                {!connected && (
+                  <div role="note" className="flex items-center justify-between gap-3 rounded-[12px] border border-[var(--warn)]/30 bg-[var(--warn)]/10 px-3 py-2 text-[12px] text-[var(--text)]">
+                    <span>Keyboard not connected. You can keep editing; changes stay as a draft and apply once you connect.</span>
+                    <button type="button" onClick={() => setTab("device")} className="shrink-0 font-medium text-[var(--warn)] underline-offset-4 hover:underline">
+                      Open Device
+                    </button>
+                  </div>
+                )}
+                <KeyboardPreview className="w-full" hero />
+                <div className="mx-auto w-full rounded-[14px] border border-white/10 bg-[rgba(12,14,20,0.6)] px-4 py-2.5 backdrop-blur-xl" style={{ maxWidth: heroBoardWidth() }}>
+                  <SyncBar />
+                </div>
+                <p className="mx-auto hidden text-center text-[12px] text-[var(--muted)] min-[1200px]:block" style={{ maxWidth: heroBoardWidth() }}>
+                  <span className="font-semibold text-[var(--text)]">{effectName}</span>
+                  {effective && EFFECT_DESCRIPTIONS[effective.underglow.effect] ? ` — ${EFFECT_DESCRIPTIONS[effective.underglow.effect]}` : ""}
+                </p>
+              </section>
+              <main className="min-w-0 min-[1200px]:max-h-[calc(100vh-96px)] min-[1200px]:overflow-y-auto min-[1200px]:pr-1">{panel}</main>
             </div>
-            {connected && (
-              <p className="flex items-center justify-center gap-2 text-[11.5px] text-[var(--muted)]" aria-label="Device status">
-                <span aria-hidden className={`size-1.5 rounded-full ${applying ? "animate-pulse bg-[var(--accent)]" : draftDirty ? "bg-[var(--warn)]" : "bg-[var(--success)]"}`} />
-                GMK87 · {devices[0]?.transport === "wireless24g" ? "2.4 GHz" : "Wired USB"} · {applying ? "Applying…" : draftDirty ? "Draft" : lastSyncedAt ? "Synced" : "Connected"}
-              </p>
-            )}
-            <div className={tab === "lighting" && !draftQueuedOffline ? "hidden" : "flex flex-wrap items-center justify-center gap-1.5"}>
-              {tab !== "lighting" && <span className="inline-flex h-6 items-center rounded-full border border-[var(--line-strong)] px-2.5 text-[12px] font-medium text-[var(--text)]">{effectName}</span>}
-              {tab !== "lighting" && (
-                <>
-                  <button type="button" onClick={() => jumpTo("#lighting-brightness [role='slider']")} className={chipBtn}>
-                    {effective ? brightnessLabel(effective.underglow.brightness) : "—"}
-                  </button>
-                  <button type="button" onClick={openLightBar} className={chipBtn}>
-                    {sideLedName}
-                  </button>
-                </>
+          ) : (
+            <>
+              {tab !== "device" && (
+                <section aria-label="Keyboard preview" className="relative mx-auto flex w-full max-w-[1320px] flex-col gap-2 px-6 pt-5">
+                  <div className="mx-auto w-full max-w-[600px]">
+                    <KeyboardPreview className="w-full" />
+                  </div>
+                  <div className="flex flex-wrap items-center justify-center gap-1.5">
+                    <span className="inline-flex h-6 items-center rounded-full border border-[var(--line-strong)] px-2.5 text-[12px] font-medium text-[var(--text)]">{effectName}</span>
+                    <button type="button" onClick={() => jumpTo("#lighting-brightness [role='slider']")} className={chipBtn}>
+                      {effective ? brightnessLabel(effective.underglow.brightness) : "—"}
+                    </button>
+                    <button type="button" onClick={openLightBar} className={chipBtn}>
+                      {sideLedName}
+                    </button>
+                    {draftQueuedOffline && (
+                      <span className="inline-flex h-6 items-center rounded-full border border-[var(--accent)]/40 px-2.5 text-[12px] font-medium text-[var(--accent)]">Will apply when connected</span>
+                    )}
+                  </div>
+                </section>
               )}
-              {draftQueuedOffline && (
-                <span className="inline-flex h-6 items-center rounded-full border border-[var(--accent)]/40 px-2.5 text-[12px] font-medium text-[var(--accent)]">Will apply when connected</span>
-              )}
-            </div>
-          </section>
+              <main className="relative mx-auto w-full max-w-[1180px] flex-1 px-6 pb-5 pt-4">
+                <div className="flex flex-col gap-5">{panel}</div>
+              </main>
+            </>
+          )}
         </div>
-
-        <main className="mx-auto w-full max-w-[1180px] flex-1 px-6 pb-5 pt-4">
-          <div className="flex flex-col gap-5">
-            <AnimatePresence mode="wait" initial={false}>
-              <motion.div
-                key={tab}
-                role="tabpanel"
-                initial={reduceMotion ? undefined : { opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={reduceMotion ? undefined : { opacity: 0, y: -8 }}
-                transition={{ duration: 0.18, ease: "easeOut" }}
-              >
-                <Screen />
-              </motion.div>
-            </AnimatePresence>
-          </div>
-        </main>
       </div>
 
       <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />

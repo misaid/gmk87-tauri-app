@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useReducedMotion } from "framer-motion";
 import {
   caseLayout,
@@ -15,7 +15,7 @@ import {
   type LabeledKey,
 } from "./keyboard";
 import { ambientFrom, ledBarSample } from "./lighting";
-import { ledSample, type LedLighting } from "@/lib/ledField";
+import { keyIntensity, ledSample, type LedLighting } from "@/lib/ledField";
 import { cn } from "@/lib/utils";
 import { LightBarPopover, OPEN_LIGHT_BAR_EVENT } from "@/components/LightBarPopover";
 import { UNDERGLOW_EFFECTS } from "@/lib/effects";
@@ -87,12 +87,26 @@ function Keycap({
     // keep the same corners as a 1u key instead of turning into pills.
     borderRadius: `${(16 * (refSize[1] * rect.height)) / (refSize[0] * rect.width)}% / 16%`,
     boxShadow:
-      "inset 0 1px 0 rgba(255,255,255,0.9), inset 0 -0.3em 0.4em -0.3em rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 0.75)), 0 0.1em 0.16em rgba(0,0,0,0.6)",
+      "inset 0 1px 0 rgba(255,255,255,0.9), inset 0 -0.7em 0.6em -0.35em rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 1.1)), inset 0 0 0.5em 0 rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 0.3)), 0 0.1em 0.16em rgba(0,0,0,0.6)",
   };
 
   if (layer === "glow") {
     return (
       <div ref={setKeyRef} aria-hidden className="pointer-events-none absolute [container-type:inline-size]" style={keyStyle}>
+        {/* Halo: light that spills past the cap into the gaps, so waves read across the whole board */}
+        <div
+          className="absolute"
+          style={{
+            left: "-16%",
+            right: "-16%",
+            top: "-30%",
+            bottom: "-34%",
+            background:
+              "radial-gradient(closest-side, rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 1.4)) 0%, rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 0.75)) 60%, rgb(var(--c, 139 92 246) / 0) 100%)",
+            filter: "blur(3px)",
+            mixBlendMode: "screen",
+          }}
+        />
         {/* Soft pool of light on the black case below the key */}
         <div
           className="absolute"
@@ -169,12 +183,16 @@ function Keycap({
   );
 }
 
-export function KeyboardPreview({ className, interactive = true, hero = false }: { className?: string; interactive?: boolean; hero?: boolean }) {
+export function KeyboardPreview({ className, interactive = true, hero = false, overlay }: { className?: string; interactive?: boolean; hero?: boolean; overlay?: ReactNode }) {
   const effective = useAppStore(selectEffectiveState);
   const state = effective ?? OFFLINE_STATE;
   const previewUrl = useAppStore((s) => s.previewUrl);
   const paused = useAppStore((s) => s.animationsPaused);
   const draftDirty = useAppStore((s) => s.draftDirty);
+  const autoApply = useAppStore((s) => s.autoApply);
+  const connectedNow = useAppStore((s) => s.connected);
+  // A thin amber rim marks edits that are held back (Draft mode or offline).
+  const draftRim = draftDirty && (!autoApply || !connectedNow);
   const previewEffect = useAppStore((s) => s.previewEffect);
   const setActiveTab = useAppStore((s) => s.setActiveTab);
   const setLightingDraft = useAppStore((s) => s.setLightingDraft);
@@ -283,7 +301,7 @@ export function KeyboardPreview({ className, interactive = true, hero = false }:
         const c = coords[i];
         const s = ledSample(lighting, c.x, c.y, i, timeMs);
         const rgb = `${Math.round(s.r)} ${Math.round(s.g)} ${Math.round(s.b)}`;
-        const intensity = (lighting.effect !== 0 ? Math.max(s.intensity, 0.12) : s.intensity).toFixed(3);
+        const intensity = keyIntensity(lighting, s.intensity).toFixed(3);
         const key = `${rgb}|${intensity}`;
         if (lastKeyVars.current[i] !== key) {
           lastKeyVars.current[i] = key;
@@ -322,7 +340,7 @@ export function KeyboardPreview({ className, interactive = true, hero = false }:
       for (let i = 0; i < coords.length; i++) {
         const c = coords[i];
         const s = ledSample(lighting, c.x, c.y, i, timeMs);
-        const inten = lighting.effect !== 0 ? Math.max(s.intensity, 0.12) : s.intensity;
+        const inten = keyIntensity(lighting, s.intensity);
         if (inten > 0) {
           ar += s.r * inten;
           ag += s.g * inten;
@@ -340,9 +358,10 @@ export function KeyboardPreview({ className, interactive = true, hero = false }:
         const avgR = Math.round(ar / aw);
         const avgG = Math.round(ag / aw);
         const avgB = Math.round(ab / aw);
+        // Live average brightness drives the rim and the case spill.
         const k = Math.min(1, aw / coords.length);
         caseEl.style.setProperty("--rim", `${avgR} ${avgG} ${avgB}`);
-        caseEl.style.setProperty("--rimk", String(Math.min(1, k * 1.6)));
+        caseEl.style.setProperty("--rimk", String(Math.min(1, k * 1.8)));
         // Ambient page colour: only touches the DOM when the quantised value changes.
         const a = ambientFrom({ r: avgR, g: avgG, b: avgB }, Math.min(1, k * 1.6));
         if (root.getPropertyValue("--board-rgb") !== a.rgb) root.setProperty("--board-rgb", a.rgb);
@@ -352,7 +371,7 @@ export function KeyboardPreview({ className, interactive = true, hero = false }:
         ctx.translate(originX + cw / 2, spillY);
         ctx.scale(1, 0.22);
         const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
-        g.addColorStop(0, `rgba(${avgR}, ${avgG}, ${avgB}, ${0.22 * k})`);
+        g.addColorStop(0, `rgba(${avgR}, ${avgG}, ${avgB}, ${0.5 * k})`);
         g.addColorStop(1, "rgba(0, 0, 0, 0)");
         ctx.fillStyle = g;
         ctx.beginPath();
@@ -452,7 +471,7 @@ export function KeyboardPreview({ className, interactive = true, hero = false }:
             style={{
               borderRadius: "10px",
               boxShadow:
-                "inset 0 0 10px rgb(var(--rim, 139 92 246) / calc(var(--rimk, 0) * 0.22)), inset 0 1px 0 rgba(255,255,255,0.08)",
+                `inset 0 0 12px rgb(var(--rim, 139 92 246) / calc(var(--rimk, 0) * 0.5)), inset 0 1px 0 rgba(255,255,255,0.08), 0 0 26px -6px rgb(var(--rim, 139 92 246) / calc(var(--rimk, 0) * 0.45))${draftRim ? ", 0 0 0 1px rgba(255,176,32,0.7), 0 0 14px 0 rgba(255,176,32,0.25)" : ""}`,
             }}
           />
 
@@ -719,6 +738,7 @@ export function KeyboardPreview({ className, interactive = true, hero = false }:
               }}
             />
           )}
+          {overlay}
         </div>
       </div>
 
@@ -730,11 +750,6 @@ export function KeyboardPreview({ className, interactive = true, hero = false }:
           className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 whitespace-nowrap rounded-full border border-white/20 bg-black/65 px-3 py-1 text-[11px] font-medium text-white backdrop-blur"
         >
           Previewing {UNDERGLOW_EFFECTS.find((e) => e.value === previewEffect)?.name ?? "effect"} — click to stage
-        </span>
-      )}
-      {draftDirty && (
-        <span className="absolute bottom-3 left-4 rounded-full border border-[var(--accent)]/40 bg-[var(--accent)]/15 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#c4b5fd]">
-          Draft — not on board
         </span>
       )}
     </div>

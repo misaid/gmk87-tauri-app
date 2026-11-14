@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Plus } from "lucide-react";
 import { loadProfiles, profileLightingFromState, saveProfiles, upsertProfile, type Profile } from "@/lib/profiles";
-import { profileMatches } from "@/lib/lightingSync";
+import { matchingLook, profileMatches } from "@/lib/lightingSync";
 import { OFFLINE_STATE, selectEffectiveState, useAppStore } from "@/store";
 
 /** Compact active-profile switcher: selecting stages the profile as a draft. */
@@ -68,12 +68,28 @@ export function ProfileMenu({ initialOpen = false }: { initialOpen?: boolean }) 
         className="flex h-8 items-center gap-2 rounded-full border border-[var(--line-strong)] bg-[var(--panel-2)] pl-3 pr-2 text-[12px] text-[var(--text)] transition-colors hover:border-white/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
       >
         <span className="text-[var(--muted)]">Profile</span>
-        <span className="font-semibold">{active?.name ?? "None"}</span>
+        <span className="font-semibold">{active?.name ?? (matchingLook(current) ? `${matchingLook(current)!.replace(/-/g, " ")} look` : "Unsaved look")}</span>
         {edited && <span role="img" aria-label="Edited" title="Edited since this profile was saved" className="size-1.5 rounded-full bg-[var(--warn)]" />}
         <ChevronDown className="size-3.5 text-[var(--muted)]" aria-hidden />
       </button>
       {open && (
         <div role="menu" aria-label="Profiles" className="absolute left-0 top-full z-40 mt-2 w-[260px] rounded-[14px] border border-white/10 bg-[rgba(14,16,22,0.96)] p-2 text-[12px] shadow-[0_18px_50px_-12px_rgba(0,0,0,0.85)] backdrop-blur-xl">
+          <p className="px-2 pb-1 pt-0.5 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-[var(--dim)]">Save current as…</p>
+          <div className="flex items-center gap-1.5 px-1">
+            <input
+              type="text"
+              aria-label="New profile name"
+              placeholder="Name this look…"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && saveAs()}
+              className="h-8 min-w-0 flex-1 rounded-[8px] border border-[var(--line-strong)] bg-[var(--panel-2)] px-2 text-[12px] text-[var(--text)] placeholder:text-[var(--dim)]"
+            />
+            <button type="button" aria-label="Save profile" disabled={!name.trim()} onClick={saveAs} className="inline-flex h-8 items-center gap-1 rounded-[8px] bg-white px-2.5 text-[12px] font-semibold text-[#0b0d12] disabled:opacity-35">
+              <Plus className="size-3.5" aria-hidden />Save
+            </button>
+          </div>
+          <div className="my-1.5 h-px bg-white/[0.08]" />
           {profiles.length === 0 && <p className="px-2 py-1.5 text-[var(--muted)]">No saved profiles yet.</p>}
           {profiles.map((p) => (
             <button
@@ -92,21 +108,6 @@ export function ProfileMenu({ initialOpen = false }: { initialOpen?: boolean }) 
               {p.id === activeId && <span className="text-[10px] text-[var(--muted)]">{edited ? "edited" : "active"}</span>}
             </button>
           ))}
-          <div className="my-1.5 h-px bg-white/[0.08]" />
-          <div className="flex items-center gap-1.5 px-1">
-            <input
-              type="text"
-              aria-label="New profile name"
-              placeholder="Save current as…"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && saveAs()}
-              className="h-8 min-w-0 flex-1 rounded-[8px] border border-[var(--line-strong)] bg-[var(--panel-2)] px-2 text-[12px] text-[var(--text)] placeholder:text-[var(--dim)]"
-            />
-            <button type="button" aria-label="Save profile" disabled={!name.trim()} onClick={saveAs} className="inline-flex size-8 items-center justify-center rounded-[8px] bg-[var(--accent)] text-white disabled:opacity-35">
-              <Plus className="size-4" aria-hidden />
-            </button>
-          </div>
           <button
             type="button"
             onClick={() => {

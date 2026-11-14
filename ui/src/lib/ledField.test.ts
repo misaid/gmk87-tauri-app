@@ -180,3 +180,19 @@ describe("ledGrid", () => {
     expect(g[0]).toHaveLength(14);
   });
 });
+
+import { KEY_FLOOR, keyIntensity } from "./ledField";
+
+describe("keyIntensity", () => {
+  it("keeps a dim floor under every key for effects that are on, brighter when lit", () => {
+    const l = { effect: 8, brightness: 9 };
+    expect(keyIntensity(l, 0)).toBeCloseTo(KEY_FLOOR, 5);
+    expect(keyIntensity(l, 1)).toBeCloseTo(1, 5);
+    expect(keyIntensity(l, 0.5)).toBeLessThan(0.5);
+    expect(keyIntensity(l, 0.9) - keyIntensity(l, 0.1)).toBeGreaterThan(0.5);
+  });
+  it("stays dark for Off and brightness 0", () => {
+    expect(keyIntensity({ effect: 0, brightness: 9 }, 1)).toBe(0);
+    expect(keyIntensity({ effect: 8, brightness: 0 }, 1)).toBe(0);
+  });
+});

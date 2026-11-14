@@ -193,3 +193,17 @@ export function underglowColor(state: UnderglowInput, brightnessOverride?: numbe
   const [r, g, b] = state.underglow.color;
   return `rgb(${Math.round(r * scale)}, ${Math.round(g * scale)}, ${Math.round(b * scale)})`;
 }
+
+export interface PartAnchor {
+  /** Centre of the part as a percentage of the case (0..100). */
+  x: number;
+  y: number;
+}
+
+/** Where the callout pins sit on the case: screen, knob, side light bar and the Win key. */
+export function partAnchors(): { screen: PartAnchor; knob: PartAnchor; bar: PartAnchor; win: PartAnchor } {
+  const [cw, ch] = caseLayout().size;
+  const pct = (p: [number, number]): PartAnchor => ({ x: ((p[0] + cw / 2) / cw) * 100, y: ((p[1] + ch / 2) / ch) * 100 });
+  const win = labeledKeys().find((k) => k.label === "WIN") ?? labeledKeys()[0];
+  return { screen: pct(displayLayout().position), knob: pct(knobLayout().position), bar: pct(ledBarLayout().position), win: pct(win.position) };
+}

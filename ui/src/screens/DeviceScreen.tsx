@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { Clipboard, Loader2, RefreshCw } from "lucide-react";
+import { Clipboard, Loader2, RefreshCw, Usb } from "lucide-react";
+import { KeyboardPreview } from "@/components/KeyboardPreview";
+import { partAnchors } from "@/components/keyboard";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
@@ -20,6 +22,57 @@ function formatDeviceTime([
   return `${year}-${pad(month)}-${pad(day)} ${pad(hour)}:${pad(minute)}:${pad(second)}`;
 }
 
+/** A numbered pin on the board: keyboard-reachable, jumps to its info card. */
+function Pin({ n, label, x, y, tx, ty, hot, setHot, children }: { n: number; label: string; x: number; y: number; tx: number; ty: number; hot: number | null; setHot: (n: number | null) => void; children?: React.ReactNode }) {
+  const on = hot === n;
+  return (
+    <>
+    <svg aria-hidden className="pointer-events-none absolute inset-0 z-10 h-full w-full overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
+      <line x1={x} y1={y} x2={tx} y2={ty} stroke={on ? "#fff" : "rgba(255,255,255,0.6)"} strokeWidth={on ? 1.6 : 1} vectorEffect="non-scaling-stroke" strokeDasharray="3 3" />
+    </svg>
+    <span aria-hidden className={`pointer-events-none absolute z-10 size-2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white bg-[#0b0d12] ${on ? "scale-150" : ""}`} style={{ left: `${tx}%`, top: `${ty}%` }} />
+    <button
+      type="button"
+      aria-label={`${n}. ${label}`}
+      aria-controls={`callout-${n}`}
+      onMouseEnter={() => setHot(n)}
+      onMouseLeave={() => setHot(null)}
+      onFocus={() => setHot(n)}
+      onBlur={() => setHot(null)}
+      onClick={() => {
+        const el = document.getElementById(`callout-${n}`);
+        el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        el?.focus({ preventScroll: true });
+      }}
+      className={`absolute z-20 flex size-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border text-[11px] font-bold shadow-[0_2px_10px_rgba(0,0,0,0.6)] transition-transform focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white ${on ? "scale-125 border-white bg-white text-[#0b0d12]" : "border-white/70 bg-[#0b0d12]/90 text-white"}`}
+      style={{ left: `${x}%`, top: `${y}%` }}
+    >
+      {children ?? n}
+      <span aria-hidden className={`pointer-events-none absolute left-1/2 top-full mt-1.5 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/80 px-2 py-0.5 text-[10.5px] font-medium text-white transition-opacity ${on ? "opacity-100" : "opacity-0"}`}>
+        {label}
+      </span>
+    </button>
+    </>
+  );
+}
+
+function Callout({ n, title, hot, setHot, className = "", children }: { n: number; title: string; hot: number | null; setHot: (n: number | null) => void; className?: string; children: React.ReactNode }) {
+  return (
+    <section
+      aria-labelledby={`callout-${n}`}
+      onMouseEnter={() => setHot(n)}
+      onMouseLeave={() => setHot(null)}
+      className={`rounded-[18px] border bg-[var(--panel)] p-4 transition-colors ${hot === n ? "border-white/50" : "border-[var(--line)]"} ${className}`}
+    >
+      <h2 id={`callout-${n}`} tabIndex={-1} className="mb-2.5 flex items-center gap-2 text-[13px] font-semibold tracking-[0.01em] text-[var(--text)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-white">
+        <span aria-hidden className="flex size-5 items-center justify-center rounded-full bg-white text-[11px] font-bold text-[#0b0d12]">{n}</span>
+        {title}
+      </h2>
+      {children}
+    </section>
+  );
+}
+
 export default function DeviceScreen() {
   const devices = useAppStore((s) => s.devices);
   const connected = useAppStore((s) => s.connected);
@@ -32,7 +85,10 @@ export default function DeviceScreen() {
   const syncClock = useAppStore((s) => s.syncClock);
   const setNotice = useAppStore((s) => s.setNotice);
   const setLightingDraft = useAppStore((s) => s.setLightingDraft);
+  const rereadState = useAppStore((st) => st.rereadState);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  const [hot, setHot] = useState<number | null>(null);
+  const anchors = partAnchors();
 
   useEffect(() => {
     void refreshDevices();
@@ -44,29 +100,35 @@ export default function DeviceScreen() {
     return () => window.clearTimeout(t);
   }, [confirmDisconnect]);
 
-  const rereadState = useAppStore((st) => st.rereadState);
+  const pins = (
+    <>
+      <Pin n={1} label="USB connection" x={50} y={-9} tx={50} ty={0} hot={hot} setHot={setHot}>
+        <Usb className="size-3.5" aria-hidden />
+      </Pin>
+      <Pin n={2} label="Screen and board clock" x={anchors.screen.x - 2} y={-9} tx={anchors.screen.x} ty={anchors.screen.y} hot={hot} setHot={setHot} />
+      <Pin n={3} label="Windows key lock" x={anchors.win.x} y={110} tx={anchors.win.x} ty={anchors.win.y + 4} hot={hot} setHot={setHot} />
+      <Pin n={4} label="Knob and brightness" x={anchors.knob.x + 3} y={-9} tx={anchors.knob.x} ty={anchors.knob.y} hot={hot} setHot={setHot} />
+    </>
+  );
+
+  const brightness = state?.underglow.brightness;
 
   return (
-    <div className="grid gap-4 text-[13px] lg:grid-cols-2 lg:items-start">
-      <div className="flex flex-col gap-4">
-      <section
-        className="rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4"
-        aria-labelledby="device-heading"
-      >
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h2
-            id="device-heading"
-            className="text-[13px] font-semibold tracking-[0.01em] text-[var(--text)]"
-          >
-            Connection
-          </h2>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 text-xs"
-              onClick={() => void refreshDevices()}
-            >
+    <div className="flex flex-col gap-4 text-[13px]">
+      <div className="mx-auto w-full max-w-[1000px] pb-6 pt-8">
+        <KeyboardPreview className="w-full overflow-visible" hero overlay={pins} />
+        <p className="mt-1 text-center text-[11px] text-[var(--muted)]">Numbered pins mark the parts of the board. Select one, or Tab through them, to jump to its details.</p>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-6">
+        <Callout n={1} title="Connection" hot={hot} setHot={setHot} className="lg:col-span-4">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${connected ? "bg-emerald-400/15 text-emerald-300" : "bg-white/[0.07] text-[var(--muted)]"}`}>
+              <span aria-hidden className={`size-1.5 rounded-full ${connected ? "bg-emerald-300" : "bg-[var(--dim)]"}`} />
+              {connected ? "Connected" : "Not connected"}
+            </span>
+            <span className="flex-1" />
+            <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => void refreshDevices()}>
               <RefreshCw className="size-3.5" aria-hidden />
               Refresh
             </Button>
@@ -77,159 +139,111 @@ export default function DeviceScreen() {
               </Button>
             )}
             {state && (
-            <Button
-              variant={confirmDisconnect ? "destructive" : "secondary"}
-              size="sm"
-              className="h-8 text-xs"
-              onClick={() => {
-                if (!confirmDisconnect) {
-                  setConfirmDisconnect(true);
-                  return;
-                }
-                setConfirmDisconnect(false);
-                void disconnectDevice();
-              }}
-            >
-              {confirmDisconnect ? "Click again to disconnect" : "Disconnect"}
-            </Button>
+              <Button
+                variant={confirmDisconnect ? "destructive" : "secondary"}
+                size="sm"
+                className="h-8 text-xs"
+                onClick={() => {
+                  if (!confirmDisconnect) {
+                    setConfirmDisconnect(true);
+                    return;
+                  }
+                  setConfirmDisconnect(false);
+                  void disconnectDevice();
+                }}
+              >
+                {confirmDisconnect ? "Click again to disconnect" : "Disconnect"}
+              </Button>
             )}
           </div>
-        </div>
 
-        {devices.length === 0 && (
-          <p className="text-[var(--muted)]">
-            No GMK87 found. Plug in the USB cable (wired keyboard or 2.4 GHz
-            dongle) and press Refresh. On Linux, a permission prompt will appear
-            if udev access is missing.
-          </p>
-        )}
+          {devices.length === 0 && (
+            <p className="text-[var(--muted)]">
+              No GMK87 found. Plug in the USB cable (wired keyboard or 2.4 GHz dongle) and press Refresh. On Linux, a permission prompt will appear if udev access is missing.
+            </p>
+          )}
 
-        <div className="flex flex-col gap-2">
-          {devices.map((device) => {
-            const isConnecting = connectingPath === device.path;
-            const transportLabel =
-              device.transport === "wireless24g"
-                ? "2.4 GHz dongle"
-                : "Wired USB";
-            return (
-              <div
-                key={device.path}
-                className="flex items-center gap-3 rounded-[12px] border border-[var(--line)] bg-[var(--panel-2)] p-3"
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate font-medium text-[var(--text)]">
-                      {device.label}
-                    </span>
-                    {device.hasVia && <Badge variant="secondary">VIA</Badge>}
+          <div className="flex flex-col gap-2">
+            {devices.map((device) => {
+              const isConnecting = connectingPath === device.path;
+              const transportLabel = device.transport === "wireless24g" ? "2.4 GHz dongle" : "Wired USB";
+              return (
+                <div key={device.path} className="flex items-center gap-3 rounded-[12px] border border-[var(--line)] bg-[var(--panel-2)] p-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate font-medium text-[var(--text)]">{device.label}</span>
+                      {device.hasVia && <Badge variant="secondary">VIA</Badge>}
+                    </div>
+                    <span className="text-[11px] text-[var(--muted)]">{transportLabel}</span>
+                    {device.hasVia && <span className="block text-[11px] text-[var(--muted)]">VIA reachable — remapping arrives in a future version.</span>}
+                    <p className="mt-1 font-mono text-[11px] text-[var(--dim)]">
+                      Product 0x{device.productId.toString(16).padStart(4, "0")} · {device.path}
+                    </p>
                   </div>
-                  <span className="text-[11px] text-[var(--muted)]">
-                    {transportLabel}
-                  </span>
-                  {device.hasVia && (
-                    <span className="block text-[11px] text-[var(--muted)]">
-                      VIA reachable — remapping arrives in a future version.
-                    </span>
+                  {!connected && (
+                    <Button size="sm" disabled={connectingPath !== null} aria-busy={isConnecting || undefined} onClick={() => void connectTo(device.path)}>
+                      {isConnecting ? (
+                        <>
+                          <Loader2 className="size-4 animate-spin" aria-hidden />
+                          Connecting…
+                        </>
+                      ) : (
+                        "Connect"
+                      )}
+                    </Button>
                   )}
-                  <p className="mt-1 font-mono text-[11px] text-[var(--dim)]">
-                    Product 0x{device.productId.toString(16).padStart(4, "0")} · {device.path}
-                  </p>
                 </div>
-                {connected ? (
-                  devices.length === 1 && (
-                    <span className="rounded-full bg-emerald-400/15 px-2.5 py-1 text-xs font-medium text-emerald-300">
-                      Connected
-                    </span>
-                  )
-                ) : (
-                  <Button
-                    size="sm"
-                    disabled={connectingPath !== null}
-                    aria-busy={isConnecting || undefined}
-                    onClick={() => void connectTo(device.path)}
-                  >
-                    {isConnecting ? (
-                      <>
-                        <Loader2 className="size-4 animate-spin" aria-hidden />
-                        Connecting…
-                      </>
-                    ) : (
-                      "Connect"
-                    )}
-                  </Button>
-                )}
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
 
-        {state && (
-          <p className="mt-3 text-[11px] text-[var(--muted)]">
-            {state.synced ? "Settings written and acknowledged." : "Nothing written yet."}
-          </p>
-        )}
-      </section>
-
-        <section className="flex flex-col gap-3 rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4">
-          <h2 className="text-[13px] font-semibold tracking-[0.01em] text-[var(--text)]">Advanced</h2>
-          <label className="flex items-center gap-2.5 text-[var(--muted)]">
-            <Switch
-              checked={state?.winLock ?? false}
-              disabled={!state}
-              onCheckedChange={(checked) =>
-                setLightingDraft?.({ winLock: checked })
-              }
-            />
-            Windows key lock
-          </label>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 justify-self-start self-start text-xs"
-            onClick={async () => {
-              const text = await ipc.copyDiagnostics();
-              await navigator.clipboard.writeText(text);
-              setNotice?.("Diagnostics copied ✓");
-            }}
-          >
-            <Clipboard className="size-3.5" aria-hidden />
-            Copy diagnostics
-          </Button>
-        </section>
-      </div>
-
-      <div className="flex flex-col gap-4">
-
-        <section
-          className="rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4"
-          aria-labelledby="device-clock"
-        >
-          <h2
-            id="device-clock"
-            className="text-[13px] font-semibold tracking-[0.01em] text-[var(--text)]"
-          >
-            Board clock
-          </h2>
-          <p className="mt-1 text-[11px] text-[var(--muted)]">
-            Set the board clock to your system time. Shows last written time
-            — the board cannot be read back.
-          </p>
-          <div className="mt-3 flex flex-wrap items-center gap-3">
-            <span className="text-lg tabular-nums text-[var(--text)]">
-              {state ? formatDeviceTime(state.time as DeviceTime) : "—"}
-            </span>
-            <Button onClick={() => void syncClock()} disabled={!state}>
-              Sync now
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+            {state ? <p className="text-[11px] text-[var(--muted)]">{state.synced ? "Settings written and acknowledged." : "Nothing written yet."}</p> : <span />}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-[11px] text-[var(--muted)]"
+              onClick={async () => {
+                const text = await ipc.copyDiagnostics();
+                await navigator.clipboard.writeText(text);
+                setNotice?.("Diagnostics copied ✓");
+              }}
+            >
+              <Clipboard className="size-3.5" aria-hidden />
+              Copy diagnostics
             </Button>
           </div>
-          <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[12px]">
+        </Callout>
+
+        <Callout n={2} title="Screen · board clock" hot={hot} setHot={setHot} className="lg:col-span-2">
+          <p className="text-[11px] text-[var(--muted)]">The board cannot be read back, so this is the last value written to it.</p>
+          <dl className="mt-2 grid grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-1 text-[12px]">
+            <dt className="text-[var(--muted)]">Last written</dt>
+            <dd className="text-[15px] tabular-nums text-[var(--text)]">{state ? formatDeviceTime(state.time as DeviceTime) : "—"}</dd>
             <dt className="text-[var(--muted)]">Timezone</dt>
             <dd className="text-[var(--text)]">{Intl.DateTimeFormat().resolvedOptions().timeZone}</dd>
             <dt className="text-[var(--muted)]">Last synced</dt>
             <dd className="text-[var(--text)]">{lastSyncedAt ? new Date(lastSyncedAt).toLocaleTimeString() : "Not yet this session"}</dd>
           </dl>
-        </section>
+          <Button className="mt-3" size="sm" onClick={() => void syncClock()} disabled={!state}>
+            Sync now
+          </Button>
+        </Callout>
 
+        <Callout n={3} title="Windows key" hot={hot} setHot={setHot} className="lg:col-span-3">
+          <label className="flex items-center gap-2.5 text-[var(--text)]">
+            <Switch checked={state?.winLock ?? false} disabled={!state} onCheckedChange={(checked) => setLightingDraft?.({ winLock: checked })} />
+            Windows key lock
+          </label>
+          <p className="mt-2 text-[11px] text-[var(--muted)]">Disables the Win key so it cannot pull you out of a game.</p>
+        </Callout>
+
+        <Callout n={4} title="Knob · brightness" hot={hot} setHot={setHot} className="lg:col-span-3">
+          <p className="text-[var(--text)]">
+            Underglow brightness is <span className="font-semibold">{brightness !== undefined ? `${brightness}/9` : "—"}</span>.
+          </p>
+          <p className="mt-2 text-[11px] text-[var(--muted)]">Turn the knob on the board, or drag the knob above up and down, to change it. Arrow keys work when it is focused.</p>
+        </Callout>
       </div>
     </div>
   );
