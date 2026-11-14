@@ -209,6 +209,56 @@ const LED_SWATCH_RGB: Readonly<Record<number, [number, number, number]>> = {
   8: [0, 0, 0],
 };
 
+function hslToRgb(h: number, s: number, l: number): [number, number, number] {
+  const k = (n: number) => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n: number) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  return [Math.round(f(0) * 255), Math.round(f(8) * 255), Math.round(f(4) * 255)];
+}
+
+export interface LedBarSample {
+  r: number;
+  g: number;
+  b: number;
+  /** 0..1 */
+  a: number;
+}
+
+/**
+ * The side light bar's colour and brightness at `timeMs`, from the selected
+ * mode / colour / saturation / rainbow. Pure and time-based so it renders the
+ * same in a static frame (t = 0) as in the live loop.
+ * Modes: 0 blink, 1 pulse rainbow, 2 alternating blink, 3 fixed, 4 alternating fixed.
+ */
+export function ledBarSample(led: LedState, timeMs: number): LedBarSample {
+  if (led.color === 8) return { r: 0, g: 0, b: 0, a: 0 };
+  const intensity = 0.3 + (led.saturation / 9) * 0.7;
+  const base = LED_SWATCH_RGB[led.color] ?? LED_SWATCH_RGB[0];
+  const t = timeMs / 1000;
+  if (led.rainbow === 1 || led.mode === 1) {
+    const [r, g, b] = hslToRgb(((t / 4) % 1) * 360, 0.85, 0.58);
+    const pulse = led.mode === 1 ? 0.65 + 0.35 * Math.sin(t * 2.2) : 1;
+    return { r, g, b, a: intensity * pulse };
+  }
+  const blink = Math.floor(t / 0.6) % 2 === 0;
+  // The second colour of a "pair" isn't readable from the board; use a contrasting swatch.
+  const pair = LED_SWATCH_RGB[(led.color + 4) % 8] ?? base;
+  switch (led.mode) {
+    case 0:
+      return { r: base[0], g: base[1], b: base[2], a: blink ? intensity : 0.05 };
+    case 2: {
+      const c = blink ? base : pair;
+      return { r: c[0], g: c[1], b: c[2], a: intensity };
+    }
+    case 4: {
+      const c = Math.floor(t / 1.5) % 2 === 0 ? base : pair;
+      return { r: c[0], g: c[1], b: c[2], a: intensity };
+    }
+    default:
+      return { r: base[0], g: base[1], b: base[2], a: intensity };
+  }
+}
+
 /** Maps side-LED state to a keyframe animation; the same input always yields the same output. */
 export function ledAnimation(led: LedState): GlowAnimation {
   const off = led.color === 8;

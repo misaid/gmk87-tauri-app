@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, type CSSProperties } from "react";
-import { motion, useReducedMotion } from "framer-motion";
+import { useReducedMotion } from "framer-motion";
 import {
   caseLayout,
   displayLayout,
@@ -14,12 +14,10 @@ import {
   recessLayout,
   type LabeledKey,
 } from "./keyboard";
-import { ledAnimation, type GlowAnimation } from "./lighting";
+import { ledBarSample } from "./lighting";
 import { ledSample, type LedLighting } from "@/lib/ledField";
 import { cn } from "@/lib/utils";
 import { OFFLINE_STATE, selectEffectiveState, useAppStore } from "@/store";
-
-const IDLE_LED: GlowAnimation = { colors: ["transparent"], opacity: [0], durationSec: 1, loop: false };
 
 /** Canvas spill margins around the case: the underglow lives outside it too. */
 const SPILL_X = 42;
@@ -195,7 +193,8 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
     [state],
   );
 
-  const sideGlow = useMemo(() => (effective ? ledAnimation(effective.led) : IDLE_LED), [effective]);
+  const led = state.led;
+  const barRef = useRef<HTMLDivElement>(null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const caseRef = useRef<HTMLDivElement>(null);
@@ -240,6 +239,12 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
     }
 
     const draw = (timeMs: number) => {
+      const bar = barRef.current;
+      if (bar) {
+        const s = ledBarSample(led, timeMs);
+        bar.style.setProperty("--lc", `${s.r} ${s.g} ${s.b}`);
+        bar.style.setProperty("--la", s.a.toFixed(3));
+      }
       const w = canvas.width;
       const h = canvas.height;
       const cw = caseW * dpr;
@@ -340,7 +345,7 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
       cancelAnimationFrame(raf);
       ro?.disconnect();
     };
-  }, [lighting, coords, motionPaused]);
+  }, [lighting, led, coords, motionPaused]);
 
   const recessRect = toPercentRect(board.size, recess.position, recess.size);
   const plateRect = toPercentRect(board.size, plate.position, plate.size);
@@ -609,7 +614,8 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
               boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.08)",
             }}
           />
-          <motion.div
+          <div
+            ref={barRef}
             aria-hidden
             className="pointer-events-none absolute"
             style={{
@@ -618,18 +624,8 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
               width: `${ledBarRect.width}%`,
               height: `${ledBarRect.height}%`,
               borderRadius: "999px",
-            }}
-            animate={{
-              backgroundColor: sideGlow.colors,
-              opacity: sideGlow.opacity,
-              boxShadow: (Array.isArray(sideGlow.colors) ? sideGlow.colors : [sideGlow.colors]).map(
-                (c) => `0 0 10px 2px ${c}`,
-              ),
-            }}
-            transition={{
-              duration: sideGlow.durationSec,
-              repeat: motionPaused ? 0 : sideGlow.loop ? Infinity : 0,
-              ease: "easeInOut",
+              backgroundColor: "rgb(var(--lc, 0 0 0) / var(--la, 0))",
+              boxShadow: "0 0 10px 2px rgb(var(--lc, 0 0 0) / calc(var(--la, 0) * 0.8))",
             }}
           />
         </div>
