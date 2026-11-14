@@ -133,7 +133,7 @@ export default function LightingScreen() {
       </Panel>
 
       <Panel title="Effect">
-        <EffectGallery value={underglow.effect} onSelect={(v) => stage({ underglowEffect: v })} />
+        <EffectGallery value={underglow.effect} color={underglow.color} rainbow={underglow.rainbow} onSelect={(v) => stage({ underglowEffect: v })} />
       </Panel>
 
       <Panel title="Brightness & speed">

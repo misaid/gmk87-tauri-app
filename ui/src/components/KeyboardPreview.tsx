@@ -39,25 +39,32 @@ function toPercentRect(refSize: [number, number], position: [number, number], si
   };
 }
 
-/** Font size as a percentage of the key's own width (container query units). */
-function legendScale(label: string): number {
-  if (label.length <= 1) return 42;
-  if (label.length <= 4) return 24;
-  return Math.max(11, 24 - (label.length - 4) * 2);
+const PITCH_U = 0.21;
+
+/** Mixed-case legend like the printed caps ("Caps Lock", not "CAPS"). */
+function legendText(label: string): string {
+  const fixed: Record<string, string> = { CAPS: "Caps Lock", PRINT: "PrtSc", CTRL: "Ctrl", WIN: "Win", PGUP: "PgUp", PGDN: "PgDn" };
+  if (fixed[label]) return fixed[label];
+  if (label.length <= 1 || /^F\d+$/.test(label)) return label;
+  return label.charAt(0) + label.slice(1).toLowerCase();
 }
 
 function Keycap({
   refSize,
   keyBox,
   interactive,
+  layer,
   setKeyRef,
 }: {
   refSize: [number, number];
   keyBox: LabeledKey;
   interactive: boolean;
+  /** Glows paint in one layer under every cap, so no row's cap covers another's light. */
+  layer: "glow" | "cap";
   setKeyRef: (el: HTMLDivElement | null) => void;
 }) {
   const rect = toPercentRect(refSize, keyBox.position, keyBox.size);
+  const widthU = keyBox.size[0] / PITCH_U;
   const keyStyle: CSSProperties = {
     left: `${rect.left}%`,
     top: `${rect.top}%`,
@@ -74,8 +81,43 @@ function Keycap({
     // keep the same corners as a 1u key instead of turning into pills.
     borderRadius: `${(16 * (refSize[1] * rect.height)) / (refSize[0] * rect.width)}% / 16%`,
     boxShadow:
-      "inset 0 1px 0 rgba(255,255,255,0.9), inset 0 -0.3em 0.4em -0.3em rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 0.8)), 0 0.1em 0.16em rgba(0,0,0,0.6)",
+      "inset 0 1px 0 rgba(255,255,255,0.9), inset 0 -0.3em 0.4em -0.3em rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 0.75)), 0 0.1em 0.16em rgba(0,0,0,0.6)",
   };
+
+  if (layer === "glow") {
+    return (
+      <div ref={setKeyRef} aria-hidden className="pointer-events-none absolute [container-type:inline-size]" style={keyStyle}>
+        {/* Soft pool of light on the black case below the key */}
+        <div
+          className="absolute"
+          style={{
+            left: "-8%",
+            right: "-8%",
+            bottom: "-30%",
+            height: "70%",
+            background:
+              "radial-gradient(60% 70% at 50% 35%, rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 1)) 0%, rgb(var(--c, 139 92 246) / 0) 75%)",
+            filter: "blur(5cqw)",
+            mixBlendMode: "screen",
+          }}
+        />
+        {/* The LED seam: a crisp hot line right under the cap's bottom edge */}
+        <div
+          className="absolute"
+          style={{
+            left: "10%",
+            right: "10%",
+            bottom: "-9%",
+            height: "10%",
+            borderRadius: "50%",
+            background: "color-mix(in srgb, rgb(var(--c, 139 92 246)) 85%, white)",
+            opacity: "var(--i, 0)",
+            boxShadow: "0 0 8cqw 3cqw rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 1))",
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div
@@ -87,45 +129,20 @@ function Keycap({
       )}
       style={keyStyle}
     >
-      <div
-        className="pointer-events-none absolute"
-        style={{
-          left: "-6%",
-          right: "-6%",
-          bottom: "-22%",
-          height: "58%",
-          zIndex: 0,
-          background:
-            "radial-gradient(60% 70% at 50% 40%, rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 0.85)) 0%, rgb(var(--c, 139 92 246) / 0) 75%)",
-          filter: "blur(6cqw)",
-          mixBlendMode: "screen",
-        }}
-      />
-      <div
-        className="pointer-events-none absolute"
-        style={{
-          left: "8%",
-          right: "8%",
-          bottom: "-7%",
-          height: "9%",
-          borderRadius: "50%",
-          zIndex: 0,
-          // Hot core: the LED itself, pushed toward white so it reads as light.
-          background: "color-mix(in srgb, rgb(var(--c, 139 92 246)) 70%, white)",
-          opacity: "var(--i, 0)",
-          filter: "blur(2.2cqw)",
-        }}
-      />
       <div className={cn("flex items-center justify-center", interactive && "transition-transform duration-150")} style={capStyle}>
         {keyBox.label ? (
           <span
-            className="whitespace-nowrap text-center font-medium leading-none"
+            className="whitespace-nowrap font-semibold leading-none"
             style={{
-              fontSize: `clamp(3px, ${legendScale(keyBox.label)}cqw, 20px)`,
-              color: "#2b2f3a",
+              // Sized from the key's width in 1u so every legend shares one scale.
+              fontSize: `clamp(3px, ${(keyBox.label.length <= 1 ? 34 : 20) / widthU}cqw, 20px)`,
+              color: "#3a3f4b",
+              ...(keyBox.label.length > 1 && widthU >= 1.5
+                ? { position: "absolute", left: `${20 / widthU}%`, top: `${18 / widthU}%`, textAlign: "left" }
+                : {}),
             }}
           >
-            {keyBox.label}
+            {legendText(keyBox.label)}
           </span>
         ) : null}
       </div>
@@ -183,6 +200,7 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const caseRef = useRef<HTMLDivElement>(null);
   const keyRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const capRefs = useRef<Array<HTMLDivElement | null>>([]);
   const lastKeyVars = useRef<string[]>([]);
 
   const nudgeBrightness = (delta: number) => {
@@ -241,8 +259,8 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
         const key = `${rgb}|${intensity}`;
         if (lastKeyVars.current[i] !== key) {
           lastKeyVars.current[i] = key;
-          const el = keyRefs.current[i];
-          if (el) {
+          for (const el of [keyRefs.current[i], capRefs.current[i]]) {
+            if (!el) continue;
             el.style.setProperty("--c", rgb);
             el.style.setProperty("--i", intensity);
           }
@@ -428,12 +446,25 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
           {/* Keycaps with per-key LED pool + seam + opaque cap */}
           {keys.map((key, index) => (
             <Keycap
-              key={index}
+              key={`glow-${index}`}
+              layer="glow"
+              refSize={board.size}
+              keyBox={key}
+              interactive={false}
+              setKeyRef={(el) => {
+                keyRefs.current[index] = el;
+              }}
+            />
+          ))}
+          {keys.map((key, index) => (
+            <Keycap
+              key={`cap-${index}`}
+              layer="cap"
               refSize={board.size}
               keyBox={key}
               interactive={interactive}
               setKeyRef={(el) => {
-                keyRefs.current[index] = el;
+                capRefs.current[index] = el;
               }}
             />
           ))}

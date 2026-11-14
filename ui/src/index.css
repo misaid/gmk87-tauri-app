@@ -10,8 +10,8 @@
   --text: #e9eaee;
   --muted: #969ba6;
   --dim: #6b7280;
-  --accent: #8b5cf6;
-  --accent-safe: #8b5cf6;
+  --accent: #e6e9ef;
+  --accent-safe: #e6e9ef;
   --success: #34d399;
   --danger: #f87171;
   --warn: #fbbf24;
@@ -34,7 +34,7 @@ body,
 body {
   margin: 0;
   background-color: var(--bg);
-  background-image: radial-gradient(1100px 520px at 50% -12%, rgba(139, 92, 246, 0.10), transparent 70%);
+  background-image: radial-gradient(1100px 520px at 50% -12%, rgba(120, 150, 210, 0.08), transparent 70%);
   background-attachment: fixed;
   color: var(--text);
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;

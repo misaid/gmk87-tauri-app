@@ -13,21 +13,27 @@ const THUMB_BASE: LedLighting = {
 };
 const THUMB_TIME_MS = 1600;
 
-const thumbCache = new Map<number, string[]>();
-function thumbStops(effect: number): string[] {
-  let stops = thumbCache.get(effect);
+const thumbCache = new Map<string, string[]>();
+/** Thumbnails use the board's live colour so the picker previews what you will get. */
+function thumbStops(effect: number, color: [number, number, number], rainbow: number): string[] {
+  const k = `${effect}|${color.join(",")}|${rainbow}`;
+  let stops = thumbCache.get(k);
   if (!stops) {
-    stops = ledStops({ ...THUMB_BASE, effect }, THUMB_TIME_MS);
-    thumbCache.set(effect, stops);
+    stops = ledStops({ ...THUMB_BASE, effect, color, rainbow }, THUMB_TIME_MS);
+    thumbCache.set(k, stops);
   }
   return stops;
 }
 
 export function EffectGallery({
   value,
+  color,
+  rainbow,
   onSelect,
 }: {
   value: number;
+  color: [number, number, number];
+  rainbow: number;
   onSelect: (effect: number) => void;
 }) {
   const [focused, setFocused] = useState(value);
@@ -92,7 +98,7 @@ export function EffectGallery({
             }
           >
             <span aria-hidden className="flex h-2 overflow-hidden rounded-full bg-black/40">
-              {thumbStops(effect.value).map((stop, j) => (
+              {thumbStops(effect.value, color, rainbow).map((stop, j) => (
                 <span key={j} className="h-full flex-1" style={{ background: stop }} />
               ))}
             </span>

@@ -26,7 +26,7 @@ export interface PlateBox {
 type KeySpec = [col: number, row: number, width: number, height: number, label: string];
 
 const PITCH = 0.21;
-const GAP = 0.02;
+const GAP = 0.034;
 
 /** Pitch-cell width minus keycap width: the gap between adjacent keycaps. */
 export const KEY_GAP = GAP;
