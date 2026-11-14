@@ -175,12 +175,12 @@ export default function App() {
               <div className={tab === "lighting" ? "w-full" : "mx-auto w-full max-w-[600px]"}>
                 <KeyboardPreview className="w-full" />
               </div>
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-xs text-[var(--muted)]">
-                <span className="font-medium text-[var(--text)]">{effectName}</span>
-                <span>Brightness {effective ? `${effective.underglow.brightness}/9` : "—"}</span>
-                <span>{sideLedName}</span>
+              <div className="flex flex-wrap items-center justify-center gap-1.5 text-[var(--muted)]">
+                <span className="inline-flex h-6 items-center rounded-full border border-[var(--line)] px-2.5 text-[12px] font-medium text-[var(--text)]">{effectName}</span>
+                <span className="inline-flex h-6 items-center rounded-full border border-[var(--line)] px-2.5 text-[12px]">Brightness {effective ? `${effective.underglow.brightness}/9` : "—"}</span>
+                <span className="inline-flex h-6 items-center rounded-full border border-[var(--line)] px-2.5 text-[12px]">{sideLedName}</span>
                 {draftQueuedOffline && (
-                  <span className="font-medium text-[var(--accent)]">Will apply when connected</span>
+                  <span className="inline-flex h-6 items-center rounded-full border border-[var(--line)] px-2.5 text-[12px] border-[var(--accent)]/40 font-medium text-[var(--accent)]">Will apply when connected</span>
                 )}
               </div>
             </section>

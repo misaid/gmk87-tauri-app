@@ -70,7 +70,7 @@ export default function LightingScreen() {
   }
 
   return (
-    <div className="grid gap-5 text-[13px] lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
+    <div className="grid gap-4 text-[13px] lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
       {history.length > 0 && (
         <div className="flex justify-end lg:col-span-2">
           <button
@@ -83,9 +83,13 @@ export default function LightingScreen() {
         </div>
       )}
 
-      <div className="flex min-w-0 flex-col gap-5">
+      <div className="flex min-w-0 flex-col gap-4">
+      <Panel title="Effect">
+        <EffectGallery value={underglow.effect} color={underglow.color} rainbow={underglow.rainbow} onSelect={(v) => stage({ underglowEffect: v })} />
+      </Panel>
+
       <Panel title="Looks">
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           {presets.map((preset) => {
             const v = PRESET_VALUES[preset.name];
             return (
@@ -108,7 +112,7 @@ export default function LightingScreen() {
                     ledColor: v.ledColor,
                   });
                 }}
-                className="flex items-center gap-2.5 rounded-[10px] border border-[var(--line)] bg-[var(--panel-2)] p-2.5 text-left transition-colors duration-150 hover:border-[var(--line-strong)]"
+                className="flex min-h-[56px] items-center gap-2 rounded-[10px] border border-[var(--line)] bg-[var(--panel-2)] p-2 text-left transition-colors duration-150 hover:border-[var(--line-strong)]"
               >
                 {v && (
                   <span
@@ -133,13 +137,10 @@ export default function LightingScreen() {
         </div>
       </Panel>
 
-      <Panel title="Effect">
-        <EffectGallery value={underglow.effect} color={underglow.color} rainbow={underglow.rainbow} onSelect={(v) => stage({ underglowEffect: v })} />
-      </Panel>
 
       </div>
 
-      <div className="flex min-w-0 flex-col gap-5 lg:sticky lg:top-4">
+      <div className="flex min-w-0 flex-col gap-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
       <Panel title="Brightness & speed">
         <div className="grid grid-cols-1 gap-5">
           <div>
@@ -217,24 +218,23 @@ export default function LightingScreen() {
             }}
           />
         </div>
-      </Panel>
-
-      <Panel title="Options">
-        <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
+        <div className="mt-4 flex flex-wrap items-center gap-x-8 gap-y-3">
           <label className="flex items-center gap-2.5 text-[var(--text)]">
             <Switch checked={underglow.rainbow === 1} onCheckedChange={(checked) => stage({ underglowRainbow: checked ? 1 : 0 })} />
             Rainbow
           </label>
-          <label className={`flex items-center gap-2.5 ${canReverse ? "text-[var(--text)]" : "opacity-40"}`}>
-            <Switch
-              disabled={!canReverse}
-              checked={underglow.orientation === 1}
-              onCheckedChange={(checked) => stage({ underglowOrientation: checked ? 1 : 0 })}
-            />
-            Reverse direction
-          </label>
+          {canReverse && (
+            <label className="flex items-center gap-2.5 text-[var(--text)]">
+              <Switch
+                checked={underglow.orientation === 1}
+                onCheckedChange={(checked) => stage({ underglowOrientation: checked ? 1 : 0 })}
+              />
+              Reverse direction
+            </label>
+          )}
         </div>
       </Panel>
+
 
       <details className="group rounded-[18px] border border-[var(--line)] bg-[var(--panel)]">
         <summary className="cursor-pointer list-none px-4 py-3.5 text-[13px] font-semibold tracking-[0.01em] text-[var(--text)]">

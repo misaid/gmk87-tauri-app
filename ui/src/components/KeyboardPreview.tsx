@@ -95,7 +95,7 @@ function Keycap({
             height: "70%",
             background:
               "radial-gradient(60% 70% at 50% 35%, rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 1)) 0%, rgb(var(--c, 139 92 246) / 0) 75%)",
-            filter: "blur(5cqw)",
+            filter: "blur(4px)",
             mixBlendMode: "screen",
           }}
         />
@@ -110,7 +110,7 @@ function Keycap({
             borderRadius: "50%",
             background: "color-mix(in srgb, rgb(var(--c, 139 92 246)) 85%, white)",
             opacity: "var(--i, 0)",
-            boxShadow: "0 0 8cqw 3cqw rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 1))",
+            boxShadow: "0 0 6px 2px rgb(var(--c, 139 92 246) / calc(var(--i, 0) * 1))",
           }}
         />
       </div>
@@ -133,7 +133,7 @@ function Keycap({
             className="whitespace-nowrap font-semibold leading-none"
             style={{
               // Sized from the key's width in 1u so every legend shares one scale.
-              fontSize: `clamp(3px, ${(keyBox.label.length <= 1 ? 34 : 20) / widthU}cqw, 20px)`,
+              fontSize: `clamp(3px, ${(keyBox.label.length <= 1 ? 29 : 25) / widthU}cqw, 20px)`,
               color: "#3a3f4b",
               ...(keyBox.label.length > 1 && widthU >= 1.5
                 ? { position: "absolute", left: `${20 / widthU}%`, top: `${18 / widthU}%`, textAlign: "left" }
@@ -211,7 +211,7 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
 
   // The case is sized by the board's aspect ratio; the canvas is the case plus
   // spill margins so the underglow can be drawn outside the board's footprint.
-  const boardMaxWidth = Math.round(330 * (board.size[0] / board.size[1]));
+  const boardMaxWidth = Math.round(300 * (board.size[0] / board.size[1]));
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -375,16 +375,12 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
           ? `Keyboard preview: underglow effect ${effective.underglow.effect}, brightness ${effective.underglow.brightness} of 9${draftDirty ? ", draft not yet on board" : ""}. Knob controls brightness.`
           : "Keyboard preview: disconnected. Knob controls brightness."
       }
-      className={cn("relative w-full overflow-hidden rounded-[20px] border border-[var(--line)] p-6 sm:p-7", className)}
-      style={{
-        backgroundImage: "linear-gradient(180deg, #151821, #0c0e13)",
-        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.05)",
-      }}
+      className={cn("relative w-full overflow-hidden p-2", className)}
     >
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0"
-        style={{ background: "radial-gradient(60% 55% at 50% 42%, rgba(139,92,246,0.07), transparent 70%)" }}
+        style={{ background: "radial-gradient(60% 55% at 50% 42%, rgba(255,255,255,0.05), transparent 70%)" }}
       />
 
       <div className="relative flex justify-center">
@@ -521,7 +517,7 @@ export function KeyboardPreview({ className, interactive = true }: { className?:
             ) : (
               <span
                 className="flex h-full w-full items-center justify-center font-mono font-semibold"
-                style={{ color: "#d9ecff", fontSize: "clamp(6px, 2.1cqw, 12px)", textShadow: "0 0 10px rgba(150,200,255,0.4)" }}
+                style={{ color: "#d9ecff", fontSize: "clamp(9px, 2.1cqw, 12px)", letterSpacing: "-0.06em", textShadow: "0 0 10px rgba(150,200,255,0.4)" }}
               >
                 {clockLabel}
               </span>
