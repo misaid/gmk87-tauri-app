@@ -86,8 +86,13 @@ describe("DeviceScreen", () => {
     expect(screen.getByText("Last written")).toBeInTheDocument();
   });
 
-  it("shows the VIA notice when the interface is present", () => {
+  it("shows a VIA badge when the interface is present", () => {
     render(<DeviceScreen />);
-    expect(screen.getByText(/remapping/i)).toBeInTheDocument();
+    expect(screen.getByText("VIA")).toBeInTheDocument();
+  });
+
+  it("offers one big Connect when exactly one device is found", () => {
+    render(<DeviceScreen />);
+    expect(screen.getByRole("button", { name: "Connect" })).toHaveClass("h-11");
   });
 });

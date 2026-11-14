@@ -23,11 +23,11 @@ export function ErrorBanner() {
           onClick={() => {
             dismiss();
             if (errorKind === "device_gone" || errorKind === "not_connected") {
-              void refreshDevices().then(() => setNotice?.("Devices refreshed ✓"));
+              void refreshDevices().then(() => setNotice?.("Refreshed"));
             }
           }}
         >
-          Refresh devices
+          Refresh
         </Button>
         <button className="underline underline-offset-2" onClick={dismiss}>
           Dismiss

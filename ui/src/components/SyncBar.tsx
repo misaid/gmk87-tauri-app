@@ -56,14 +56,14 @@ export function SyncBar() {
 
   const pill =
     status === "synced"
-      ? { icon: <Check className="size-3.5" aria-hidden />, tone: "text-[var(--success)]", label: "Synced", sub: lastSyncedAt ? `Last synced ${formatClock(lastSyncedAt)}` : autoApply ? "Live — edits apply as you make them" : "Matches the board" }
+      ? { icon: <Check className="size-3.5" aria-hidden />, tone: "text-[var(--success)]", label: "Synced", sub: lastSyncedAt ? `Last synced ${formatClock(lastSyncedAt)}` : autoApply ? "Live" : "" }
       : status === "draft"
         ? { icon: <span aria-hidden className="size-2 rounded-full bg-[var(--warn)]" />, tone: "text-[var(--warn)]", label: "Draft — not on board", sub: "" }
         : status === "applying"
-          ? { icon: <Loader2 className="size-3.5 animate-spin" aria-hidden />, tone: "text-[var(--text)]", label: "Applying…", sub: "Writing to the keyboard" }
+          ? { icon: <Loader2 className="size-3.5 animate-spin" aria-hidden />, tone: "text-[var(--text)]", label: "Applying…", sub: "" }
           : status === "offline"
-            ? { icon: <CloudOff className="size-3.5" aria-hidden />, tone: "text-[var(--warn)]", label: "Not connected", sub: draftDirty ? "Will apply when connected" : "Edits are kept as a draft" }
-            : { icon: <TriangleAlert className="size-3.5" aria-hidden />, tone: "text-[#ff6b6b]", label: "Couldn’t apply", sub: "Your draft is safe — try again" };
+            ? { icon: <CloudOff className="size-3.5" aria-hidden />, tone: "text-[var(--warn)]", label: "Not connected", sub: draftDirty ? "Queued" : "" }
+            : { icon: <TriangleAlert className="size-3.5" aria-hidden />, tone: "text-[#ff6b6b]", label: "Couldn’t apply", sub: "Draft kept" };
 
   const btn =
     "inline-flex h-8 items-center rounded-full px-3 text-[12px] font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-white disabled:pointer-events-none disabled:opacity-35";
@@ -115,7 +115,7 @@ export function SyncBar() {
                 <input type="checkbox" className="mt-0.5 accent-[var(--accent)]" checked={!autoApply} onChange={(e) => setAutoApply(!e.target.checked)} />
                 <span>
                   <span className="block font-medium">Draft mode</span>
-                  <span className="block text-[11px] leading-snug text-[var(--muted)]">Hold changes until you press Apply. Off means edits go to the keyboard live.</span>
+                  <span className="block text-[11px] leading-snug text-[var(--muted)]">Hold edits until Apply.</span>
                 </span>
               </label>
             </div>

@@ -32,7 +32,7 @@ vi.mock("./lib/ipc", () => ({
 }));
 
 import { DEFAULT_CROP } from "./lib/crop";
-import { useAppStore, type SlotEntry } from "./store";
+import { dirtySlots, useAppStore, type SlotEntry } from "./store";
 
 function emptyEntry(): SlotEntry {
   return { source: null, name: "", info: null, crop: { ...DEFAULT_CROP }, delayMs: 100 };
@@ -344,6 +344,76 @@ describe("store", () => {
     expect(useAppStore.getState().entries.slot0.name).toBe("first.png");
     expect(Array.from(useAppStore.getState().entries.slot0.source!)).toEqual([1]);
     expect(useAppStore.getState().displayHistory).toHaveLength(1);
+  });
+
+  describe("write changed slots", () => {
+    const boardState = { connected: true } as never;
+    const entryOf = (b: number, name: string): SlotEntry => ({
+      ...emptyEntry(),
+      source: new Uint8Array([b]),
+      name,
+      info: { isGif: false, frames: 1, delayMs: 100, sourceFrames: 1, dropped: [] },
+    });
+    async function setup(slot1: SlotEntry | null) {
+      const ipc = await import("./lib/ipc");
+      vi.mocked(ipc.uploadDisplay).mockClear();
+      vi.mocked(ipc.readState).mockResolvedValue(boardState);
+      useAppStore.setState({
+        connected: true,
+        state: boardState,
+        slot: "slot1",
+        entries: { slot0: entryOf(1, "a.png"), slot1: slot1 ?? emptyEntry() },
+        lastUploaded: null,
+        displayHistory: [],
+      });
+      return ipc;
+    }
+
+    it("writes every changed slot in order from one call, viewed slot last", async () => {
+      const ipc = await setup(entryOf(2, "b.png"));
+      await useAppStore.getState().uploadChanged(true);
+      const calls = vi.mocked(ipc.uploadDisplay).mock.calls.map(([a]) => [a.slot, a.showAfter]);
+      expect(calls).toEqual([["slot0", false], ["slot1", true]]);
+      expect(dirtySlots(useAppStore.getState().entries, useAppStore.getState().lastUploaded, "slot1")).toEqual([]);
+    });
+
+    it("writes only the one changed slot", async () => {
+      const ipc = await setup(null);
+      await useAppStore.getState().uploadChanged(true);
+      expect(vi.mocked(ipc.uploadDisplay)).toHaveBeenCalledTimes(1);
+    });
+
+    it("does nothing when nothing changed", async () => {
+      const ipc = await setup(entryOf(2, "b.png"));
+      await useAppStore.getState().uploadChanged(true);
+      vi.mocked(ipc.uploadDisplay).mockClear();
+      await useAppStore.getState().uploadChanged(true);
+      expect(vi.mocked(ipc.uploadDisplay)).not.toHaveBeenCalled();
+    });
+
+    it("keeps the first slot clean and names the second when it fails", async () => {
+      const ipc = await setup(entryOf(2, "b.png"));
+      useAppStore.setState({ slot: "slot1" });
+      vi.mocked(ipc.uploadDisplay).mockResolvedValueOnce(undefined as never).mockRejectedValueOnce("boom");
+      await useAppStore.getState().uploadChanged(true);
+      const { entries, lastUploaded, error } = useAppStore.getState();
+      expect(error).toContain("Slot 1");
+      expect(dirtySlots(entries, lastUploaded, "slot1")).toEqual(["slot1"]);
+    });
+  });
+
+  it("locks other tabs until connected and opens Lighting after connecting", async () => {
+    useAppStore.getState().setActiveTab("display");
+    expect(useAppStore.getState().activeTab).toBe("device");
+    await useAppStore.getState().connectTo("/dev/hidraw12");
+    expect(useAppStore.getState().activeTab).toBe("lighting");
+    useAppStore.getState().handleDisconnected();
+    expect(useAppStore.getState().activeTab).toBe("device");
+  });
+
+  it("auto-connects only when exactly one device is found", async () => {
+    await useAppStore.getState().autoConnect();
+    expect(useAppStore.getState().connected).toBe(true);
   });
 
   describe("trust layer", () => {

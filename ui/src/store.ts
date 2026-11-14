@@ -238,6 +238,8 @@ interface AppStore {
 
   refreshDevices: () => Promise<void>;
   connectTo: (path: string) => Promise<void>;
+  /** Launch helper: scan, and connect straight away when exactly one keyboard is found. */
+  autoConnect: () => Promise<void>;
   disconnectDevice: () => Promise<void>;
   setCrop: (crop: CropParams) => void;
   setSlot: (slot: Slot) => void;
@@ -256,6 +258,10 @@ interface AppStore {
   refreshPreview: () => Promise<void>;
   schedulePreview: () => void;
   upload: (delayMs: number, showAfter: boolean) => Promise<void>;
+  /** Write every slot that changed since its last successful write, one call each. */
+  uploadChanged: (showAfter?: boolean) => Promise<void>;
+  /** Progress through a multi-slot write, or null. */
+  batch: { index: number; total: number; slot: Slot } | null;
   cancel: () => Promise<void>;
   setProgress: (progress: ipc.UploadProgress) => void;
   handleDisconnected: () => void;
@@ -344,6 +350,35 @@ function cloneEntries(entries: Record<Slot, SlotEntry>): Record<Slot, SlotEntry>
   };
 }
 
+function sameBytes(a: Uint8Array | null, b: Uint8Array | null): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+/**
+ * Slots whose source, crop or delay differ from their last successful write,
+ * in write order: the viewed slot goes last so it is the one the board shows.
+ */
+export function dirtySlots(
+  entries: Record<Slot, SlotEntry>,
+  lastUploaded: Record<Slot, SlotEntry> | null,
+  viewed: Slot,
+): Slot[] {
+  const dirty = SLOTS.filter((s) => {
+    const e = entries[s];
+    if (!e.source) return false;
+    const last = lastUploaded?.[s];
+    return !last || !sameBytes(e.source, last.source) || cropKey(e.crop) !== cropKey(last.crop) || e.delayMs !== last.delayMs;
+  });
+  return [...dirty.filter((s) => s !== viewed), ...dirty.filter((s) => s === viewed)];
+}
+
+function slotLabel(slot: Slot): string {
+  return slot === "slot0" ? "Slot 0" : "Slot 1";
+}
+
 function withEntry(
   state: AppStore,
   slot: Slot,
@@ -357,13 +392,51 @@ export const useAppStore = create<AppStore>((set, get) => {
   const initialHistory = loadJSON<ipc.DeviceState[]>(LS_HISTORY, []);
   const initialDraft = loadJSON<ipc.DeviceState | null>(LS_DRAFT, null);
 
+  /** Write one slot and record it (alone) as what the board now holds. Throws on failure. */
+  async function writeSlot(slot: Slot, delayMs: number, showAfter: boolean): Promise<void> {
+    const { entries, lastUploaded } = get();
+    const entry = entries[slot];
+    if (!entry.source) return;
+    // Undo snapshot = what the board showed BEFORE this write overwrote it.
+    const previousBoard = lastUploaded ?? { slot0: emptyEntry(), slot1: emptyEntry() };
+    const snapshot: DisplayHistoryEntry = {
+      entries: cloneEntries(previousBoard),
+      slot,
+      delayMs: previousBoard[slot]?.delayMs ?? delayMs,
+      at: Date.now(),
+      label: previousBoard[slot]?.name || `${slotLabel(slot)} (previous)`,
+    };
+    await ipc.uploadDisplay({
+      slot,
+      name: entry.name,
+      bytes: entry.source,
+      crop: entry.crop,
+      delayMs,
+      showAfter,
+    });
+    // Only this slot becomes "written"; the source is shared (never mutated) so dirty checks stay cheap.
+    const written: SlotEntry = { ...entry, crop: { ...entry.crop }, delayMs, previewUrl: null, previewKey: null };
+    set({
+      lastUploaded: { ...previousBoard, [slot]: written },
+      displayHistory: [...get().displayHistory.slice(-9), snapshot],
+    });
+    set({ state: await ipc.readState(), error: null, errorKind: null });
+    if (entry.libraryId) {
+      void mediaLibrary.touch(entry.libraryId, entry.crop).then(() => get().loadLibrary());
+    }
+  }
+
   return {
     devices: [],
     state: null,
     connected: false,
     connectingPath: null,
     activeTab: "device",
-    setActiveTab: (activeTab) => set({ activeTab }),
+    // Pairing comes first: nothing but the Device screen opens until connected.
+    setActiveTab: (activeTab) => {
+      if (activeTab !== "device" && !get().connected) return;
+      set({ activeTab });
+    },
     error: null,
     errorKind: null,
     presets: [],
@@ -373,6 +446,7 @@ export const useAppStore = create<AppStore>((set, get) => {
     library: [],
     progress: null,
     uploads: 0,
+    batch: null,
     previewTimer: null,
     draft: initialDraft,
     draftDirty: initialDraft !== null,
@@ -478,12 +552,20 @@ export const useAppStore = create<AppStore>((set, get) => {
       }
     },
 
+    autoConnect: async () => {
+      await get().refreshDevices();
+      const { devices, connected, connectingPath } = get();
+      if (devices.length === 1 && !connected && connectingPath === null) {
+        await get().connectTo(devices[0].path);
+      }
+    },
+
     connectTo: async (path) => {
       set({ connectingPath: path });
       try {
         const state = await ipc.connect(path);
         const queued = get().draft;
-        set({ state, connected: state.connected, error: null, errorKind: null, draft: queued, draftDirty: queued != null ? JSON.stringify(patchFromState(queued)) !== JSON.stringify(patchFromState(state)) : false });
+        set({ state, connected: state.connected, activeTab: state.connected ? "lighting" : "device", error: null, errorKind: null, draft: queued, draftDirty: queued != null ? JSON.stringify(patchFromState(queued)) !== JSON.stringify(patchFromState(state)) : false });
         if (queued == null) clearKey(LS_DRAFT);
         await get().refreshPreview();
       } catch (error) {
@@ -496,7 +578,7 @@ export const useAppStore = create<AppStore>((set, get) => {
     disconnectDevice: async () => {
       await ipc.disconnect();
       // Keep any staged draft — disconnect is not discard.
-      set({ state: null, connected: false });
+      set({ state: null, connected: false, activeTab: "device" });
     },
 
     setCrop: (crop) => {
@@ -647,46 +729,39 @@ export const useAppStore = create<AppStore>((set, get) => {
     },
 
     upload: async (delayMs, showAfter) => {
-      const { entries, slot, lastUploaded } = get();
-      const entry = entries[slot];
-      if (!entry.source) {
+      const { entries, slot } = get();
+      if (!entries[slot].source) {
         set({ error: "Choose an image or GIF first." });
         return;
       }
-      // Undo snapshot = what the board showed BEFORE this upload overwrote it,
-      // not the staging entries (which already contain the new image).
-      const previousBoard = lastUploaded ?? { slot0: emptyEntry(), slot1: emptyEntry() };
-      const snapshot: DisplayHistoryEntry = {
-        entries: cloneEntries(previousBoard),
-        slot,
-        delayMs: previousBoard[slot]?.delayMs ?? delayMs,
-        at: Date.now(),
-        label: previousBoard[slot]?.name || `Slot ${slot === "slot0" ? "0" : "1"} (previous)`,
-      };
       set({ uploads: get().uploads + 1, progress: { bytesSent: 0, totalBytes: 0 } });
       try {
-        await ipc.uploadDisplay({
-          slot,
-          name: entry.name,
-          bytes: entry.source,
-          crop: entry.crop,
-          delayMs,
-          showAfter,
-        });
-        set({
-          state: await ipc.readState(),
-          error: null,
-          errorKind: null,
-          displayHistory: [...get().displayHistory.slice(-9), snapshot],
-          lastUploaded: cloneEntries(entries),
-        });
-        if (entry.libraryId) {
-          void mediaLibrary.touch(entry.libraryId, entry.crop).then(() => get().loadLibrary());
-        }
+        await writeSlot(slot, delayMs, showAfter);
       } catch (error) {
         set({ error: message(error), errorKind: kindOf(error) });
       } finally {
         set({ uploads: Math.max(0, get().uploads - 1), progress: null });
+      }
+    },
+
+    uploadChanged: async (showAfter = true) => {
+      const { entries, lastUploaded, slot } = get();
+      const queue = dirtySlots(entries, lastUploaded, slot);
+      if (queue.length === 0) return;
+      set({ uploads: get().uploads + 1, progress: { bytesSent: 0, totalBytes: 0 } });
+      try {
+        for (const [i, s] of queue.entries()) {
+          set({ batch: { index: i + 1, total: queue.length, slot: s }, progress: { bytesSent: 0, totalBytes: 0 } });
+          try {
+            await writeSlot(s, get().entries[s].delayMs, showAfter && i === queue.length - 1);
+          } catch (error) {
+            // Earlier slots stay recorded as written; name the one that failed.
+            set({ error: `${slotLabel(s)}: ${message(error)}`, errorKind: kindOf(error) });
+            return;
+          }
+        }
+      } finally {
+        set({ uploads: Math.max(0, get().uploads - 1), progress: null, batch: null });
       }
     },
 
@@ -699,11 +774,12 @@ export const useAppStore = create<AppStore>((set, get) => {
     handleDisconnected: () =>
       set({
         connected: false,
+        activeTab: "device",
         connectingPath: null,
         state: null,
         draft: null,
         draftDirty: false,
-        error: "The keyboard was disconnected. Reconnect from the Device screen.",
+        error: "Keyboard disconnected.",
         errorKind: null,
       }),
 

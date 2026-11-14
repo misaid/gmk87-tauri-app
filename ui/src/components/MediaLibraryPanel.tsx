@@ -111,7 +111,7 @@ function MediaLibraryPanelImpl() {
 
       {library.length === 0 ? (
         <p className="rounded-[12px] border border-dashed border-[var(--line)] p-6 text-center text-xs text-[var(--muted)]">
-          Nothing here yet. Images and GIFs you add are remembered here so you can switch between them in one click.
+          No images yet.
         </p>
       ) : shown.length === 0 ? (
         <p className="p-4 text-center text-xs text-[var(--muted)]">No library items match “{query}”.</p>
@@ -123,8 +123,7 @@ function MediaLibraryPanelImpl() {
         </ul>
       )}
       <p className="text-[11px] text-[var(--muted)]">
-        {library.length} / {MAX_ITEMS} items · {formatBytes(total)} of {formatBytes(MAX_BYTES)} · least-recently-used items are dropped first
-        (never one assigned to a slot). Click to load into the selected slot, or drag onto a slot tab.
+        {library.length} / {MAX_ITEMS} items · {formatBytes(total)} / {formatBytes(MAX_BYTES)}
       </p>
     </section>
   );

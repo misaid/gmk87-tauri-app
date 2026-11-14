@@ -25,13 +25,16 @@ const state = {
   setActiveTab: vi.fn(),
   uploads: 0,
   progress: null,
-  upload: vi.fn(),
+  uploadChanged: vi.fn(),
+  batch: null,
+  lastUploaded: null,
   cancel: vi.fn(),
   setCrop: vi.fn(),
 };
 vi.mock("@/store", () => ({
   useAppStore: (selector: (s: unknown) => unknown) => selector(state),
   selectTotalFrames: () => 2,
+  dirtySlots: () => ["slot0"],
 }));
 
 import DisplayScreen from "./DisplayScreen";

@@ -17,8 +17,6 @@ export default function DisplayScreen() {
   const loadSource = useAppStore((s) => s.loadSource);
   const libraryUse = useAppStore((s) => s.libraryUse);
   const setDelayMs = useAppStore((s) => s.setDelayMs);
-  const connected = useAppStore((s) => s.connected);
-  const setActiveTab = useAppStore((s) => s.setActiveTab);
   const displayHistory = useAppStore((s) => s.displayHistory);
   const undoDisplayUpload = useAppStore((s) => s.undoDisplayUpload);
 
@@ -84,22 +82,12 @@ export default function DisplayScreen() {
           })}
         </div>
         <CropEditor />
-        {!entry.source && <p className="text-[11px] text-[var(--muted)]">Choose an image to start cropping.</p>}
       </section>
 
       <section className="flex flex-col gap-4 rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4" aria-labelledby="display-upload">
         <h2 id="display-upload" className="text-[13px] font-semibold tracking-[0.01em] text-[var(--text)]">
           Send to board
         </h2>
-
-        {!connected && (
-          <div className="flex items-center justify-between gap-3 rounded-[12px] border border-[var(--warn)]/30 bg-[var(--warn)]/10 p-3 text-xs text-[#fde68a]" role="note">
-            <span>You're offline — you can prepare images, but upload unlocks after connecting.</span>
-            <Button variant="outline" size="sm" onClick={() => setActiveTab("device")}>
-              Go to Device
-            </Button>
-          </div>
-        )}
 
         <div>
           <Button variant="outline" size="sm" onClick={() => fileInput.current?.click()}>
@@ -116,9 +104,6 @@ export default function DisplayScreen() {
               if (file) void onFile(file);
             }}
           />
-          <p className="mt-1.5 text-[11px] text-[var(--muted)]">
-            Each slot holds one animated image. Slots are sent together — the other slot is preserved.
-          </p>
         </div>
 
         <div>
@@ -165,7 +150,7 @@ export default function DisplayScreen() {
           </div>
           {compressed && entry.info && (
             <p className="mt-1.5 text-[11px] text-[#a5b4fc]">
-              {`Compressed from ${entry.info.sourceFrames} to ${entry.info.frames} frames to fit the budget.`}
+              {`${entry.info.sourceFrames} → ${entry.info.frames} frames`}
             </p>
           )}
           {problem && <p className="mt-1.5 text-[11px] text-[#fde68a]">{problem}</p>}

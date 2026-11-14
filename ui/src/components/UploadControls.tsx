@@ -1,42 +1,53 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { budgetError } from "@/lib/budget";
 import { useDialogFocusTrap } from "@/lib/useDialog";
-import { selectTotalFrames, useAppStore } from "@/store";
+import { dirtySlots, selectTotalFrames, useAppStore } from "@/store";
+
+const num = (s: "slot0" | "slot1") => (s === "slot0" ? "0" : "1");
 
 export function UploadControls() {
   const uploads = useAppStore((s) => s.uploads);
   const progress = useAppStore((s) => s.progress);
-  const upload = useAppStore((s) => s.upload);
+  const batch = useAppStore((s) => s.batch);
+  const uploadChanged = useAppStore((s) => s.uploadChanged);
   const cancel = useAppStore((s) => s.cancel);
-  const entry = useAppStore((s) => s.entries[s.slot]);
+  const slot = useAppStore((s) => s.slot);
   const entries = useAppStore((s) => s.entries);
   const connected = useAppStore((s) => s.connected);
-  const setActiveTab = useAppStore((s) => s.setActiveTab);
   const lastUploaded = useAppStore((s) => s.lastUploaded);
   const totalFrames = useAppStore(selectTotalFrames);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
   useDialogFocusTrap(dialogRef, confirmOpen);
 
+  const dirty = useMemo(() => dirtySlots(entries, lastUploaded, slot), [entries, lastUploaded, slot]);
+  // Listed in slot order, whatever order they are written in.
+  const listed = dirty.length === 2 ? (["slot0", "slot1"] as const) : dirty;
   const busy = uploads > 0;
-  const problem = entry.source ? budgetError({ totalFrames, delayMs: entry.delayMs }) : null;
   const percent =
     progress && progress.totalBytes > 0
       ? Math.round((progress.bytesSent / progress.totalBytes) * 100)
       : 0;
 
+  const problem =
+    dirty.length > 0
+      ? budgetError({ totalFrames, delayMs: Math.min(...dirty.map((s) => entries[s].delayMs)) })
+      : null;
   const blockedReasons: string[] = [];
   if (!connected) blockedReasons.push("Connect a keyboard");
-  if (!entry.source) blockedReasons.push("Choose an image or GIF");
-  if (entry.source && !entry.info) blockedReasons.push("Counting frames…");
+  if (dirty.length === 0) blockedReasons.push("No changes to write");
+  if (dirty.some((s) => !entries[s].info)) blockedReasons.push("Counting frames…");
   if (problem) blockedReasons.push(problem);
   const blocked = busy || blockedReasons.length > 0;
 
-  const slotFrames = (s: "slot0" | "slot1") => entries[s].info?.frames ?? "—";
-  const slotName = (s: "slot0" | "slot1") => entries[s].name || `Slot ${s === "slot0" ? "0" : "1"}`;
-  const dropped = entry.info?.dropped?.length ?? 0;
+  const label =
+    dirty.length === 0
+      ? "Write to board"
+      : dirty.length === 1
+        ? `Write slot ${num(dirty[0])}`
+        : `Write ${dirty.length} slots`;
 
   useEffect(() => {
     if (!confirmOpen) return;
@@ -55,27 +66,12 @@ export function UploadControls() {
         onClick={() => { if (blocked) return; setConfirmOpen(true); }}
         className={blocked ? "opacity-50" : undefined}
       >
-        Write image to board
+        {label}
       </Button>
-      {dropped > 0 && entry.info && (
-        <p className="rounded-[10px] bg-[var(--accent)]/10 px-2.5 py-1.5 text-[11px] text-[#c4b5fd]" role="note">
-          Will drop {dropped} frames: {entry.info.sourceFrames} → {entry.info.frames} to fit 36 total.
-        </p>
-      )}
       {blockedReasons.length > 0 && !busy && (
-        <div id="upload-blocked-reasons" className="text-[11px] text-[var(--muted)]" role="note">
-          <p>To upload, please:</p>
-          <ul className="list-disc pl-4">
-            {blockedReasons.map((reason) => (
-              <li key={reason}>{reason}</li>
-            ))}
-          </ul>
-          {!connected && (
-            <Button variant="outline" size="sm" className="mt-2" onClick={() => setActiveTab("device")}>
-              Go to Device
-            </Button>
-          )}
-        </div>
+        <p id="upload-blocked-reasons" className="text-[11px] text-[var(--muted)]" role="note">
+          {blockedReasons.join(" · ")}
+        </p>
       )}
       {busy && (
         <Button variant="outline" onClick={() => void cancel()}>
@@ -86,7 +82,8 @@ export function UploadControls() {
         <div className="flex flex-col gap-1">
           <Progress value={percent} />
           <span className="text-[11px] text-[var(--muted)]">
-            {percent}% · {progress ? `${progress.bytesSent} / ${progress.totalBytes} bytes` : "—"} · {totalFrames} frames
+            {batch ? `Slot ${num(batch.slot)} (${batch.index} of ${batch.total}) · ` : ""}
+            {percent}%
           </span>
         </div>
       )}
@@ -104,24 +101,22 @@ export function UploadControls() {
             onClick={(e) => e.stopPropagation()}
           >
             <h3 id="upload-confirm-title" className="text-[15px] font-semibold text-[var(--text)]">
-              Write this image to the board?
+              {dirty.length === 1 ? `Write slot ${num(dirty[0])}?` : `Write ${dirty.length} slots?`}
             </h3>
-            <div className="mt-3 flex flex-col gap-1 text-xs text-[var(--muted)]">
-              {(["slot0", "slot1"] as const).map((s) => {
-                const before = lastUploaded?.[s]?.name || `on board`;
-                const after = slotName(s);
-                const changed = before !== after;
+            <ul className="mt-3 flex flex-col gap-1 text-xs text-[var(--muted)]">
+              {listed.map((s) => {
+                const e = entries[s];
+                const dropped = e.info?.dropped?.length ?? 0;
                 return (
-                  <p key={s}>
-                    <span className="text-[var(--text)]">Slot {s === "slot0" ? "0" : "1"}:</span>{" "}
-                    <span className={changed ? "text-[#c4b5fd]" : ""}>{after} · {slotFrames(s)} frames</span>
-                  </p>
+                  <li key={s}>
+                    <span className="text-[var(--text)]">Slot {num(s)}:</span> {e.name || "image"} · {e.info?.frames ?? "—"} frames
+                    {dropped > 0 && e.info && (
+                      <span className="text-[#c4b5fd]"> (from {e.info.sourceFrames})</span>
+                    )}
+                  </li>
                 );
               })}
-              {dropped > 0 && entry.info && (
-                <p className="text-[#c4b5fd]">Drops {dropped} frames ({entry.info.sourceFrames} → {entry.info.frames}) to fit.</p>
-              )}
-            </div>
+            </ul>
             <div className="mt-4 flex justify-end gap-2">
               <Button variant="outline" onClick={() => setConfirmOpen(false)}>
                 Cancel
@@ -129,10 +124,10 @@ export function UploadControls() {
               <Button
                 onClick={() => {
                   setConfirmOpen(false);
-                  void upload(entry.delayMs, true);
+                  void uploadChanged(true);
                 }}
               >
-                Write image
+                Write
               </Button>
             </div>
           </div>

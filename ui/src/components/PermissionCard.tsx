@@ -15,10 +15,9 @@ const COMMANDS = [
 export function PermissionCard() {
   return (
     <div className="flex flex-col gap-2 rounded-[14px] border border-[var(--warn)]/30 bg-[var(--warn)]/10 p-3.5 text-[13px] text-[#fde68a]">
-      <p className="font-medium">The keyboard could not be opened without root.</p>
-      <p className="text-xs text-[#fde68a]/80">Install the udev rule, then replug the keyboard. Lost? The commands below do everything:</p>
+      <p className="font-medium">Keyboard access denied.</p>
       <details className="rounded-[10px] bg-black/40 p-2">
-        <summary className="cursor-pointer text-xs font-medium">Show install commands</summary>
+        <summary className="cursor-pointer text-xs font-medium">udev rule</summary>
         <code className="mt-2 block overflow-x-auto whitespace-pre text-xs">
           {RULES}
         </code>

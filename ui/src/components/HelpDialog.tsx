@@ -4,43 +4,43 @@ import { useDialogFocusTrap } from "@/lib/useDialog";
 export const GLOSSARY: ReadonlyArray<{ term: string; def: string }> = [
   {
     term: "Underglow",
-    def: "The light that spills from beneath the key plate. Effects 0–18 on the board — waves, rainbows, breathing — are all underglow.",
+    def: "Light under the key plate.",
   },
   {
     term: "Side LEDs",
-    def: "The two strip lights on the left and right edges of the board. They have their own mode, saturation, colour and rainbow flag, separate from underglow.",
+    def: "The edge light bars.",
   },
   {
     term: "Slot",
-    def: "One of two image slots (Slot 0 / Slot 1) for the display. Each holds one animated image. Both slots are resent on every upload.",
+    def: "One of two display images.",
   },
   {
     term: "Frame budget",
-    def: "The board stores 36 animation frames total across both slots. A 40-frame GIF is compressed down to fit — frames are dropped and the app says so.",
+    def: "36 animation frames across both slots.",
   },
   {
     term: "Frame delay",
-    def: "How long each frame shows, in milliseconds. Lower delay = faster animation, but it can push you over the frame budget.",
+    def: "Milliseconds per frame.",
   },
   {
     term: "Auto-apply",
-    def: "Lighting edits preview instantly and are written to the board automatically a moment later. Offline, they wait and apply as soon as the keyboard connects.",
+    def: "Edits write to the board live.",
   },
   {
     term: "Preset",
-    def: "A named bundle of lighting settings (e.g. gaming, matrix). Choosing one stages the look; it is written to the board like any other edit. You can undo it.",
+    def: "A saved lighting look.",
   },
   {
     term: "VIA",
-    def: "A standard for remapping QMK keyboards. When detected, key remapping becomes available in a future version.",
+    def: "Key remapping, coming later.",
   },
   {
     term: "Win Lock",
-    def: "Disables the Windows key so a stray press doesn't open the Start menu mid-game.",
+    def: "Disables the Windows key.",
   },
   {
     term: "Read-back",
-    def: "Asking the board what it currently holds. The GMK87 can't be read back — the app keeps the last settings it wrote instead.",
+    def: "The board can't be read; the app shows what it last wrote.",
   },
 ];
 
@@ -85,7 +85,7 @@ export function HelpDialog({ open, onClose }: { open: boolean; onClose: () => vo
         <div className="mt-3 rounded-[12px] border border-[var(--line)] p-3 text-xs leading-relaxed text-[var(--muted)]">
           <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--dim)]">Shortcuts</p>
           <p className="mt-1.5 text-[var(--text)]">
-            1 / 2 / 3 / 4 switch tabs · ? opens help · p pauses animation · Cmd/Ctrl+Z undoes the last write
+            1–4 tabs · ? help · p pause · Ctrl/Cmd+Z undo
           </p>
         </div>
         <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--dim)]">Glossary</p>

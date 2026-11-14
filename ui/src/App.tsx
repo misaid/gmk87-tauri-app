@@ -15,7 +15,7 @@ import DeviceScreen from "@/screens/DeviceScreen";
 import DisplayScreen from "@/screens/DisplayScreen";
 import LightingScreen, { EffectsPanel, LightingPanels } from "@/screens/LightingScreen";
 import ProfilesScreen from "@/screens/ProfilesScreen";
-import { EFFECT_DESCRIPTIONS, LED_MODES, UNDERGLOW_EFFECTS } from "@/lib/effects";
+import { LED_MODES, UNDERGLOW_EFFECTS } from "@/lib/effects";
 import { brightnessLabel } from "@/components/lighting";
 import { selectEffectiveState, useAppStore } from "@/store";
 
@@ -50,10 +50,16 @@ export default function App() {
   const undoDisplayUpload = useAppStore((s) => s.undoDisplayUpload);
   const togglePaused = useAppStore((s) => s.setAnimationsPaused);
   const paused = useAppStore((s) => s.animationsPaused);
+  const autoConnect = useAppStore((s) => s.autoConnect);
   const reduceMotion = useReducedMotion();
   const [helpOpen, setHelpOpen] = useState(false);
 
   useLiveApply();
+
+  // Pairing first: scan on launch and connect straight away when exactly one board is found.
+  useEffect(() => {
+    void autoConnect();
+  }, [autoConnect]);
 
   // Shortcuts: 1–4 tabs, ? help, p pause, Cmd/Ctrl+Z undo.
   useEffect(() => {
@@ -78,12 +84,14 @@ export default function App() {
       if (e.key.toLowerCase() === "p") {
         if (target?.closest("button, select")) return;
         togglePaused(!paused);
-        useAppStore.getState().setNotice(paused ? "Animations playing — press p to pause" : "Animations paused — press p to resume");
+        useAppStore.getState().setNotice(paused ? "Animations on" : "Animations paused");
         return;
       }
       if (inControl) return;
       const map: Record<string, Tab> = { "1": "device", "2": "display", "3": "lighting", "4": "profiles" };
-      if (map[e.key]) setTab(map[e.key]);
+      if (map[e.key]) {
+        if (connected || map[e.key] === "device") setTab(map[e.key]);
+      }
       else if (e.key === "?") setHelpOpen(true);
     };
     window.addEventListener("keydown", onKey);
@@ -157,15 +165,20 @@ export default function App() {
             </div>
             <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
               <TabsList className="rounded-full border border-[var(--line)] bg-[var(--panel)] p-1">
-                {NAV_ITEMS.map((item) => (
+                {NAV_ITEMS.map((item) => {
+                  const locked = !connected && item.value !== "device";
+                  return (
+                  <span key={item.value} title={locked ? "Connect a keyboard first" : undefined} className="inline-flex">
                   <TabsTrigger
-                    key={item.value}
                     value={item.value}
-                    className="rounded-full px-3.5 py-1 text-[13px] font-medium text-[var(--muted)] transition-colors duration-150 hover:text-[var(--text)] data-[state=active]:bg-[var(--pill)] data-[state=active]:text-[var(--text)]"
+                    disabled={locked}
+                    className="rounded-full px-3.5 py-1 text-[13px] font-medium text-[var(--muted)] transition-colors duration-150 hover:text-[var(--text)] data-[state=active]:bg-[var(--pill)] data-[state=active]:text-[var(--text)] disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     {item.label}
                   </TabsTrigger>
-                ))}
+                  </span>
+                  );
+                })}
               </TabsList>
             </Tabs>
             <div className="flex items-center justify-end gap-2.5">
@@ -202,21 +215,12 @@ export default function App() {
           {tab === "lighting" ? (
             <div className="relative mx-auto grid w-full max-w-[1560px] gap-4 px-6 pb-5 pt-5 min-[1200px]:grid-cols-[minmax(0,1fr)_480px] min-[1200px]:items-start min-[1200px]:gap-6">
               <section aria-label="Keyboard preview" className="flex min-w-0 flex-col gap-3 min-[1200px]:sticky min-[1200px]:top-[76px] min-[1200px]:min-h-[calc(100vh-92px)] min-[1200px]:justify-center">
-                {!connected && (
-                  <div role="note" className="flex items-center justify-between gap-3 rounded-[12px] border border-[var(--warn)]/30 bg-[var(--warn)]/10 px-3 py-2 text-[12px] text-[var(--text)]">
-                    <span>Keyboard not connected. You can keep editing; changes stay as a draft and apply once you connect.</span>
-                    <button type="button" onClick={() => setTab("device")} className="shrink-0 font-medium text-[var(--warn)] underline-offset-4 hover:underline">
-                      Open Device
-                    </button>
-                  </div>
-                )}
                 <KeyboardPreview className="w-full" hero />
                 <div className="mx-auto w-full rounded-[14px] border border-white/10 bg-[rgba(12,14,20,0.6)] px-4 py-2.5 backdrop-blur-xl" style={{ maxWidth: heroBoardWidth() }}>
                   <SyncBar />
                 </div>
                 <p className="mx-auto hidden text-center text-[12px] text-[var(--muted)] min-[1200px]:block" style={{ maxWidth: heroBoardWidth() }}>
                   <span className="font-semibold text-[var(--text)]">{effectName}</span>
-                  {effective && EFFECT_DESCRIPTIONS[effective.underglow.effect] ? ` — ${EFFECT_DESCRIPTIONS[effective.underglow.effect]}` : ""}
                 </p>
                 <LightingPanels />
               </section>
@@ -238,7 +242,7 @@ export default function App() {
                       {sideLedName}
                     </button>
                     {draftQueuedOffline && (
-                      <span className="inline-flex h-6 items-center rounded-full border border-[var(--accent)]/40 px-2.5 text-[12px] font-medium text-[var(--accent)]">Will apply when connected</span>
+                      <span className="inline-flex h-6 items-center rounded-full border border-[var(--accent)]/40 px-2.5 text-[12px] font-medium text-[var(--accent)]">Queued</span>
                     )}
                   </div>
                 </section>

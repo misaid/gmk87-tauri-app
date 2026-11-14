@@ -116,7 +116,6 @@ export default function DeviceScreen() {
     <div className="flex flex-col gap-4 text-[13px]">
       <div className="mx-auto w-full max-w-[1000px] pb-6 pt-8">
         <KeyboardPreview className="w-full overflow-visible" hero overlay={pins} />
-        <p className="mt-1 text-center text-[11px] text-[var(--muted)]">Numbered pins mark the parts of the board. Select one, or Tab through them, to jump to its details.</p>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-6">
@@ -151,15 +150,13 @@ export default function DeviceScreen() {
                   void disconnectDevice();
                 }}
               >
-                {confirmDisconnect ? "Click again to disconnect" : "Disconnect"}
+                {confirmDisconnect ? "Confirm disconnect" : "Disconnect"}
               </Button>
             )}
           </div>
 
           {devices.length === 0 && (
-            <p className="text-[var(--muted)]">
-              No GMK87 found. Plug in the USB cable (wired keyboard or 2.4 GHz dongle) and press Refresh. On Linux, a permission prompt will appear if udev access is missing.
-            </p>
+            <p className="text-[var(--muted)]">No keyboard found. Plug it in, then Refresh.</p>
           )}
 
           <div className="flex flex-col gap-2">
@@ -174,13 +171,12 @@ export default function DeviceScreen() {
                       {device.hasVia && <Badge variant="secondary">VIA</Badge>}
                     </div>
                     <span className="text-[11px] text-[var(--muted)]">{transportLabel}</span>
-                    {device.hasVia && <span className="block text-[11px] text-[var(--muted)]">VIA reachable — remapping arrives in a future version.</span>}
                     <p className="mt-1 font-mono text-[11px] text-[var(--dim)]">
                       Product 0x{device.productId.toString(16).padStart(4, "0")} · {device.path}
                     </p>
                   </div>
                   {!connected && (
-                    <Button size="sm" disabled={connectingPath !== null} aria-busy={isConnecting || undefined} onClick={() => void connectTo(device.path)}>
+                    <Button size={devices.length === 1 ? "lg" : "sm"} className={devices.length === 1 ? "h-11 min-w-32 text-[15px]" : undefined} disabled={connectingPath !== null} aria-busy={isConnecting || undefined} onClick={() => void connectTo(device.path)}>
                       {isConnecting ? (
                         <>
                           <Loader2 className="size-4 animate-spin" aria-hidden />
@@ -197,7 +193,7 @@ export default function DeviceScreen() {
           </div>
 
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-            {state ? <p className="text-[11px] text-[var(--muted)]">{state.synced ? "Settings written and acknowledged." : "Nothing written yet."}</p> : <span />}
+            <span />
             <Button
               variant="ghost"
               size="sm"
@@ -215,7 +211,6 @@ export default function DeviceScreen() {
         </Callout>
 
         <Callout n={2} title="Screen · board clock" hot={hot} setHot={setHot} className="lg:col-span-2">
-          <p className="text-[11px] text-[var(--muted)]">The board cannot be read back, so this is the last value written to it.</p>
           <dl className="mt-2 grid grid-cols-[auto_1fr] items-baseline gap-x-3 gap-y-1 text-[12px]">
             <dt className="text-[var(--muted)]">Last written</dt>
             <dd className="text-[15px] tabular-nums text-[var(--text)]">{state ? formatDeviceTime(state.time as DeviceTime) : "—"}</dd>
@@ -234,14 +229,12 @@ export default function DeviceScreen() {
             <Switch checked={state?.winLock ?? false} disabled={!state} onCheckedChange={(checked) => setLightingDraft?.({ winLock: checked })} />
             Windows key lock
           </label>
-          <p className="mt-2 text-[11px] text-[var(--muted)]">Disables the Win key so it cannot pull you out of a game.</p>
         </Callout>
 
         <Callout n={4} title="Knob · brightness" hot={hot} setHot={setHot} className="lg:col-span-3">
           <p className="text-[var(--text)]">
-            Underglow brightness is <span className="font-semibold">{brightness !== undefined ? `${brightness}/9` : "—"}</span>.
+            Brightness <span className="font-semibold">{brightness !== undefined ? `${brightness}/9` : "—"}</span>
           </p>
-          <p className="mt-2 text-[11px] text-[var(--muted)]">Turn the knob on the board, or drag the knob above up and down, to change it. Arrow keys work when it is focused.</p>
         </Callout>
       </div>
     </div>

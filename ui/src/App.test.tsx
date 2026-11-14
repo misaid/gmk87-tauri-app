@@ -7,10 +7,11 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}) })
 import App from "./App";
 
 describe("App shell", () => {
-  it("renders the three screens", () => {
+  it("opens on Device with the other tabs locked until connected", () => {
     render(<App />);
-    for (const label of ["Device", "Display", "Lighting"]) {
-      expect(screen.getByRole("tab", { name: label })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Device" })).toHaveAttribute("data-state", "active");
+    for (const label of ["Lighting", "Display", "Profiles"]) {
+      expect(screen.getByRole("tab", { name: label })).toBeDisabled();
     }
     expect(screen.queryByRole("tab", { name: "Clock" })).not.toBeInTheDocument();
   });
