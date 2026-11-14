@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { DEFAULT_CROP, cropKey, drawCrop, panBy, zoomBy, type CropParams } from "@/lib/crop";
-import { getBitmap, peekBitmap } from "@/lib/bitmapCache";
+import { getBitmap, peekBitmap, type Source } from "@/lib/bitmapCache";
 import { useAppStore } from "@/store";
 
 /** Wheel gestures commit to the store once the wheel has been quiet this long. */
@@ -27,7 +27,7 @@ function CropEditorImpl() {
   const canvas = useRef<HTMLCanvasElement>(null);
   const zoomLabel = useRef<HTMLDivElement>(null);
   const live = useRef<CropParams>(committed);
-  const bitmap = useRef<ImageBitmap | null>(null);
+  const bitmap = useRef<Source | null>(null);
   const drag = useRef<{ x: number; y: number } | null>(null);
   const raf = useRef(0);
   const wheelTimer = useRef<number | undefined>(undefined);

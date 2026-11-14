@@ -4,15 +4,17 @@
  * can show) and reused by every redraw and every slot switch.
  */
 const MAX_EDGE = 1600;
-const cache = new WeakMap<Uint8Array, Promise<ImageBitmap | null>>();
-const ready = new WeakMap<Uint8Array, ImageBitmap>();
+
+export type Source = CanvasImageSource & { width: number; height: number };
+const cache = new WeakMap<Uint8Array, Promise<Source | null>>();
+const ready = new WeakMap<Uint8Array, Source>();
 
 /** The decoded bitmap if it is already available, so slot switches can paint synchronously. */
-export function peekBitmap(bytes: Uint8Array | null): ImageBitmap | null {
+export function peekBitmap(bytes: Uint8Array | null): Source | null {
   return (bytes && ready.get(bytes)) || null;
 }
 
-export function getBitmap(bytes: Uint8Array): Promise<ImageBitmap | null> {
+export function getBitmap(bytes: Uint8Array): Promise<Source | null> {
   let hit = cache.get(bytes);
   if (!hit) {
     hit = decode(bytes).then((bmp) => {
@@ -24,24 +26,72 @@ export function getBitmap(bytes: Uint8Array): Promise<ImageBitmap | null> {
   return hit;
 }
 
-async function decode(bytes: Uint8Array): Promise<ImageBitmap | null> {
-  if (typeof createImageBitmap !== "function") return null;
+/** Draws `src` into a canvas capped at MAX_EDGE; plain 2D drawing, no resize options (WebKit ignores them). */
+function rasterize(src: Source): HTMLCanvasElement | null {
+  if (typeof document === "undefined" || !src.width || !src.height) return null;
+  const k = Math.min(1, MAX_EDGE / Math.max(src.width, src.height));
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(src.width * k));
+  c.height = Math.max(1, Math.round(src.height * k));
+  const ctx = c.getContext("2d");
+  if (!ctx) return null;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(src, 0, 0, c.width, c.height);
+  return c;
+}
+
+/** True when a tiny downscale of `src` has any visible pixel; a blank bitmap would paint the editor black. */
+function hasPixels(src: Source): boolean {
+  if (typeof document === "undefined") return true;
+  const c = document.createElement("canvas");
+  c.width = 8;
+  c.height = 8;
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return true;
   try {
-    const blob = new Blob([bytes as BlobPart]);
-    const full = await createImageBitmap(blob);
-    const edge = Math.max(full.width, full.height);
-    if (edge <= MAX_EDGE) return full;
-    const k = MAX_EDGE / edge;
-    const small = await createImageBitmap(full, {
-      resizeWidth: Math.round(full.width * k),
-      resizeHeight: Math.round(full.height * k),
-      resizeQuality: "high",
-    });
-    full.close();
-    return small;
+    ctx.drawImage(src, 0, 0, 8, 8);
+    const data = ctx.getImageData(0, 0, 8, 8).data;
+    for (let i = 3; i < data.length; i += 4) if (data[i] > 0) return true;
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+async function viaImageElement(blob: Blob): Promise<HTMLCanvasElement | null> {
+  if (typeof Image === "undefined") return null;
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    return rasterize(img);
   } catch {
     return null;
+  } finally {
+    URL.revokeObjectURL(url);
   }
+}
+
+async function decode(bytes: Uint8Array): Promise<Source | null> {
+  const blob = new Blob([bytes as BlobPart]);
+  if (typeof createImageBitmap === "function") {
+    try {
+      const bmp = await createImageBitmap(blob);
+      if (hasPixels(bmp)) {
+        if (Math.max(bmp.width, bmp.height) <= MAX_EDGE) return bmp;
+        const small = rasterize(bmp);
+        bmp.close();
+        if (small && hasPixels(small)) return small;
+      } else {
+        bmp.close();
+      }
+    } catch {
+      // fall through to the <img> path
+    }
+  }
+  const viaImg = await viaImageElement(blob);
+  return viaImg && hasPixels(viaImg) ? viaImg : null;
 }
 
 /** Decode `url` off-thread so an <img> swapped to it paints immediately instead of flashing blank. */
