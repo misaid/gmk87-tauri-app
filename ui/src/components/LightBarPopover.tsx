@@ -86,7 +86,8 @@ export function LightBarPopover({ anchor, onClose }: { anchor: RefObject<HTMLEle
             key={mode.value}
             type="button"
             aria-pressed={led.mode === mode.value}
-            onClick={() => stage({ ledMode: mode.value })}
+            // Rainbow overrides the colour, so picking a colour or a non-rainbow mode clears it.
+            onClick={() => stage(mode.value === 1 ? { ledMode: 1 } : { ledMode: mode.value, ledRainbow: 0 })}
             className={
               (i === LED_MODES.length - 1 && LED_MODES.length % 2 === 1 ? "col-span-2 " : "") +
               (led.mode === mode.value
@@ -106,7 +107,7 @@ export function LightBarPopover({ anchor, onClose }: { anchor: RefObject<HTMLEle
             aria-label={color.name}
             aria-pressed={led.color === color.value}
             title={color.name}
-            onClick={() => stage({ ledColor: color.value })}
+            onClick={() => stage({ ledColor: color.value, ledRainbow: 0, ...(led.mode === 1 ? { ledMode: 3 } : {}) })}
             className={
               led.color === color.value
                 ? "size-6 rounded-full ring-2 ring-white ring-offset-2 ring-offset-[#10131a]"

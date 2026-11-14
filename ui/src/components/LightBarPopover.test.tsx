@@ -34,6 +34,14 @@ describe("LightBarPopover", () => {
     expect(setLightingDraft).toHaveBeenCalledWith({ ledMode: expect.any(Number) });
   });
 
+  it("picking a colour or a fixed mode clears rainbow so the colour shows", async () => {
+    setup();
+    await userEvent.click(screen.getByRole("button", { name: "Blue" }));
+    expect(setLightingDraft).toHaveBeenLastCalledWith({ ledColor: 5, ledRainbow: 0 });
+    await userEvent.click(screen.getByRole("button", { name: "Fixed alternating pair" }));
+    expect(setLightingDraft).toHaveBeenLastCalledWith({ ledMode: 4, ledRainbow: 0 });
+  });
+
   it("closes on Escape and on outside click", async () => {
     const onClose = setup();
     await userEvent.keyboard("{Escape}");
