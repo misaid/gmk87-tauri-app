@@ -4,7 +4,7 @@ import { DEFAULT_CROP, type CropParams } from "./lib/crop";
 import { MAX_TOTAL_FRAMES } from "./lib/budget";
 import type { Profile } from "./lib/profiles";
 import { cropKey } from "./lib/crop";
-import { makeThumbnail, predecode } from "./lib/bitmapCache";
+import { decodeUrl, makeThumbnail, predecode } from "./lib/bitmapCache";
 import {
   IndexedDbStorage,
   MediaLibrary,
@@ -19,6 +19,11 @@ export function setMediaLibrary(lib: MediaLibrary): void {
 
 /** Orders async preview renders so a slow, stale one cannot overwrite a newer. */
 const previewSequence: Record<Slot, number> = { slot0: 0, slot1: 0 };
+
+/** Revoke a replaced preview URL a moment later, once no <img> can still be showing it. */
+function retireUrl(url: string): void {
+  window.setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
 const PREVIEW_DEBOUNCE_MS = 200;
 
 /** Log a slot's source in the media library (deduped by content hash). */
@@ -708,9 +713,16 @@ export const useAppStore = create<AppStore>((set, get) => {
         if (sequence !== previewSequence[slot]) return;
         const blob = new Blob([png], { type: "image/png" });
         const url = URL.createObjectURL(blob);
+        // Keep the previous frame on screen until this one is decoded: swapping an
+        // <img> to a still-loading blob URL paints a blank (black) frame.
+        await decodeUrl(url);
+        if (sequence !== previewSequence[slot]) {
+          URL.revokeObjectURL(url);
+          return;
+        }
         set((state) => {
           const current = state.entries[slot];
-          if (current.previewUrl) URL.revokeObjectURL(current.previewUrl);
+          if (current.previewUrl) retireUrl(current.previewUrl);
           if (current.source !== source) {
             URL.revokeObjectURL(url);
             return {};

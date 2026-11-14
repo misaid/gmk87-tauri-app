@@ -87,11 +87,12 @@ export function drawCrop(
   crop: CropParams,
   destW: number,
   destH: number,
+  quality: ImageSmoothingQuality = "high",
 ): void {
   const { src, dst } = cropGeometry(image.width, image.height, crop, destW, destH);
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, destW, destH);
-  ctx.imageSmoothingQuality = "high";
+  ctx.imageSmoothingQuality = quality;
   ctx.drawImage(image, src.x, src.y, src.w, src.h, dst.x, dst.y, dst.w, dst.h);
 }
 

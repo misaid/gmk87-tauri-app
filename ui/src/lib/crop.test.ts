@@ -74,3 +74,20 @@ describe("cropGeometry", () => {
     expect(cropKey(DEFAULT_CROP)).not.toBe(cropKey({ ...DEFAULT_CROP, zoom: 1.5 }));
   });
 });
+
+describe("drawCrop smoothing quality", () => {
+  it("defaults to high and honours an explicit quality", () => {
+    const calls: string[] = [];
+    const ctx = {
+      fillStyle: "",
+      fillRect() {},
+      drawImage() {},
+      set imageSmoothingQuality(v: string) {
+        calls.push(v);
+      },
+    } as unknown as CanvasRenderingContext2D;
+    drawCrop(ctx, { width: 100, height: 100 } as unknown as ImageBitmap, DEFAULT_CROP, 240, 135);
+    drawCrop(ctx, { width: 100, height: 100 } as unknown as ImageBitmap, DEFAULT_CROP, 240, 135, "low");
+    expect(calls).toEqual(["high", "low"]);
+  });
+});

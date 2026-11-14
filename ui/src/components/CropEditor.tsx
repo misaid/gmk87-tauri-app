@@ -1,11 +1,14 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { DEFAULT_CROP, cropKey, drawCrop, panBy, zoomBy, type CropParams } from "@/lib/crop";
-import { getBitmap } from "@/lib/bitmapCache";
+import { getBitmap, peekBitmap } from "@/lib/bitmapCache";
 import { useAppStore } from "@/store";
 
 /** Wheel gestures commit to the store once the wheel has been quiet this long. */
 const WHEEL_END_MS = 120;
+
+/** After the last move, redraw once at full smoothing quality. */
+const SETTLE_MS = 140;
 
 /**
  * Pan/zoom editor. During a gesture the crop lives in a ref and is drawn
@@ -28,9 +31,12 @@ function CropEditorImpl() {
   const drag = useRef<{ x: number; y: number } | null>(null);
   const raf = useRef(0);
   const wheelTimer = useRef<number | undefined>(undefined);
+  const settleTimer = useRef<number | undefined>(undefined);
+  const moving = useRef(false);
   const [gesturing, setGesturing] = useState(false);
   const [hasBitmap, setHasBitmap] = useState(false);
 
+  const paintRef = useRef<() => void>(() => {});
   const paint = useCallback(() => {
     raf.current = 0;
     const el = canvas.current;
@@ -46,12 +52,27 @@ function CropEditorImpl() {
       el.height = h;
     }
     const ctx = el.getContext("2d");
-    if (ctx) drawCrop(ctx, bmp, live.current, w, h);
+    if (!ctx) return;
+    // Cheap bilinear while the crop is moving, one sharp redraw once it settles.
+    drawCrop(ctx, bmp, live.current, w, h, moving.current ? "low" : "high");
+    window.clearTimeout(settleTimer.current);
+    if (moving.current) {
+      settleTimer.current = window.setTimeout(() => {
+        moving.current = false;
+        schedule();
+      }, SETTLE_MS);
+    }
   }, []);
 
   const schedule = useCallback(() => {
-    if (!raf.current) raf.current = requestAnimationFrame(paint);
-  }, [paint]);
+    if (!raf.current) raf.current = requestAnimationFrame(paintRef.current);
+  }, []);
+  const motion = useCallback(() => {
+    moving.current = true;
+    schedule();
+  }, [schedule]);
+
+  paintRef.current = paint;
 
   // The store's crop wins whenever no gesture is in flight (slot switch, reset, library load).
   useEffect(() => {
@@ -59,19 +80,23 @@ function CropEditorImpl() {
     schedule();
   }, [committed, schedule]);
 
-  // Decode once (cached per source), then every redraw is a drawImage.
+  // Decode once (cached per source), then every redraw is a drawImage. A bitmap that
+  // is already decoded (slot switch) is installed synchronously, and the previous
+  // frame stays on the canvas until the new one is ready, so nothing flashes black.
   useEffect(() => {
     let cancelled = false;
-    bitmap.current = null;
-    setHasBitmap(false);
-    if (source) {
+    const hit = peekBitmap(source);
+    bitmap.current = hit;
+    setHasBitmap(Boolean(hit));
+    if (hit) schedule();
+    if (source && !hit) {
       void getBitmap(source).then((bmp) => {
         if (cancelled) return;
         bitmap.current = bmp;
         setHasBitmap(Boolean(bmp));
         schedule();
       });
-    } else {
+    } else if (!source) {
       schedule();
     }
     return () => {
@@ -79,10 +104,21 @@ function CropEditorImpl() {
     };
   }, [source, schedule]);
 
+  // Re-fit the backing store when the surface is resized (window, layout changes).
+  useEffect(() => {
+    const el = surface.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => schedule());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [schedule]);
+
   useEffect(
     () => () => {
       cancelAnimationFrame(raf.current);
+      raf.current = 0;
       window.clearTimeout(wheelTimer.current);
+      window.clearTimeout(settleTimer.current);
     },
     [],
   );
@@ -114,13 +150,13 @@ function CropEditorImpl() {
       const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 240 : 1;
       live.current = { ...live.current, zoom: zoomBy(live.current.zoom, event.deltaY * unit * 0.5) };
       beginGesture();
-      schedule();
+      motion();
       window.clearTimeout(wheelTimer.current);
       wheelTimer.current = window.setTimeout(commit, WHEEL_END_MS);
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, [schedule, commit]);
+  }, [motion, commit]);
 
   function onPointerMove(event: React.PointerEvent) {
     if (!drag.current) return;
@@ -129,7 +165,7 @@ function CropEditorImpl() {
     drag.current = { x: event.clientX, y: event.clientY };
     const { width, height } = box();
     live.current = panBy(live.current, dx, dy, width, height);
-    schedule();
+    motion();
   }
 
   function keyCommit(next: CropParams) {
@@ -172,9 +208,9 @@ function CropEditorImpl() {
     }
   }
 
-  // Show the true device render only when it matches the crop on screen.
+  // The canvas always stays visible and painted; the true device render is layered
+  // on top (already decoded by the store) only while it matches the crop on screen.
   const showTrue = Boolean(previewUrl) && !gesturing && previewKey === cropKey(committed);
-  const showCanvas = hasBitmap && !showTrue;
 
   return (
     <div className="flex flex-col gap-2">
@@ -203,16 +239,13 @@ function CropEditorImpl() {
         }}
         onKeyDown={onKeyDown}
       >
-        <canvas
-          ref={canvas}
-          data-testid="crop-canvas"
-          className={showCanvas ? "absolute inset-0 size-full" : "absolute inset-0 size-full opacity-0"}
-        />
-        {showTrue && previewUrl && (
+        <canvas ref={canvas} data-testid="crop-canvas" className="absolute inset-0 size-full" />
+        {previewUrl && (
           <img
             src={previewUrl}
             alt="Display preview"
             draggable={false}
+            style={{ visibility: showTrue || !hasBitmap ? "visible" : "hidden" }}
             className="absolute inset-0 size-full object-cover [image-rendering:pixelated]"
           />
         )}

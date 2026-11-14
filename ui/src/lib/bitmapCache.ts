@@ -5,11 +5,20 @@
  */
 const MAX_EDGE = 1600;
 const cache = new WeakMap<Uint8Array, Promise<ImageBitmap | null>>();
+const ready = new WeakMap<Uint8Array, ImageBitmap>();
+
+/** The decoded bitmap if it is already available, so slot switches can paint synchronously. */
+export function peekBitmap(bytes: Uint8Array | null): ImageBitmap | null {
+  return (bytes && ready.get(bytes)) || null;
+}
 
 export function getBitmap(bytes: Uint8Array): Promise<ImageBitmap | null> {
   let hit = cache.get(bytes);
   if (!hit) {
-    hit = decode(bytes);
+    hit = decode(bytes).then((bmp) => {
+      if (bmp) ready.set(bytes, bmp);
+      return bmp;
+    });
     cache.set(bytes, hit);
   }
   return hit;
@@ -32,6 +41,18 @@ async function decode(bytes: Uint8Array): Promise<ImageBitmap | null> {
     return small;
   } catch {
     return null;
+  }
+}
+
+/** Decode `url` off-thread so an <img> swapped to it paints immediately instead of flashing blank. */
+export async function decodeUrl(url: string): Promise<void> {
+  if (typeof Image === "undefined") return;
+  const img = new Image();
+  img.src = url;
+  try {
+    if (typeof img.decode === "function") await img.decode();
+  } catch {
+    // A failed pre-decode just falls back to the normal load path.
   }
 }
 

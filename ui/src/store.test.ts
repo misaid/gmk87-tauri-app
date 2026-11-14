@@ -135,6 +135,7 @@ describe("store", () => {
   });
 
   it("revokes the previous preview URL", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
     const revoke = vi.spyOn(URL, "revokeObjectURL");
     useAppStore.setState((s) => ({
       entries: {
@@ -145,7 +146,11 @@ describe("store", () => {
     await useAppStore.getState().refreshPreview();
     const first = useAppStore.getState().previewUrl;
     await useAppStore.getState().refreshPreview();
+    // The old URL is retired after a grace period so an <img> never blanks mid-swap.
+    expect(revoke).not.toHaveBeenCalledWith(first);
+    vi.advanceTimersByTime(2100);
     expect(revoke).toHaveBeenCalledWith(first);
+    vi.useRealTimers();
     revoke.mockRestore();
   });
 
