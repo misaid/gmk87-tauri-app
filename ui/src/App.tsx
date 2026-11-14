@@ -5,7 +5,7 @@ import { CircleHelp } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { KeyboardPreview } from "@/components/KeyboardPreview";
-import { LightingDock } from "@/components/LightingDock";
+import { openLightBar } from "@/components/LightBarPopover";
 import { HelpDialog } from "@/components/HelpDialog";
 import { Toast } from "@/components/Toast";
 import { useDeviceEvents } from "@/lib/useDeviceEvents";
@@ -194,18 +194,21 @@ export default function App() {
             style={{ background: "radial-gradient(70% 65% at 50% 44%, var(--board-glow), transparent 78%)" }}
           />
           <section aria-label="Keyboard preview" className="relative mx-auto flex w-full max-w-[1320px] flex-col gap-2 px-6 pt-5">
-            <div className={tab === "lighting" ? "w-full" : "mx-auto w-full max-w-[600px]"}>
+            <div className={tab === "lighting" ? "w-full" : tab === "device" ? "mx-auto w-full max-w-[720px]" : "mx-auto w-full max-w-[600px]"}>
               <KeyboardPreview className="w-full" hero={tab === "lighting"} />
             </div>
-            {tab === "lighting" && <LightingDock />}
-            <div className="flex flex-wrap items-center justify-center gap-1.5">
+            <div className={tab === "lighting" && !draftQueuedOffline ? "hidden" : "flex flex-wrap items-center justify-center gap-1.5"}>
               {tab !== "lighting" && <span className="inline-flex h-6 items-center rounded-full border border-[var(--line-strong)] px-2.5 text-[12px] font-medium text-[var(--text)]">{effectName}</span>}
-              <button type="button" onClick={() => jumpTo("#lighting-brightness [role='slider']")} className={chipBtn}>
-                {effective ? brightnessLabel(effective.underglow.brightness) : "—"}
-              </button>
-              <button type="button" onClick={() => jumpTo("#side-light-bar")} className={chipBtn}>
-                {sideLedName}
-              </button>
+              {tab !== "lighting" && (
+                <>
+                  <button type="button" onClick={() => jumpTo("#lighting-brightness [role='slider']")} className={chipBtn}>
+                    {effective ? brightnessLabel(effective.underglow.brightness) : "—"}
+                  </button>
+                  <button type="button" onClick={openLightBar} className={chipBtn}>
+                    {sideLedName}
+                  </button>
+                </>
+              )}
               {draftQueuedOffline && (
                 <span className="inline-flex h-6 items-center rounded-full border border-[var(--accent)]/40 px-2.5 text-[12px] font-medium text-[var(--accent)]">Will apply when connected</span>
               )}

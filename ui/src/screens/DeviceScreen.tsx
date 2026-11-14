@@ -44,8 +44,11 @@ export default function DeviceScreen() {
     return () => window.clearTimeout(t);
   }, [confirmDisconnect]);
 
+  const board = devices[0];
+
   return (
     <div className="grid gap-4 text-[13px] lg:grid-cols-2 lg:items-start">
+      <div className="flex flex-col gap-4">
       <section
         className="rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4"
         aria-labelledby="device-heading"
@@ -166,6 +169,25 @@ export default function DeviceScreen() {
           </p>
         )}
       </section>
+
+      <section className="rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4" aria-labelledby="device-board">
+        <h2 id="device-board" className="text-[13px] font-semibold tracking-[0.01em] text-[var(--text)]">
+          Board
+        </h2>
+        {board ? (
+          <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[12px]">
+            <dt className="text-[var(--muted)]">Transport</dt>
+            <dd className="text-[var(--text)]">{board.transport === "wireless24g" ? "2.4 GHz dongle" : "Wired USB"}</dd>
+            <dt className="text-[var(--muted)]">VIA</dt>
+            <dd className="text-[var(--text)]">{board.hasVia ? "Reachable" : "Not detected"}</dd>
+            <dt className="text-[var(--muted)]">Product ID</dt>
+            <dd className="font-mono text-[var(--text)]">0x{board.productId.toString(16).padStart(4, "0")}</dd>
+          </dl>
+        ) : (
+          <p className="mt-2 text-[var(--muted)]">No board detected.</p>
+        )}
+      </section>
+      </div>
 
       <div className="flex flex-col gap-4">
 

@@ -167,7 +167,7 @@ export function EffectGallery({
       {UNDERGLOW_EFFECTS.map((effect, i) => {
         const selected = effect.value === value;
         const Icon = EFFECT_ICON[effect.value];
-        const span = "";
+        const span = effect.name === "Off" ? "sm:col-span-2" : "";
         return (
           <button
             key={effect.value}

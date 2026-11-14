@@ -1,7 +1,6 @@
 import { Plus } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-import { UNDERGLOW_EFFECTS } from "@/lib/effects";
 import { underglowCategory } from "@/components/lighting";
 import { OFFLINE_STATE, selectEffectiveState, useAppStore } from "@/store";
 
@@ -16,9 +15,15 @@ const GLOW_COLORS: ReadonlyArray<{ name: string; rgb: [number, number, number] }
   { name: "White", rgb: [255, 255, 255] },
 ];
 
-const RING_OFFSET = "ring-offset-[#0c0e13]";
+const RING_OFFSET = "ring-offset-[#10131a]";
 
-/** Glass control strip under the board: the main underglow controls, always above the fold. */
+/** Index of the preset swatch matching the live colour, or -1 for a custom colour. */
+export function activeSwatchIndex(color: readonly number[], rainbow: number): number {
+  if (rainbow === 1) return -1;
+  return GLOW_COLORS.findIndex((c) => c.rgb[0] === color[0] && c.rgb[1] === color[1] && c.rgb[2] === color[2]);
+}
+
+/** Underglow controls: the header row of the single control panel under the board. */
 export function LightingDock() {
   const effective = useAppStore(selectEffectiveState);
   const committed = useAppStore((s) => s.state);
@@ -26,9 +31,12 @@ export function LightingDock() {
   const { underglow } = effective ?? committed ?? OFFLINE_STATE;
   const rainbowActive = underglow.rainbow === 1;
   const canReverse = ["wave", "rainbow"].includes(underglowCategory(underglow.effect));
-  const effectName = UNDERGLOW_EFFECTS.find((e) => e.value === underglow.effect)?.name ?? "Off";
   const hex = `#${underglow.color.map((c) => Math.round(c).toString(16).padStart(2, "0")).join("")}`;
   const displayedSpeed = 9 - underglow.speed;
+  const activeIdx = activeSwatchIndex(underglow.color, underglow.rainbow);
+  const customActive = !rainbowActive && activeIdx === -1;
+  const tint = `rgb(${underglow.color.map((c) => Math.round(c)).join(",")})`;
+  const moving = !["static", "off"].includes(underglowCategory(underglow.effect));
 
   function stage(patch: Parameters<typeof setLightingDraft>[0]) {
     if (typeof setLightingDraft === "function") setLightingDraft(patch);
@@ -41,19 +49,11 @@ export function LightingDock() {
     <div
       role="group"
       aria-label="Underglow controls"
-      className="mx-auto flex w-full flex-wrap items-center justify-center gap-x-5 gap-y-2.5 rounded-[16px] border border-white/10 bg-[rgba(10,12,18,0.55)] px-4 py-2.5 shadow-[0_8px_30px_-12px_rgba(0,0,0,0.7)] backdrop-blur-xl"
+      className="flex w-full flex-wrap items-center justify-between gap-x-5 gap-y-2.5"
     >
-      <span className="inline-flex h-7 items-center rounded-full border border-white/15 bg-white/[0.06] px-3 text-[12px] font-semibold text-[var(--text)]">
-        {effectName}
-      </span>
-
       <div className={`flex items-center gap-2 ${rainbowActive ? "opacity-40" : ""}`}>
-        {GLOW_COLORS.map((c) => {
-          const selected =
-            !rainbowActive &&
-            underglow.color[0] === c.rgb[0] &&
-            underglow.color[1] === c.rgb[1] &&
-            underglow.color[2] === c.rgb[2];
+        {GLOW_COLORS.map((c, i) => {
+          const selected = i === activeIdx;
           return (
             <button
               key={c.name}
@@ -74,7 +74,8 @@ export function LightingDock() {
         })}
         <label
           title="Custom colour"
-          className={`relative grid size-7 place-items-center rounded-full ring-1 ring-white/30 focus-within:ring-2 focus-within:ring-white ${rainbowActive ? "pointer-events-none" : "cursor-pointer"}`}
+          data-active={customActive || undefined}
+          className={`relative grid size-7 place-items-center rounded-full focus-within:ring-2 focus-within:ring-white ${customActive ? `ring-2 ring-white ring-offset-2 ${RING_OFFSET}` : "ring-1 ring-white/30"} ${rainbowActive ? "pointer-events-none" : "cursor-pointer"}`}
           style={{ background: "conic-gradient(#ff3b30, #ffcc00, #30d158, #40c8e0, #0a84ff, #8b5cf6, #ff3b30)" }}
         >
           <Plus className="size-3.5 text-white drop-shadow" aria-hidden />
@@ -99,7 +100,8 @@ export function LightingDock() {
         <Slider
           id="lighting-brightness"
           aria-label="Brightness"
-          className="w-[112px]"
+          className="w-[132px]"
+          rangeColor={tint}
           min={0}
           max={9}
           step={1}
@@ -108,14 +110,16 @@ export function LightingDock() {
         />
       </div>
 
-      <div className="flex items-center gap-2.5">
+      <div className={`flex items-center gap-2.5 transition-opacity ${moving ? "" : "opacity-40"}`} title={moving ? undefined : "This effect has no motion"}>
         <label htmlFor="lighting-speed" className={label}>
           Speed · <span className={value}>{displayedSpeed}/9</span>
         </label>
         <Slider
           id="lighting-speed"
           aria-label="Speed"
-          className="w-[112px]"
+          className="w-[132px]"
+          rangeColor={tint}
+          disabled={!moving}
           min={0}
           max={9}
           step={1}

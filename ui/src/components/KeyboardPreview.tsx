@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useReducedMotion } from "framer-motion";
 import {
   caseLayout,
@@ -17,6 +17,7 @@ import {
 import { ambientFrom, ledBarSample } from "./lighting";
 import { ledSample, type LedLighting } from "@/lib/ledField";
 import { cn } from "@/lib/utils";
+import { LightBarPopover, OPEN_LIGHT_BAR_EVENT } from "@/components/LightBarPopover";
 import { OFFLINE_STATE, selectEffectiveState, useAppStore } from "@/store";
 
 /** Canvas spill margins around the case: the underglow lives outside it too. */
@@ -25,6 +26,12 @@ const SPILL_TOP = 30;
 const SPILL_BOTTOM = 64;
 /** How much vertical knob drag equals one brightness step. */
 const KNOB_STEP_PX = 18;
+
+/** Width in px of the hero board, so panels under it can match it exactly. */
+export function heroBoardWidth(): number {
+  const size = caseLayout().size;
+  return Math.round(400 * (size[0] / size[1]));
+}
 
 /** Converts a board-space box into a percentage rect relative to a reference box. */
 function toPercentRect(refSize: [number, number], position: [number, number], size: [number, number]) {
@@ -385,20 +392,14 @@ export function KeyboardPreview({ className, interactive = true, hero = false }:
   const ledRecessRect = toPercentRect(board.size, ledRecess.position, ledRecess.size);
   const ledBarRect = toPercentRect(board.size, ledBar.position, ledBar.size);
 
-  const goToSideBar = () => {
-    const go = () => {
-      const el = document.getElementById("side-light-bar");
-      if (!el) return;
-      el.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
-      el.focus({ preventScroll: true });
-    };
-    if (useAppStore.getState().activeTab !== "lighting") {
-      setActiveTab("lighting");
-      window.setTimeout(go, 400);
-    } else {
-      go();
-    }
-  };
+  const barBtnRef = useRef<HTMLButtonElement>(null);
+  const [barOpen, setBarOpen] = useState(false);
+  const activeTab = useAppStore((s) => s.activeTab);
+  useEffect(() => {
+    const open = () => setBarOpen(true);
+    window.addEventListener(OPEN_LIGHT_BAR_EVENT, open);
+    return () => window.removeEventListener(OPEN_LIGHT_BAR_EVENT, open);
+  }, []);
 
   const dragStart = useRef<number | null>(null);
   const dragStage = useRef(0);
@@ -684,12 +685,30 @@ export function KeyboardPreview({ className, interactive = true, hero = false }:
               boxShadow: "0 0 10px 2px rgb(var(--lc, 0 0 0) / calc(var(--la, 0) * 0.8))",
             }}
           />
-          {interactive && (
+          {interactive && activeTab !== "display" && (
             <button
               type="button"
+              aria-label="Open display settings"
+              title="Open display settings"
+              onClick={() => setActiveTab("display")}
+              className="absolute cursor-pointer rounded-[2%]"
+              style={{
+                left: `${displayRect.left}%`,
+                top: `${displayRect.top}%`,
+                width: `${displayRect.width}%`,
+                height: `${displayRect.height}%`,
+              }}
+            />
+          )}
+          {interactive && (
+            <button
+              ref={barBtnRef}
+              type="button"
               aria-label="Edit side light bar"
+              aria-haspopup="dialog"
+              aria-expanded={barOpen}
               title="Edit side light bar"
-              onClick={goToSideBar}
+              onClick={() => setBarOpen((o) => !o)}
               className="absolute cursor-pointer rounded-full"
               style={{
                 left: `calc(${ledBarRect.left}% - 8px)`,
@@ -701,6 +720,8 @@ export function KeyboardPreview({ className, interactive = true, hero = false }:
           )}
         </div>
       </div>
+
+      {barOpen && <LightBarPopover anchor={barBtnRef} onClose={() => setBarOpen(false)} />}
 
       {draftDirty && (
         <span className="absolute bottom-3 left-4 rounded-full border border-[var(--accent)]/40 bg-[var(--accent)]/15 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#c4b5fd]">

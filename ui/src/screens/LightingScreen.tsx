@@ -1,18 +1,10 @@
-import { useEffect, type ReactNode } from "react";
-import { Slider } from "@/components/ui/slider";
-import { Label } from "@/components/ui/label";
+import { useEffect } from "react";
+import { LightingDock } from "@/components/LightingDock";
+import { heroBoardWidth } from "@/components/KeyboardPreview";
+import { openLightBar } from "@/components/LightBarPopover";
 import { EffectGallery } from "@/components/EffectGallery";
-import { LED_COLORS, LED_COLOR_SWATCHES, LED_MODES, PRESET_VALUES } from "@/lib/effects";
+import { LED_COLOR_SWATCHES, LED_MODES, PRESET_VALUES } from "@/lib/effects";
 import { OFFLINE_STATE, selectEffectiveState, useAppStore } from "@/store";
-
-function Panel({ title, children, className, id }: { title: string; children: ReactNode; className?: string; id?: string }) {
-  return (
-    <section id={id} tabIndex={id ? -1 : undefined} className={`rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4 ${className ?? ""}`}>
-      <h2 className="mb-3 text-[13px] font-semibold tracking-[0.01em] text-[var(--text)]">{title}</h2>
-      {children}
-    </section>
-  );
-}
 
 const TINT: Record<string, string> = { gaming: "#ff9f0a", relaxed: "#0a84ff", minimal: "", productivity: "#40c8e0", "purple-wave": "#0a84ff", matrix: "#a7ffb0", sunset: "#ff3b30" };
 
@@ -54,10 +46,12 @@ export default function LightingScreen() {
     if (typeof setLightingDraft === "function") setLightingDraft(patch);
   }
 
+  const modeName = LED_MODES.find((m) => m.value === led.mode)?.name ?? "Side bar";
+
   return (
-    <div className="grid gap-4 text-[13px] lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
+    <div className="mx-auto w-full text-[13px]" style={{ maxWidth: heroBoardWidth() }}>
       {history.length > 0 && (
-        <div className="flex justify-end lg:col-span-2">
+        <div className="mb-2 flex justify-end">
           <button
             type="button"
             onClick={() => void undoLighting()}
@@ -67,112 +61,57 @@ export default function LightingScreen() {
           </button>
         </div>
       )}
-
-      <div className="flex min-w-0 flex-col gap-4">
-      <Panel title="Effect">
+      <section
+        aria-label="Lighting controls"
+        className="flex flex-col gap-3 rounded-[18px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.015))] bg-[rgba(12,14,20,0.6)] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.14),0_14px_40px_-16px_rgba(0,0,0,0.75)] backdrop-blur-xl"
+      >
+        <LightingDock />
+        <div className="h-px bg-white/[0.07]" />
+        <div className="flex items-center gap-2">
+          <span className="shrink-0 text-[12px] font-semibold text-[var(--muted)]">Looks</span>
+          <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto py-0.5">
+            {presets.map((preset) => {
+              const v = PRESET_VALUES[preset.name];
+              return (
+                <button
+                  key={preset.name}
+                  type="button"
+                  title={preset.description}
+                  onClick={() => {
+                    if (!v) return;
+                    stage({
+                      underglowEffect: v.effect,
+                      underglowBrightness: v.brightness,
+                      underglowSpeed: v.speed,
+                      underglowOrientation: v.orientation,
+                      underglowRainbow: v.rainbow,
+                      underglowColor: v.color,
+                      ledMode: v.ledMode,
+                      ledSaturation: v.ledSaturation,
+                      ledRainbow: v.ledRainbow,
+                      ledColor: v.ledColor,
+                    });
+                  }}
+                  className="flex h-7 shrink-0 items-center gap-1.5 rounded-full border border-[var(--line)] bg-[var(--panel-2)] px-2.5 transition-colors duration-150 hover:border-[var(--line-strong)]"
+                >
+                  {v && <LookDot name={preset.name} v={v} />}
+                  <span className="text-[12px] font-medium capitalize text-[var(--text)]">{preset.name.replace(/-/g, " ")}</span>
+                </button>
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            aria-haspopup="dialog"
+            onClick={openLightBar}
+            className="flex h-7 shrink-0 items-center gap-1.5 rounded-full border border-[var(--line-strong)] px-2.5 text-[12px] text-[var(--text)] transition-colors hover:bg-white/[0.06]"
+          >
+            <span aria-hidden className="size-2.5 rounded-full" style={{ background: LED_COLOR_SWATCHES[led.color] }} />
+            Light bar · {modeName}
+          </button>
+        </div>
         <EffectGallery value={underglow.effect} color={underglow.color} rainbow={underglow.rainbow} onSelect={(v) => stage({ underglowEffect: v })} />
-      </Panel>
-      </div>
-
-      <div className="flex min-w-0 flex-col gap-4 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
-      <Panel title="Looks">
-        <div className="grid grid-cols-2 gap-1.5">
-          {presets.map((preset) => {
-            const v = PRESET_VALUES[preset.name];
-            return (
-              <button
-                key={preset.name}
-                type="button"
-                title={preset.description}
-                onClick={() => {
-                  if (!v) return;
-                  stage({
-                    underglowEffect: v.effect,
-                    underglowBrightness: v.brightness,
-                    underglowSpeed: v.speed,
-                    underglowOrientation: v.orientation,
-                    underglowRainbow: v.rainbow,
-                    underglowColor: v.color,
-                    ledMode: v.ledMode,
-                    ledSaturation: v.ledSaturation,
-                    ledRainbow: v.ledRainbow,
-                    ledColor: v.ledColor,
-                  });
-                }}
-                className="flex h-9 items-center gap-2 rounded-[9px] border border-[var(--line)] bg-[var(--panel-2)] px-2 text-left transition-colors duration-150 hover:border-[var(--line-strong)]"
-              >
-                {v && (
-                  <LookDot name={preset.name} v={v} />
-                )}
-                <span className="min-w-0 flex-1 truncate text-[13px] font-medium capitalize text-[var(--text)]">
-                  {preset.name.replace(/-/g, " ")}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </Panel>
-
-      <Panel title="Side light bar" id="side-light-bar">
-        <div className="flex flex-col gap-3.5">
-          <span
-            aria-hidden
-            className="block h-1.5 w-full rounded-full ring-1 ring-white/10"
-            style={{ background: LED_COLOR_SWATCHES[led.color], opacity: led.color === 8 ? 0.25 : 1 }}
-          />
-          <div className="grid grid-cols-2 gap-1.5">
-            {LED_MODES.map((mode, i) => (
-              <button
-                key={mode.value}
-                type="button"
-                aria-pressed={led.mode === mode.value}
-                onClick={() => stage({ ledMode: mode.value })}
-                className={
-                  (i === LED_MODES.length - 1 && LED_MODES.length % 2 === 1 ? "col-span-2 " : "") +
-                  (led.mode === mode.value
-                    ? "h-8 rounded-[7px] bg-[var(--accent)]/20 px-2.5 text-xs font-medium text-[var(--text)] shadow-[inset_0_0_0_1px_var(--accent-ambient)]"
-                    : "h-8 rounded-[7px] bg-[var(--panel-2)] px-2.5 text-xs text-[var(--muted)] transition-colors hover:text-[var(--text)]")
-                }
-              >
-                {mode.name}
-              </button>
-            ))}
-          </div>
-          <div className="flex items-center justify-between">
-            {LED_COLORS.map((color) => (
-              <button
-                key={color.value}
-                type="button"
-                aria-label={color.name}
-                aria-pressed={led.color === color.value}
-                title={color.name}
-                onClick={() => stage({ ledColor: color.value })}
-                className={
-                  led.color === color.value
-                    ? "size-7 rounded-full ring-2 ring-white ring-offset-2 ring-offset-[#0c0e13]"
-                    : "size-7 rounded-full ring-1 ring-white/20 transition-transform duration-150 hover:scale-110"
-                }
-                style={{ background: LED_COLOR_SWATCHES[color.value] }}
-              />
-            ))}
-          </div>
-          <div>
-            <Label htmlFor="lighting-saturation" className="text-[13px] text-[var(--muted)]">
-              Saturation <b className="ml-1 font-semibold text-[var(--text)]">{led.saturation}/9</b>
-            </Label>
-            <Slider
-              id="lighting-saturation"
-              className="mt-1"
-              min={0}
-              max={9}
-              step={1}
-              value={[led.saturation]}
-              onValueChange={([v]) => stage({ ledSaturation: v })}
-            />
-          </div>
-        </div>
-      </Panel>
-      </div>
+      </section>
     </div>
   );
 }
