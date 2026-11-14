@@ -20,9 +20,9 @@ import { brightnessLabel } from "@/components/lighting";
 import { selectEffectiveState, useAppStore } from "@/store";
 
 const NAV_ITEMS = [
+  { value: "device", label: "Device" },
   { value: "lighting", label: "Lighting" },
   { value: "display", label: "Display" },
-  { value: "device", label: "Device" },
   { value: "profiles", label: "Profiles" },
 ] as const;
 
