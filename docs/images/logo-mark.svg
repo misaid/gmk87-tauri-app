@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="spectrum" x1="110" y1="0" x2="402" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#22D3EE"/>
+      <stop offset=".52" stop-color="#D946EF"/>
+      <stop offset="1" stop-color="#FBBF24"/>
+    </linearGradient>
+    <linearGradient id="keyFace" x1="256" y1="152" x2="256" y2="368" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E8EBF2"/>
+    </linearGradient>
+    <filter id="glow" x="42" y="276" width="428" height="174" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="22"/>
+    </filter>
+    <filter id="softGlow" x="82" y="300" width="348" height="112" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="9"/>
+    </filter>
+  </defs>
+  <ellipse cx="256" cy="354" rx="154" ry="29" fill="url(#spectrum)" opacity=".76" filter="url(#glow)"/>
+  <ellipse cx="256" cy="354" rx="145" ry="10" fill="url(#spectrum)" opacity=".96" filter="url(#softGlow)"/>
+  <path d="M128 169.5C128 150.998 142.998 136 161.5 136h189c18.502 0 33.5 14.998 33.5 33.5v147c0 18.502-14.998 33.5-33.5 33.5h-189c-18.502 0-33.5-14.998-33.5-33.5v-147Z" fill="#000" opacity=".3"/>
+  <path d="M128 161.5c0-18.502 14.998-33.5 33.5-33.5h189c18.502 0 33.5 14.998 33.5 33.5v147c0 18.502-14.998 33.5-33.5 33.5h-189c-18.502 0-33.5-14.998-33.5-33.5v-147Z" fill="url(#keyFace)"/>
+  <path d="M151 164.5c0-7.456 6.044-13.5 13.5-13.5h183c7.456 0 13.5 6.044 13.5 13.5v98c0 7.456-6.044 13.5-13.5 13.5h-183c-7.456 0-13.5-6.044-13.5-13.5v-98Z" fill="#fff" opacity=".46"/>
+  <path d="M151 298h210" stroke="#D9DDE6" stroke-width="2" stroke-linecap="round"/>
+</svg>

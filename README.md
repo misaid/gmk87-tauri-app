@@ -1,19 +1,121 @@
-# GMK87 Configurator
+<p align="center">
+  <img src="docs/images/banner.svg" alt="GMK87 Configurator" width="100%">
+</p>
 
-A Linux tool for the ZUOYA GMK87 mechanical keyboard: upload images and animated
-GIFs to its 240×135 TFT display, control the RGB lighting, and sync the
-keyboard's real-time clock — directly over USB `hidraw`, with no vendor software
-and no root once the udev rule is installed.
+<p align="center">
+  <a href="https://github.com/misaid/gmk87-tauri-app/actions"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/misaid/gmk87-tauri-app/ci.yml?branch=main&label=CI"></a>
+  <img alt="License" src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue">
+  <img alt="Platforms" src="https://img.shields.io/badge/platforms-Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-lightgrey">
+  <img alt="Built with" src="https://img.shields.io/badge/built%20with-Rust%20%C2%B7%20Tauri%20%C2%B7%20React-orange">
+</p>
 
-This repository contains the **Rust core, a command-line tool, and the Tauri
-desktop application** (`src-tauri` + `ui/`).
+**GMK87 Configurator** is an open-source desktop app and command-line tool for the
+ZUOYA GMK87 mechanical keyboard. Put images and animated GIFs on its 240×135
+display, control the RGB lighting, and keep its clock in sync, directly over USB
+HID. It needs no vendor software, and on Linux no root once the udev rule is
+installed.
 
-> **The wired write path is verified end to end.** On 2026-11-01 the wired
-> keyboard accepted a clock write (the panel shows it), a lighting write, and a
-> single-frame display upload that put its image on the panel. The 2.4 GHz
-> upload, animation, and power-cycle persistence are still unverified. Read
+<p align="center">
+  <img src="docs/images/lighting.png" alt="The Lighting page: a live preview of the keyboard with per-key glow, a gallery of 19 effects, colour, brightness and speed controls" width="900">
+</p>
+
+> **Hardware status.** The wired write path is verified end to end: on
+> 2026-11-01 the keyboard accepted a clock write, a lighting write and a
+> single-frame display upload. The 2.4 GHz upload, animation and power-cycle
+> persistence are still unverified. Read
 > [`docs/hardware-testing.md`](docs/hardware-testing.md) before writing to a real
-> keyboard — it records what was seen and the safety rules any run must follow.
+> keyboard; it records what was seen and the safety rules any run must follow.
+
+## Contents
+
+- [Features](#features)
+- [Screenshots](#screenshots)
+- [Quick start](#quick-start)
+- [Supported hardware](#supported-hardware)
+- [Command-line usage](#command-line-usage)
+- [Permissions: the udev rule](#permissions-the-udev-rule)
+- [The write-only limitation](#the-write-only-limitation)
+- [Hardware verification](#hardware-verification)
+- [Architecture](#architecture)
+- [Development](#development)
+- [License and attribution](#license-and-attribution)
+
+## Features
+
+**Pair first.** The app opens on the Device page. A single keyboard connects
+automatically, and the other pages unlock once it is connected.
+
+**Lighting**
+- 19 underglow effects shown as animated mini-keyboard previews, with brightness,
+  speed, direction, rainbow and RGB colour.
+- Side light bar: five modes, nine colours and saturation. The bar on screen
+  follows the selected option.
+- A per-key glow preview that mirrors the board. Choose **Auto, GPU, CPU or
+  Static** under the sync menu (WebGL2 when available, adaptive frame rate).
+- Changes apply live by default. Switch to **Draft** to stage edits and write them
+  together. Undo, redo and revert are always available.
+- Profiles: eight built-in looks plus your own saved profiles.
+
+**Display**
+- Two independent slots, each holding a static image or an animated GIF.
+- Smooth crop, zoom and pan editing, with instant switching between slots.
+- A frame-budget meter (36 frames across both slots) that reports when a GIF was
+  compressed to fit.
+- One press writes every slot you changed, with progress and cancel.
+- A library remembers every image and GIF you have used so you can reuse them.
+- Both slots come back after a restart with the last image and crop written to
+  them.
+
+**Clock and device**
+- Syncs the keyboard clock to local time, in the device's packed-BCD format.
+- Windows key lock, connection diagnostics, wired and 2.4 GHz dongle detection.
+
+**Command line.** Everything above except the editors is available from
+`gmk87-cli` for scripting and recovery.
+
+Not in scope: keymap remapping, firmware updates, and reading the device's
+current settings (the hardware cannot be read at all, see
+[below](#the-write-only-limitation)).
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/device.png" alt="Device page with the connection card and board clock"><br><sub><b>Device</b>: connect, sync the clock, lock the Windows key.</sub></td>
+    <td width="50%"><img src="docs/images/display.png" alt="Display page with the crop editor and two image slots"><br><sub><b>Display</b>: crop two slots and write them in one press.</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/images/profiles.png" alt="Profiles page with built-in looks and saved profiles"><br><sub><b>Profiles</b>: one-click looks and your saved setups.</sub></td>
+    <td width="50%"><img src="docs/images/lighting.png" alt="Lighting page with the effect gallery"><br><sub><b>Lighting</b>: 19 effects with live previews.</sub></td>
+  </tr>
+</table>
+
+## Quick start
+
+Each tagged version publishes a Linux AppImage and a Windows installer on the
+[releases page](https://github.com/misaid/gmk87-tauri-app/releases). To build from
+source instead:
+
+```bash
+# Linux prerequisites (Debian/Ubuntu shown)
+sudo apt install libudev-dev pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev \
+  libsoup-3.0-dev librsvg2-dev
+# plus Rust (see rust-toolchain.toml) and bun: https://bun.sh
+
+git clone https://github.com/misaid/gmk87-tauri-app
+cd keyboard-software
+
+# Linux only: let your user open the keyboard without root
+sudo cp packaging/50-gmk87.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger
+# unplug and replug the keyboard
+
+cd ui && bun install
+bun run tauri dev      # opens the configurator
+```
+
+On macOS and Windows the keyboard is reached through the OS HID stack, so there
+is no udev rule. Only Linux has been verified against hardware.
 
 ## Supported hardware
 
@@ -28,76 +130,7 @@ one, so unplug the transport you do not want to use. Only one session is open at
 a time; the keyboard has a single state machine.
 
 The keyboard also exposes a VIA raw-HID interface (`0xFF60`). It is detected and
-reported (`via=true` in `probe`) but never driven — keymap remapping is out of
-scope.
-
-## What it does
-
-- **Display:** two independent slots, each holding its own static image or
-  animated GIF. A source is cropped, scaled, converted to big-endian RGB565 and
-  uploaded to its slot; a GIF with more frames than the budget allows is
-  compressed to fit by sampling evenly and stretching the delay. Choose whether
-  the display shows the clock, slot 0 or slot 1.
-- **Lighting:** underglow effect, brightness, speed, orientation, rainbow toggle
-  and RGB colour; side LED mode, colour and saturation; win-lock.
-- **Clock:** writes the system time to the keyboard in the device's packed-BCD
-  format.
-
-Not in scope: keymap remapping, firmware updates, and reading the device's
-current settings — the hardware cannot be read at all (see below).
-
-The desktop app runs on Linux, macOS and Windows. Only Linux has been verified
-against hardware; the permission setup below is Linux-specific, and on Windows
-and macOS the keyboard is reached through the OS HID stack with no udev rule.
-
-## Crate layout
-
-```text
-crates/
-  gmk87-protocol/   pure, no I/O: packet codec, checksum, 48-byte configuration
-                    block, RGB565 conversion, image crop/scale, GIF frames and
-                    the upload frame budget
-  gmk87-device/     discovery, the hidapi Transport, and the Session state
-                    machine: configuration writes, upload streaming, repair
-  gmk87-app/        Tauri-independent orchestration: session ownership, the
-                    both-slot image memory, upload jobs, lighting presets and
-                    on-disk snapshots — tested against a mock transport
-  gmk87-cli/        the gmk87-cli debug and recovery tool
-ui/                 React + TypeScript + Vite front end (Tailwind, shadcn/ui
-                    style components, React Three Fiber keyboard preview)
-ui/src-tauri/       Tauri v2 command and event adapter over gmk87-app
-docs/
-  protocol.md               corrected protocol reference
-  hardware-testing.md       verified results, safety rules, results table
-packaging/
-  50-gmk87.rules            udev rule granting seat access without root
-```
-
-The protocol crate is deliberately free of I/O so a future background service
-can link it unchanged; `gmk87-app` is deliberately free of Tauri so the whole
-application layer is unit-testable without a window.
-
-## Building
-
-Rust stable (see `rust-toolchain.toml`), plus `hidapi`'s system dependencies:
-
-```bash
-# Debian / Ubuntu
-sudo apt install libudev-dev pkg-config
-# Fedora
-sudo dnf install systemd-devel
-# Arch
-sudo pacman -S systemd-libs
-```
-
-Then:
-
-```bash
-cargo build --release          # target/release/gmk87-cli
-cargo test --all               # mock transports only; never touches a keyboard
-cargo fmt --all --check
-cargo clippy --all-targets -- -D warnings
-```
+reported (`via=true` in `probe`) but never driven.
 
 ## Command-line usage
 
@@ -179,70 +212,62 @@ results, the incident that shapes the safety rules (a detached upload produced
 spurious keystrokes and triggered system poweroffs), and the empty rows left for
 a future run.
 
-## Desktop application
+## Architecture
 
-A Tauri v2 desktop app sits on the same `gmk87-app` / `gmk87-device` API and
-covers the whole feature set with a live preview:
+```text
+crates/
+  gmk87-protocol/   pure, no I/O: packet codec, checksum, 48-byte configuration
+                    block, RGB565 conversion, image crop/scale, GIF frames and
+                    the upload frame budget
+  gmk87-device/     discovery, the hidapi Transport, and the Session state
+                    machine: configuration writes, upload streaming, repair
+  gmk87-app/        Tauri-independent orchestration: session ownership, the
+                    both-slot image memory, upload jobs, lighting presets and
+                    on-disk snapshots, tested against a mock transport
+  gmk87-cli/        the gmk87-cli debug and recovery tool
+ui/                 React + TypeScript + Vite front end (Tailwind, shadcn/ui
+                    style components, canvas and WebGL2 keyboard preview)
+ui/src-tauri/       Tauri v2 command and event adapter over gmk87-app
+docs/
+  protocol.md               corrected protocol reference
+  hardware-testing.md       verified results, safety rules, results table
+packaging/
+  50-gmk87.rules            udev rule granting seat access without root
+```
 
-- **Device** — lists the wired keyboard and the 2.4 GHz dongle, connects and
-  disconnects, flags the VIA interface, and copies a short diagnostics report.
-- **Display** — slot tabs, each with its own file picker for images and GIFs, a
-  crop/zoom/pan editor, a frame-budget meter (36 frames across both slots, 60 ms
-  minimum delay) that reports when a GIF was compressed to fit, and an upload
-  button with live progress and cancel. The Rust side renders the preview; the
-  UI only sends crop parameters.
-- **Lighting** — the 19 named underglow effects with brightness, speed,
-  orientation, rainbow and RGB colour; side-LED mode, colour and saturation;
-  win-lock; and eight one-click presets (gaming, relaxed, party, minimal,
-  productivity, purple-wave, matrix, sunset).
-- **Clock** — shows the time the app will write and syncs it on demand.
-- **Keyboard preview** — a procedurally-built GMK87 rendered with React Three
-  Fiber, showing the display as a live texture and the underglow in the chosen
-  colour.
+The protocol crate is deliberately free of I/O so a future background service
+can link it unchanged; `gmk87-app` is deliberately free of Tauri so the whole
+application layer is unit-testable without a window.
 
-Every upload streams **both** display slots, because the keyboard rewrites all
-of its image memory in one session. The slot you did not change is resent from
-the app's copy of what it last uploaded — rebuilt from disk when the app
-connects — so it is preserved across restarts too, not just for the session.
-Each slot's name, crop position and source bytes are stored under the app data
-directory; a source over 25 MB keeps its metadata but not its bytes, so that
-slot cannot be restored. (The device cannot be read back, so the saved copy is
-the only record of what each slot holds.)
+Every upload streams **both** display slots, because the keyboard rewrites all of
+its image memory in one session. The slot you did not change is resent from the
+app's copy of what it last uploaded, rebuilt from disk when the app connects, so
+it is preserved across restarts. Each slot's name, crop and source bytes are
+stored under the app data directory; a source over 25 MB keeps its metadata but
+not its bytes, so that slot cannot be restored.
 
 Connection monitoring is platform-aware. A healthy session is watched by
 re-enumerating HID devices rather than by testing the device path as a file:
-`/dev/hidraw*` is a filesystem node, but Windows reports paths such as
-`\\?\hid#vid_320f…` that `stat` can never resolve, and probing them as files
-dropped every Windows session about two seconds after it connected. A probe
-that cannot answer (an enumeration error) is treated as *inconclusive*, not as
-absence, two consecutive misses are required before a session is dropped, and
-each connect carries a generation counter so a stale watchdog cannot tear down
-a newer session.
+Windows reports paths such as `\\?\hid#vid_320f…` that `stat` can never resolve.
+A probe that cannot answer is treated as *inconclusive*, two consecutive misses
+are required before a session is dropped, and each connect carries a generation
+counter so a stale watchdog cannot tear down a newer session.
 
-### Run it
-
-Prerequisites on Linux: `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libsoup-3.0`,
-`librsvg2-dev`, and [bun](https://bun.sh).
+## Development
 
 ```bash
-cd ui && bun install
-bun run tauri dev      # opens the configurator window
-```
-
-Install the udev rule first (see above) so the app can open the device without
-root.
-
-### Tests and build
-
-```bash
-cargo test --all                 # protocol, device and app crates
+cargo build --release                       # target/release/gmk87-cli
+cargo test --all                            # mock transports only; never touches a keyboard
+cargo fmt --all --check
 cargo clippy --all-targets -- -D warnings
+
 cd ui/src-tauri && cargo test && cargo clippy --all-targets -- -D warnings
-cd ui && bun run test && bun run build
+cd ui && bun run test && bun run build      # front end tests and production build
 ```
 
-Packaging (`.deb` / AppImage, icons, bundled udev rule) is a later step; the
-placeholder icons in `ui/src-tauri/icons` are replaced then.
+`hidapi` needs `libudev-dev` and `pkg-config` on Debian/Ubuntu,
+`systemd-devel` on Fedora and `systemd-libs` on Arch. The release workflow
+builds the Linux AppImage and the Windows NSIS installer on version tags.
 
 ## License and attribution
 
