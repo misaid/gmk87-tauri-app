@@ -80,7 +80,7 @@ describe("DeviceScreen", () => {
 
   it("exposes a labelled, keyboard-reachable pin for each board part", () => {
     render(<DeviceScreen />);
-    for (const name of [/^1\. USB connection/, /^2\. Screen and board clock/, /^3\. Windows key lock/, /^4\. Knob and brightness/]) {
+    for (const name of [/^1\. USB connection/, /^2\. Screen and board clock/, /^3\. Windows key lock/]) {
       expect(screen.getByRole("button", { name })).toBeInTheDocument();
     }
     expect(screen.getByText("Last written")).toBeInTheDocument();

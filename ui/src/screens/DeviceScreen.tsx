@@ -106,11 +106,8 @@ export default function DeviceScreen() {
       <Pin n={1} label="USB connection" x={50} y={-9} tx={50} ty={0} hot={hot} setHot={setHot} />
       <Pin n={2} label="Screen and board clock" x={anchors.screen.x - 2} y={-9} tx={anchors.screen.x} ty={anchors.screen.y} hot={hot} setHot={setHot} />
       <Pin n={3} label="Windows key lock" x={anchors.win.x} y={99} tx={anchors.win.x} ty={anchors.win.y + 4} hot={hot} setHot={setHot} />
-      <Pin n={4} label="Knob and brightness" x={anchors.knob.x + 3} y={-9} tx={anchors.knob.x} ty={anchors.knob.y} hot={hot} setHot={setHot} />
     </>
   );
-
-  const brightness = state?.underglow.brightness;
 
   return (
     <div className="flex flex-col gap-4 text-[13px]">
@@ -119,7 +116,7 @@ export default function DeviceScreen() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-6">
-        <Callout n={1} title="Connection" icon={<Usb className="size-3.5 text-[var(--muted)]" aria-hidden />} hot={hot} setHot={setHot} className="lg:col-span-4">
+        <Callout n={1} title="Connection" icon={<Usb className="size-3.5 text-[var(--muted)]" aria-hidden />} hot={hot} setHot={setHot} className="lg:col-span-4 lg:row-span-2">
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${connected ? "bg-emerald-400/15 text-emerald-300" : "bg-white/[0.07] text-[var(--muted)]"}`}>
               <span aria-hidden className={`size-1.5 rounded-full ${connected ? "bg-emerald-300" : "bg-[var(--dim)]"}`} />
@@ -224,17 +221,11 @@ export default function DeviceScreen() {
           </Button>
         </Callout>
 
-        <Callout n={3} title="Windows key" hot={hot} setHot={setHot} className="lg:col-span-3">
+        <Callout n={3} title="Windows key" hot={hot} setHot={setHot} className="lg:col-span-2">
           <label className="flex items-center gap-2.5 text-[var(--text)]">
             <Switch checked={state?.winLock ?? false} disabled={!state} onCheckedChange={(checked) => setLightingDraft?.({ winLock: checked })} />
             Windows key lock
           </label>
-        </Callout>
-
-        <Callout n={4} title="Knob · brightness" hot={hot} setHot={setHot} className="lg:col-span-3">
-          <p className="text-[var(--text)]">
-            Brightness <span className="font-semibold">{brightness !== undefined ? `${brightness}/9` : "—"}</span>
-          </p>
         </Callout>
       </div>
     </div>
