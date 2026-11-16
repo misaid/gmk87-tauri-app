@@ -1,5 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
+import { KNOB_FACE, KNOB_SHADOW } from "@/components/keyboard";
 import { DEFAULT_CROP, cropKey, drawCrop, panBy, zoomBy, type CropParams } from "@/lib/crop";
 import { getBitmap, peekBitmap, type Source } from "@/lib/bitmapCache";
 import { useAppStore } from "@/store";
@@ -16,7 +18,7 @@ const SETTLE_MS = 140;
  * no store writes, no IPC, no React renders. The crop is committed once when the
  * gesture ends, and the store then asks the backend for the true device render.
  */
-function CropEditorImpl() {
+function CropEditorImpl({ footer }: { footer?: ReactNode }) {
   const source = useAppStore((s) => s.entries[s.slot].source);
   const committed = useAppStore((s) => s.entries[s.slot].crop);
   const previewUrl = useAppStore((s) => s.entries[s.slot].previewUrl ?? null);
@@ -25,7 +27,7 @@ function CropEditorImpl() {
 
   const surface = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
-  const zoomLabel = useRef<HTMLDivElement>(null);
+  const zoomLabel = useRef<HTMLSpanElement>(null);
   const live = useRef<CropParams>(committed);
   const bitmap = useRef<Source | null>(null);
   const drag = useRef<{ x: number; y: number } | null>(null);
@@ -211,62 +213,75 @@ function CropEditorImpl() {
   // The canvas always stays visible and painted; the true device render is layered
   // on top (already decoded by the store) only while it matches the crop on screen.
   const showTrue = Boolean(previewUrl) && !gesturing && previewKey === cropKey(committed);
+  const loaded = Boolean(source) || hasBitmap || Boolean(previewUrl);
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="mx-auto flex w-full max-w-[620px] flex-col gap-2">
+      {/* The board's screen module, enlarged: bezel, black recess with the live crop, and the matte knob. */}
       <div
-        ref={surface}
-        data-testid="crop-surface"
-        tabIndex={0}
-        role="group"
-        aria-label="Display image. Arrow keys pan. Plus and minus zoom."
-        className="relative aspect-[240/135] w-full max-w-2xl cursor-grab touch-none select-none overflow-hidden rounded-lg border border-white/10 bg-black"
-        onPointerDown={(event) => {
-          drag.current = { x: event.clientX, y: event.clientY };
-          live.current = useAppStore.getState().entries[useAppStore.getState().slot].crop;
-          beginGesture();
-          (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
-        }}
-        onPointerMove={onPointerMove}
-        onPointerUp={() => {
-          if (!drag.current) return;
-          drag.current = null;
-          commit();
-        }}
-        onPointerCancel={() => {
-          drag.current = null;
-          commit();
-        }}
-        onKeyDown={onKeyDown}
+        className="grid grid-cols-[1fr_64px] items-center rounded-[8px] border border-white/[0.06] p-3"
+        style={{ background: "linear-gradient(180deg, #1c1e24, #121418)", boxShadow: "inset 0 1px 0 rgba(255,255,255,.07), 0 18px 30px -16px rgba(0,0,0,.8)" }}
       >
-        <canvas ref={canvas} data-testid="crop-canvas" className="absolute inset-0 size-full" />
-        {previewUrl && (
-          <img
-            src={previewUrl}
-            alt="Display preview"
-            draggable={false}
-            style={{ visibility: showTrue || !hasBitmap ? "visible" : "hidden" }}
-            className="absolute inset-0 size-full object-cover [image-rendering:pixelated]"
-          />
-        )}
-        {!previewUrl && !hasBitmap && (
-          <span className="absolute inset-0 flex items-center justify-center text-sm text-white/70">
-            Drag to pan · scroll to zoom
-          </span>
-        )}
-        <div
-          ref={zoomLabel}
-          className="pointer-events-none absolute right-2 bottom-2 rounded bg-black/60 px-2 py-0.5 text-[10px] text-white/70"
-        >
-          {committed.zoom.toFixed(2)}×
+        <div className="relative rounded-[4px] bg-[#050608] p-[5px]" style={{ boxShadow: "inset 0 1px 3px rgba(0,0,0,.9)" }}>
+          <div
+            ref={surface}
+            data-testid="crop-surface"
+            tabIndex={0}
+            role="group"
+            aria-label="Display image. Arrow keys pan. Plus and minus zoom."
+            className="relative aspect-[240/135] w-full cursor-grab touch-none select-none overflow-hidden rounded-[2px] bg-black"
+            onPointerDown={(event) => {
+              drag.current = { x: event.clientX, y: event.clientY };
+              live.current = useAppStore.getState().entries[useAppStore.getState().slot].crop;
+              beginGesture();
+              (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
+            }}
+            onPointerMove={onPointerMove}
+            onPointerUp={() => {
+              if (!drag.current) return;
+              drag.current = null;
+              commit();
+            }}
+            onPointerCancel={() => {
+              drag.current = null;
+              commit();
+            }}
+            onKeyDown={onKeyDown}
+          >
+            <canvas ref={canvas} data-testid="crop-canvas" className="absolute inset-0 size-full" />
+            {previewUrl && (
+              <img
+                src={previewUrl}
+                alt="Display preview"
+                draggable={false}
+                style={{ visibility: showTrue || !hasBitmap ? "visible" : "hidden" }}
+                className="absolute inset-0 size-full object-cover [image-rendering:pixelated]"
+              />
+            )}
+            {!loaded && (
+              <span className="readout absolute inset-0 flex items-center justify-center text-[12px] tracking-[0.16em] text-[var(--dim)]">NO IMAGE</span>
+            )}
+            {/* Gloss, like the glass on the real screen. */}
+            <div aria-hidden className="pointer-events-none absolute inset-0" style={{ backgroundImage: "linear-gradient(120deg, rgba(255,255,255,.08), transparent 30%)" }} />
+          </div>
+        </div>
+        <div aria-hidden className="relative mx-auto size-[52px] rounded-full" style={{ backgroundImage: KNOB_FACE, boxShadow: KNOB_SHADOW }}>
+          <span className="absolute left-1/2 top-[10%] h-[24%] w-[7%] -translate-x-1/2 rounded-full bg-white/80" />
         </div>
       </div>
-      <div className="flex items-center gap-3">
-        <Button variant="outline" size="sm" onClick={() => setCrop({ ...DEFAULT_CROP })}>
-          Reset crop
-        </Button>
-        <span className="text-xs text-white/70">Tab to the image, then use arrow keys to pan and + / − to zoom.</span>
+      <div className="readout flex items-center justify-between px-1 text-[11px] text-[var(--dim)]">
+        <span>240 × 135</span>
+        <span ref={zoomLabel}>{committed.zoom.toFixed(2)}×</span>
       </div>
+      {loaded && (
+        <div className="flex flex-wrap items-center gap-3">
+          {footer}
+          <Button variant="outline" size="sm" onClick={() => setCrop({ ...DEFAULT_CROP })}>
+            Reset crop
+          </Button>
+          <span className="text-[11.5px] text-[var(--muted)]">Drag to pan, scroll to zoom. Arrow keys and + / − also work.</span>
+        </div>
+      )}
     </div>
   );
 }

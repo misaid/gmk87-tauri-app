@@ -64,12 +64,12 @@ export function UploadControls() {
         aria-disabled={blocked}
         aria-describedby={blockedReasons.length > 0 && !busy ? "upload-blocked-reasons" : undefined}
         onClick={() => { if (blocked) return; setConfirmOpen(true); }}
-        className={blocked ? "opacity-50" : undefined}
+        className={`h-10 w-full text-[14px] ${blocked ? "opacity-50" : ""}`}
       >
         {label}
       </Button>
       {blockedReasons.length > 0 && !busy && (
-        <p id="upload-blocked-reasons" className="text-[11px] text-[var(--muted)]" role="note">
+        <p id="upload-blocked-reasons" className="readout text-[11px] text-[var(--dim)]" role="note">
           {blockedReasons.join(" · ")}
         </p>
       )}
@@ -81,7 +81,7 @@ export function UploadControls() {
       {busy && (
         <div className="flex flex-col gap-1">
           <Progress value={percent} />
-          <span className="text-[11px] text-[var(--muted)]">
+          <span className="readout text-[11px] text-[var(--muted)]">
             {batch ? `Slot ${num(batch.slot)} (${batch.index} of ${batch.total}) · ` : ""}
             {percent}%
           </span>

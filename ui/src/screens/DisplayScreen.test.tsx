@@ -44,6 +44,18 @@ describe("DisplayScreen", () => {
     render(<DisplayScreen />);
     expect(screen.getByText("2 / 36")).toBeInTheDocument();
   });
+  it("draws the budget as 36 cells: slot 0, slot 1, then free", () => {
+    render(<DisplayScreen />);
+    const cells = [...screen.getByRole("progressbar").querySelectorAll("[data-cell]")].map((c) => c.getAttribute("data-cell"));
+    expect(cells).toHaveLength(36);
+    expect(cells.slice(0, 2)).toEqual(["slot0", "slot1"]);
+    expect(cells.slice(2).every((c) => c === "free")).toBe(true);
+  });
+  it("shows the empty-slot drop line only while the slot has no image", () => {
+    render(<DisplayScreen />);
+    expect(screen.queryByText("Drop an image or GIF here")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reset crop" })).toBeInTheDocument();
+  });
   it("offers a file picker", () => {
     render(<DisplayScreen />);
     expect(screen.getByLabelText("Choose image or GIF")).toBeInTheDocument();
