@@ -8,6 +8,7 @@ use gmk87_app::error::{AppError, ErrorKind};
 use gmk87_app::job::{DisplayJob, SlotTarget};
 use gmk87_app::lighting::LightingPatch;
 use gmk87_app::state::DeviceStateDto;
+use gmk87_device::discovery::{select_devices, HidEnumerator, RawHidDevice};
 use gmk87_device::session::CancelToken;
 use tauri::ipc::{InvokeBody, Request};
 use tauri::{AppHandle, Emitter, State};
@@ -271,6 +272,7 @@ pub async fn copy_diagnostics(state: State<'_, AppState>) -> Result<String, AppE
     if let Ok(uname) = std::fs::read_to_string("/proc/sys/kernel/osrelease") {
         report.push_str(&format!("kernel: {}\n", uname.trim()));
     }
+    report.push_str(&detected_report().await);
     if let Some(dir) = gmk87_app::snapshot::data_dir() {
         let stored = gmk87_app::display_store::load_store(&dir);
         for (label, record) in [
@@ -294,6 +296,78 @@ pub async fn copy_diagnostics(state: State<'_, AppState>) -> Result<String, AppE
         }
     }
     Ok(report)
+}
+
+/// Enumerates the vendor HID interfaces on a blocking thread and formats them.
+/// An enumeration failure is reported in the text rather than failing the whole
+/// report, since that failure is exactly what the report is for.
+async fn detected_report() -> String {
+    let listed = tauri::async_runtime::spawn_blocking(|| {
+        gmk87_device::discovery::SystemEnumerator.list().map(|raw| {
+            let access: Vec<Option<String>> = raw.iter().map(|d| node_access(&d.path)).collect();
+            (raw, access)
+        })
+    })
+    .await;
+    match listed {
+        Ok(Ok((raw, access))) => format_detected(&raw, &access),
+        Ok(Err(error)) => format!("detected: enumeration failed: {error}\n"),
+        Err(error) => format!("detected: enumeration failed: {error}\n"),
+    }
+}
+
+/// Pure formatter for the `detected:` section of the diagnostics report.
+/// `access[i]` describes how `raw[i]` can be opened (Linux only; `None` elsewhere).
+fn format_detected(raw: &[RawHidDevice], access: &[Option<String>]) -> String {
+    if raw.is_empty() {
+        return "detected: none\n".to_string();
+    }
+    let mut out = String::from("detected:\n");
+    for (i, device) in raw.iter().enumerate() {
+        out.push_str(&format!(
+            "  {} product 0x{:04x} usage page 0x{:04x} interface {}",
+            device.path, device.product_id, device.usage_page, device.interface_number
+        ));
+        if let Some(Some(note)) = access.get(i) {
+            out.push_str(&format!(" [{note}]"));
+        }
+        out.push('\n');
+    }
+    let selected = select_devices(raw);
+    if selected.is_empty() {
+        out.push_str("selected: none\n");
+    } else {
+        for device in &selected {
+            out.push_str(&format!(
+                "selected: {} {} via {}\n",
+                device.label(),
+                if device.has_via { "(VIA)" } else { "(no VIA)" },
+                device.path
+            ));
+        }
+    }
+    out
+}
+
+/// Mode bits and whether the node opens read-write. Opens and closes only.
+#[cfg(target_os = "linux")]
+fn node_access(path: &str) -> Option<String> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(path).ok()?.permissions().mode() & 0o777;
+    let rw = match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+    {
+        Ok(_) => "opens read-write".to_string(),
+        Err(error) => format!("read-write open failed: {error}"),
+    };
+    Some(format!("mode {mode:04o}, {rw}"))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn node_access(_path: &str) -> Option<String> {
+    None
 }
 
 #[tauri::command]
@@ -430,4 +504,45 @@ pub fn spawn_reconnect_monitor(app: AppHandle, state: &AppState, path: String, s
             return;
         }
     });
+}
+
+#[cfg(test)]
+mod diagnostics_tests {
+    use super::*;
+
+    fn raw(path: &str, pid: u16, page: u16, iface: i32) -> RawHidDevice {
+        RawHidDevice {
+            path: path.into(),
+            vendor_id: 0x320f,
+            product_id: pid,
+            usage_page: page,
+            interface_number: iface,
+        }
+    }
+
+    #[test]
+    fn empty_enumeration_reports_none() {
+        assert_eq!(format_detected(&[], &[]), "detected: none\n");
+    }
+
+    #[test]
+    fn two_devices_list_every_interface_and_the_selection() {
+        let devices = [
+            raw("/dev/hidraw4", 0x5055, 0xff1c, 2),
+            raw("/dev/hidraw3", 0x5055, 0xff60, 1),
+            raw("/dev/hidraw10", 0x5088, 0xff1c, 1),
+        ];
+        let access = [
+            Some("mode 0666, opens read-write".to_string()),
+            None,
+            Some("mode 0600, read-write open failed: denied".to_string()),
+        ];
+        let text = format_detected(&devices, &access);
+        assert!(text.starts_with("detected:\n"));
+        assert!(text.contains("/dev/hidraw4 product 0x5055 usage page 0xff1c interface 2 [mode 0666, opens read-write]"));
+        assert!(text.contains("/dev/hidraw3 product 0x5055 usage page 0xff60 interface 1\n"));
+        assert!(text.contains("read-write open failed: denied"));
+        assert!(text.contains("selected: GMK87 (wired) (VIA) via /dev/hidraw4"));
+        assert!(text.contains("selected: GMK87 (2.4 GHz) (no VIA) via /dev/hidraw10"));
+    }
 }
