@@ -187,6 +187,19 @@
     mask-image: radial-gradient(ellipse at center, #000 30%, transparent 75%);
   }
 
+  /* Tab content settles in: opacity plus 4px, no blank frame in between. */
+  .tab-in {
+    animation: tab-in 140ms var(--ease) both;
+  }
+  /* The board's screen cuts to the clock a beat after the light wipe starts. */
+  .screen-on {
+    animation: screen-on 120ms var(--ease) 420ms both;
+  }
+  /* Scanning hairline on the empty Device screen: one translateX sweep. */
+  .scan-sweep {
+    animation: scan-sweep 1.6s var(--ease) infinite;
+  }
+
   /* Subtle scrollbars that match the dark shell. */
   ::-webkit-scrollbar {
     width: 10px;
@@ -214,12 +227,40 @@
   outline-offset: 2px;
 }
 
+@keyframes tab-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes screen-on {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes scan-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
+    animation-delay: 0s !important;
     transition-duration: 0.01ms !important;
   }
 }

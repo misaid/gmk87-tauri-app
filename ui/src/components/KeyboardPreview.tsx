@@ -17,7 +17,7 @@ import {
 import { ambientFrom, ledBarSample } from "./lighting";
 import { CapOverlay } from "@/lib/capOverlay";
 import { SeamLayer, createGlow, type GlowRenderer } from "@/lib/glowRender";
-import { sampleFrame } from "@/lib/lightingFrame";
+import { keyPower, sampleFrame } from "@/lib/lightingFrame";
 import {
   AdaptiveQuality,
   FRAME_STRIDE,
@@ -39,6 +39,14 @@ const SPILL_X = 42;
 const SPILL_TOP = 30;
 const SPILL_BOTTOM = 64;
 /** The effect canvases cover the case plus the spill margins; explicit size so a high-DPI backing store is not shown at its pixel size. */
+/** Power-on wipe length, and its ease-in-out curve (progress 0..1). */
+const POWER_MS = 900;
+const easeInOut = (x: number) => (x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2);
+
+export type BoardSize = "hero" | "compact";
+/** Height in px the board is drawn at for each stage size. */
+const BOARD_HEIGHT: Record<BoardSize, number> = { hero: 400, compact: 270 };
+
 const SPILL_BOX: CSSProperties = {
   left: -SPILL_X,
   top: -SPILL_TOP,
@@ -141,7 +149,8 @@ function Keycap({
 
 const MemoKeycap = memo(Keycap);
 
-export function KeyboardPreview({ className, interactive = true, hero = false, overlay }: { className?: string; interactive?: boolean; hero?: boolean; overlay?: ReactNode }) {
+export function KeyboardPreview({ className, interactive = true, size = "hero", overlay }: { className?: string; interactive?: boolean; size?: BoardSize; overlay?: ReactNode }) {
+  const hero = size === "hero";
   const effective = useAppStore(selectEffectiveState);
   const state = effective ?? OFFLINE_STATE;
   const previewUrl = useAppStore((s) => s.previewUrl);
@@ -206,8 +215,12 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
   const renderer = chooseRenderer(mode, glAvailable && !glFailed);
   const glowKind: "gl" | "2d" = renderer === "gl" ? "gl" : "2d";
   const activeTabNow = useAppStore((s) => s.activeTab);
-  const live = useRef({ lighting, led, activeTab: activeTabNow, still: motionPaused || renderer === "static" });
-  live.current = { lighting, led, activeTab: activeTabNow, still: motionPaused || renderer === "static" };
+  const still = motionPaused || renderer === "static";
+  const live = useRef({ lighting, led, activeTab: activeTabNow, still, connected: connectedNow });
+  live.current = { lighting, led, activeTab: activeTabNow, still, connected: connectedNow };
+  // When the board last got power; the wipe runs from here.
+  const powerStart = useRef(-Infinity);
+  const wasConnected = useRef(false);
   const wake = useRef<() => void>(() => {});
   const legends = useRef<Array<HTMLSpanElement | null>>([]);
   const registerLegend = useRef((i: number, el: HTMLSpanElement | null) => {
@@ -216,7 +229,10 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
 
   // The case is sized by the board's aspect ratio; the canvas is the case plus
   // spill margins so the underglow can be drawn outside the board's footprint.
-  const boardMaxWidth = Math.round((hero ? 400 : 300) * (board.size[0] / board.size[1]));
+  const aspect = board.size[0] / board.size[1];
+  const boardMaxWidth = Math.round(BOARD_HEIGHT[size] * aspect);
+  // On short windows the hero board gives up height so the controls under it stay in view.
+  const caseMaxWidth = hero ? `min(${boardMaxWidth}px, max(${Math.round(220 * aspect)}px, calc((100vh - 360px) * ${aspect.toFixed(4)})))` : `${boardMaxWidth}px`;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -242,6 +258,7 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
     }
 
     const frame = new Float32Array(coords.length * FRAME_STRIDE);
+    const powers = new Float32Array(coords.length);
     const keyRects = keys.map((k) => toPercentRect(board.size, k.position, k.size));
     let caseW = 0;
     let caseH = 0;
@@ -274,26 +291,35 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
     const lastVars = { ambient: "", rim: "", bar: "" };
     const lastLegend: string[] = [];
 
-    const draw = (t: number) => {
+    /** Eased power-on progress: 0 with no link, 1 once the wipe finished (or at once when motion is off). */
+    const powerAt = (t: number) => {
+      const { connected: on, still: snap } = live.current;
+      if (!on) return 0;
+      if (snap) return 1;
+      return easeInOut(Math.min(1, Math.max(0, (t - powerStart.current) / POWER_MS)));
+    };
+
+    const draw = (t: number, force = false) => {
       const { lighting: l, led: ledNow } = live.current;
       const timeMs = t;
+      const e = powerAt(t);
+      // One LED sample per key per frame feeds the glow, cap tint, spill, rim and ambient light.
+      const avg = sampleFrame(l, coords, timeMs, frame, e, powers);
       const bar = barRef.current;
       if (bar) {
         const s = ledBarSample(ledNow, timeMs);
-        const v = `${s.r} ${s.g} ${s.b}|${s.a.toFixed(2)}`;
+        const a = s.a * avg.power;
+        const v = `${s.r} ${s.g} ${s.b}|${a.toFixed(2)}`;
         if (v !== lastVars.bar) {
           lastVars.bar = v;
           bar.style.setProperty("--lc", `${s.r} ${s.g} ${s.b}`);
-          bar.style.setProperty("--la", s.a.toFixed(3));
+          bar.style.setProperty("--la", a.toFixed(3));
         }
       }
       if (caseW <= 0 || caseH <= 0) return;
-
-      // One LED sample per key per frame feeds the glow, cap tint, spill, rim and ambient light.
-      const avg = sampleFrame(l, coords, timeMs, frame);
       glow.draw(frame);
       seam.draw(frame);
-      overlay.draw(frame);
+      overlay.draw(frame, powers);
 
       // Outside-the-case spill: a soft animated band below and around the case.
       ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -306,14 +332,15 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
       for (let i = 0; i < 8; i++) {
         const fx = (i + 0.5) / 8;
         const s = ledSample(l, fx, 0.98, i * 11, timeMs);
-        if (s.intensity <= 0.004) continue;
+        const sp = keyPower(e, fx);
+        if (s.intensity * sp <= 0.004) continue;
         const cx = originX + fx * cw;
         const r = cw * 0.09;
         ctx.save();
         ctx.translate(cx, spillY);
         ctx.scale(1, 0.3);
         const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
-        g.addColorStop(0, `rgba(${s.r}, ${s.g}, ${s.b}, ${0.4 * s.intensity})`);
+        g.addColorStop(0, `rgba(${s.r}, ${s.g}, ${s.b}, ${0.4 * s.intensity * sp})`);
         g.addColorStop(1, `rgba(${s.r}, ${s.g}, ${s.b}, 0)`);
         ctx.fillStyle = g;
         ctx.beginPath();
@@ -349,7 +376,7 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
 
       // Style writes are the expensive part of a frame: only when the quantised value changes,
       // at most 10 times a second, and on leaf elements so the key subtree is not invalidated.
-      if (gateAmbient(t)) {
+      if (force || gateAmbient(t)) {
         // Legends pick up the LED colour (up to 17%) like the cap's wash; leaf `color` writes, only on change.
         for (let k = 0; k < coords.length; k++) {
           const el = legends.current[k];
@@ -388,8 +415,10 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
     let onScreen = true;
     const awake = () => !document.hidden && document.hasFocus() && onScreen;
     const targetFps = () => {
-      const { activeTab: tab, still } = live.current;
-      if (still) return 0;
+      const { activeTab: tab, still, connected: on } = live.current;
+      // No link: the board is dark, so one frame is all there is to draw. Same when motion is off.
+      if (still || !on) return 0;
+      if (performance.now() - powerStart.current < POWER_MS + 100) return quality.fps;
       return tab === "profiles" ? 1 : quality.fps;
     };
     const loop = (t: number) => {
@@ -417,7 +446,7 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
     // Redraw now (state changed or the window came back), then keep animating if allowed.
     const redraw = () => {
       if (disposed) return;
-      draw(performance.now());
+      draw(performance.now(), true);
       lastDraw = -Infinity;
       start();
     };
@@ -468,8 +497,10 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
 
   // Lighting edits and screen changes repaint immediately without rebuilding any renderer.
   useEffect(() => {
+    if (connectedNow && !wasConnected.current) powerStart.current = performance.now();
+    wasConnected.current = connectedNow;
     wake.current();
-  }, [lighting, led, activeTabNow, motionPaused, renderer]);
+  }, [lighting, led, activeTabNow, motionPaused, renderer, connectedNow]);
 
   const recessRect = toPercentRect(board.size, recess.position, recess.size);
   const plateRect = toPercentRect(board.size, plate.position, plate.size);
@@ -483,6 +514,9 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
   const barBtnRef = useRef<HTMLButtonElement>(null);
   const [barOpen, setBarOpen] = useState(false);
   const activeTab = useAppStore((s) => s.activeTab);
+  useEffect(() => {
+    if (!connectedNow) setBarOpen(false);
+  }, [connectedNow]);
   useEffect(() => {
     const open = () => setBarOpen(true);
     window.addEventListener(OPEN_LIGHT_BAR_EVENT, open);
@@ -506,15 +540,17 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
           ? `Keyboard preview: underglow effect ${effective.underglow.effect}, brightness ${effective.underglow.brightness} of 9${draftDirty ? ", draft not yet on board" : ""}.`
           : "Keyboard preview: disconnected."
       }
-      className={cn("relative w-full p-2", hero && "overflow-hidden", className)}
+      className={cn("relative w-full px-2 pb-2 pt-2", className)}
     >
       <div className="relative flex justify-center">
         <div
           ref={caseRef}
           className="relative"
           style={{
-            width: `min(100%, ${boardMaxWidth}px)`,
+            width: "100%",
+            maxWidth: caseMaxWidth,
             aspectRatio: `${board.size[0]} / ${board.size[1]}`,
+            transition: "max-width 220ms var(--ease)",
           }}
         >
           {/* 1) Case body */}
@@ -656,9 +692,9 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
           >
             {showPreview && previewUrl ? (
               <img src={previewUrl} alt="" className="h-full w-full object-cover" draggable={false} />
-            ) : (
+            ) : connectedNow ? (
               <span
-                className="flex h-full w-full flex-col items-center justify-center gap-[3%] bg-[radial-gradient(ellipse_at_50%_40%,rgba(90,150,255,0.22),transparent_75%)]"
+                className="screen-on flex h-full w-full flex-col items-center justify-center gap-[3%] bg-[radial-gradient(ellipse_at_50%_40%,rgba(90,150,255,0.22),transparent_75%)]"
                 style={{ color: "#e6f1ff" }}
               >
                 <span
@@ -672,6 +708,13 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
                     {dateLabel}
                   </span>
                 )}
+              </span>
+            ) : (
+              <span
+                className="flex h-full w-full items-center justify-center font-medium uppercase leading-none"
+                style={{ color: "var(--dim)", fontFamily: "var(--font-mono)", fontSize: "clamp(6px, 8cqw, 13px)", letterSpacing: "0.16em" }}
+              >
+                No link
               </span>
             )}
             <div
@@ -742,7 +785,7 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
               boxShadow: "0 0 10px 2px rgb(var(--lc, 0 0 0) / calc(var(--la, 0) * 0.8))",
             }}
           />
-          {interactive && activeTab !== "display" && (
+          {interactive && connectedNow && activeTab !== "display" && (
             <button
               type="button"
               aria-label="Open display settings"
@@ -757,7 +800,7 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
               }}
             />
           )}
-          {interactive && (
+          {interactive && connectedNow && (
             <button
               ref={barBtnRef}
               type="button"

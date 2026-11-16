@@ -185,6 +185,10 @@ interface AppStore {
   state: ipc.DeviceState | null;
   connected: boolean;
   connectingPath: string | null;
+  /** Path of the open device, so the header can say wired or 2.4 GHz. */
+  connectedPath: string | null;
+  /** Path whose last connect attempt failed; the Device screen shows the error on that row. */
+  connectErrorPath: string | null;
   /** The user chose Disconnect: no automatic reconnect until they connect again or unplug. */
   userDisconnected: boolean;
   activeTab: Tab;
@@ -439,16 +443,16 @@ export const useAppStore = create<AppStore>((set, get) => {
   }
 
   async function openDevice(path: string, automatic: boolean) {
-    set({ connectingPath: path });
+    set({ connectingPath: path, connectErrorPath: null });
     try {
       const state = await ipc.connect(path);
       const queued = get().draft;
-      set({ state, connected: state.connected, error: null, errorKind: null, draft: queued, draftDirty: queued != null ? JSON.stringify(patchFromState(queued)) !== JSON.stringify(patchFromState(state)) : false });
+      set({ state, connected: state.connected, connectedPath: state.connected ? path : null, connectErrorPath: null, error: null, errorKind: null, draft: queued, draftDirty: queued != null ? JSON.stringify(patchFromState(queued)) !== JSON.stringify(patchFromState(state)) : false });
       if (queued == null) clearKey(LS_DRAFT);
       await get().refreshPreview();
     } catch (error) {
       if (automatic) autoFailedPath = path;
-      set({ error: message(error), errorKind: kindOf(error) });
+      set({ error: message(error), errorKind: kindOf(error), connectErrorPath: path });
     } finally {
       set({ connectingPath: null });
     }
@@ -459,6 +463,8 @@ export const useAppStore = create<AppStore>((set, get) => {
     state: null,
     connected: false,
     connectingPath: null,
+    connectedPath: null,
+    connectErrorPath: null,
     userDisconnected: false,
     activeTab: "device",
     // Pairing comes first: nothing but the Device screen opens until connected.
@@ -606,7 +612,7 @@ export const useAppStore = create<AppStore>((set, get) => {
     disconnectDevice: async () => {
       await ipc.disconnect();
       // Keep any staged draft — disconnect is not discard.
-      set({ state: null, connected: false, activeTab: "device", userDisconnected: true });
+      set({ state: null, connected: false, connectedPath: null, activeTab: "device", userDisconnected: true });
     },
 
     setCrop: (crop) => {
@@ -809,6 +815,7 @@ export const useAppStore = create<AppStore>((set, get) => {
     handleDisconnected: () =>
       set({
         connected: false,
+        connectedPath: null,
         activeTab: "device",
         connectingPath: null,
         state: null,

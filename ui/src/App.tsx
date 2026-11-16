@@ -1,22 +1,23 @@
 import { useEffect, useState } from "react";
 import type { ComponentType } from "react";
-import { AnimatePresence, MotionConfig, motion, useReducedMotion } from "framer-motion";
+import { MotionConfig, useReducedMotion } from "framer-motion";
 import { CircleHelp } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ErrorBanner } from "@/components/ErrorBanner";
+import { isLinux } from "@/components/PermissionCard";
 import { KeyboardPreview, heroBoardWidth } from "@/components/KeyboardPreview";
+import { cn } from "@/lib/utils";
 import { openLightBar } from "@/components/LightBarPopover";
 import { HelpDialog } from "@/components/HelpDialog";
 import { Toast } from "@/components/Toast";
 import { useDeviceEvents } from "@/lib/useDeviceEvents";
 import { useLiveApply } from "@/lib/useLiveApply";
 import { SyncBar } from "@/components/SyncBar";
-import DeviceScreen from "@/screens/DeviceScreen";
+import DeviceScreen, { DevicePins } from "@/screens/DeviceScreen";
 import DisplayScreen from "@/screens/DisplayScreen";
-import LightingScreen, { EffectsPanel, LightingPanels } from "@/screens/LightingScreen";
+import { EffectsPanel, LightingPanels } from "@/screens/LightingScreen";
 import ProfilesScreen from "@/screens/ProfilesScreen";
 import { LED_MODES, UNDERGLOW_EFFECTS } from "@/lib/effects";
-import { brightnessLabel } from "@/components/lighting";
 import { selectEffectiveState, useAppStore } from "@/store";
 
 const NAV_ITEMS = [
@@ -28,12 +29,15 @@ const NAV_ITEMS = [
 
 type Tab = (typeof NAV_ITEMS)[number]["value"];
 
-const SCREENS: Record<Tab, ComponentType> = {
+const SCREENS: Record<Exclude<Tab, "lighting">, ComponentType> = {
   device: DeviceScreen,
   display: DisplayScreen,
-  lighting: LightingScreen,
   profiles: ProfilesScreen,
 };
+
+/** Number keys follow the tab order in the nav. */
+const TAB_KEYS: Record<string, Tab> = Object.fromEntries(NAV_ITEMS.map((item, i) => [String(i + 1), item.value]));
+const APP_VERSION = typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : "";
 
 export default function App() {
   useDeviceEvents();
@@ -52,6 +56,9 @@ export default function App() {
   const paused = useAppStore((s) => s.animationsPaused);
   const autoConnect = useAppStore((s) => s.autoConnect);
   const loadStoredDisplay = useAppStore((s) => s.loadStoredDisplay);
+  const connectedPath = useAppStore((s) => s.connectedPath);
+  const devices = useAppStore((s) => s.devices);
+  const linkKind = devices.find((d) => d.path === connectedPath)?.transport === "wireless24g" ? "2.4 GHZ" : "WIRED";
   const reduceMotion = useReducedMotion();
   const [helpOpen, setHelpOpen] = useState(false);
 
@@ -95,28 +102,24 @@ export default function App() {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const target = e.target as HTMLElement | null;
       if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
-      const inControl = target?.closest("button, [role='slider']");
       if (e.key.toLowerCase() === "p") {
         if (target?.closest("button, select")) return;
         togglePaused(!paused);
         useAppStore.getState().setNotice(paused ? "Animations on" : "Animations paused");
         return;
       }
-      if (inControl) return;
-      const map: Record<string, Tab> = { "1": "device", "2": "display", "3": "lighting", "4": "profiles" };
-      if (map[e.key]) {
-        if (connected || map[e.key] === "device") setTab(map[e.key]);
-      }
-      else if (e.key === "?") setHelpOpen(true);
+      // Digits and ? also work while a button has focus; sliders keep their own keys.
+      if (target?.closest("[role='slider'], [role='dialog']")) return;
+      const next = TAB_KEYS[e.key];
+      if (next) {
+        if (connected || next === "device") setTab(next);
+      } else if (e.key === "?") setHelpOpen(true);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [setTab, tab, undo, redo, undoDisplayUpload, togglePaused, paused, connected, draftDirty, commitDraft]);
 
-  const Screen = SCREENS[tab];
-
-  const chipBtn =
-    "inline-flex h-6 items-center rounded-full border border-[var(--line-strong)] px-2.5 text-[12px] text-[var(--text)] transition-colors hover:border-white/40 hover:bg-white/[0.06]";
+  const Screen = tab === "lighting" ? null : SCREENS[tab];
   /** Switch to Lighting if needed, then scroll to and focus the matching control. */
   function jumpTo(selector: string) {
     const go = () => {
@@ -127,7 +130,7 @@ export default function App() {
     };
     if (tab !== "lighting") {
       setTab("lighting");
-      window.setTimeout(go, 450);
+      window.setTimeout(go, 200);
     } else go();
   }
 
@@ -139,80 +142,70 @@ export default function App() {
     : "—";
   const draftQueuedOffline = draftDirty && !connected;
   const error = useAppStore((s) => s.error);
+  const errorKind = useAppStore((s) => s.errorKind);
+  // The tall udev card sits under the Connect row on Device, so Connect stays above the fold.
+  const lowBanner = tab === "device" && errorKind === "permission_denied" && isLinux();
 
-  const chip = connectingPath
-    ? { label: "Connecting…", dot: "bg-[var(--warn)] animate-pulse" }
+  const link = connectingPath
+    ? { text: "OPENING…", dot: "bg-[var(--warn)] animate-pulse", tone: "text-[var(--warn)]", glyph: "◐" }
     : applying
-      ? { label: "Applying…", dot: "bg-[var(--accent)] animate-pulse" }
+      ? { text: "WRITING…", dot: "bg-[var(--warn)] animate-pulse", tone: "text-[var(--warn)]", glyph: "●" }
       : connected
-        ? { label: "Connected", dot: "bg-[var(--success)]" }
-        : { label: "Not connected", dot: "bg-[var(--dim)]" };
+        ? { text: `LINK  ${linkKind}`, dot: "bg-[var(--success)]", tone: "text-[var(--success)]", glyph: "●" }
+        : { text: "NO LINK", dot: "bg-transparent border border-[var(--dim)]", tone: "text-[var(--dim)]", glyph: "○" };
 
-  const panel = (
-    <AnimatePresence mode="wait" initial={false}>
-      <motion.div
-        key={tab}
-        role="tabpanel"
-        initial={reduceMotion ? undefined : { opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={reduceMotion ? undefined : { opacity: 0, y: -8 }}
-        transition={{ duration: 0.18, ease: "easeOut" }}
-      >
-        <Screen />
-      </motion.div>
-    </AnimatePresence>
-  );
+  const wide = tab === "lighting";
+  const hero = tab === "device" || tab === "lighting";
+  const compactReadout = "inline-flex items-baseline gap-1.5";
+  const jumpBtn = "readout -mx-1 rounded-[var(--r-ctl)] px-1 text-[11px] text-[var(--dim)] transition-colors hover:bg-[var(--bg-raise-2)] hover:text-[var(--text)]";
+  const LockedHint = "nav-locked-hint";
 
   return (
     <MotionConfig reducedMotion="user">
       <div className="flex min-h-full flex-col">
         <header className="sticky top-0 z-40 border-b border-[var(--line)] bg-[var(--bg)]">
-          <div className="grid h-14 grid-cols-[1fr_auto_1fr] items-center gap-3 px-4">
-            <div className="flex items-center gap-2.5 leading-tight">
-              <span className="relative flex size-2">
-                <span aria-hidden className="absolute inset-0 rounded-full bg-[var(--accent)] blur-[3px]" />
-                <span className="relative size-2 rounded-full bg-[var(--accent)]" />
-              </span>
-              <span>
-                <span className="block text-[13px] font-semibold tracking-[0.02em] text-[var(--text)]">GMK87</span>
-                <span className="block text-[11px] leading-none text-[var(--muted)]">Configurator</span>
-              </span>
+          <div className="grid h-12 grid-cols-[1fr_auto_1fr] items-center gap-3 px-4">
+            <div className="flex min-w-0 items-baseline gap-2.5">
+              <span className="display text-[15px] text-[var(--text)]" style={{ fontStretch: "125%" }}>GMK87</span>
+              <span className="readout truncate text-[10.5px] tracking-[0.14em] text-[var(--dim)]">CONFIGURATOR</span>
             </div>
             <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
               <TabsList>
-                {NAV_ITEMS.map((item) => {
+                {NAV_ITEMS.map((item, i) => {
                   const locked = !connected && item.value !== "device";
                   return (
-                  <span key={item.value} title={locked ? "Connect a keyboard first" : undefined} className="inline-flex">
-                  <TabsTrigger
-                    value={item.value}
-                    disabled={locked}
-                  >
-                    {item.label}
-                  </TabsTrigger>
-                  </span>
+                    <span key={item.value} title={locked ? "Connect a keyboard first" : undefined} className="inline-flex">
+                      <TabsTrigger value={item.value} disabled={locked} aria-describedby={locked ? LockedHint : undefined}>
+                        <span aria-hidden className="readout absolute left-1.5 top-[3px] text-[8.5px] leading-none opacity-55">{i + 1}</span>
+                        {item.label}
+                      </TabsTrigger>
+                    </span>
                   );
                 })}
               </TabsList>
             </Tabs>
-            <div className="flex items-center justify-end gap-2.5">
-              <span className="flex items-center gap-2 rounded-full border border-[var(--line)] bg-[var(--panel)] px-3 py-1.5 text-xs text-[var(--text)]">
-                <span aria-hidden className={`size-2 rounded-full ${chip.dot}`} />
-                {chip.label}
+            <span id={LockedHint} className="sr-only">
+              {connected ? "" : "Locked until a keyboard is connected."}
+            </span>
+            <div className="flex items-center justify-end gap-2">
+              <span role="status" className={cn("readout flex items-center gap-2 text-[11px] tracking-[0.08em]", link.tone)}>
+                <span aria-hidden className={cn("size-1.5 rounded-full", link.dot)} />
+                <span className="sr-only">{link.glyph}</span>
+                {link.text}
               </span>
               <button
                 type="button"
                 aria-label="Help"
                 onClick={() => setHelpOpen(true)}
-                className="flex size-9 items-center justify-center rounded-full text-[var(--muted)] transition-colors duration-150 hover:bg-[var(--panel-2)] hover:text-[var(--text)]"
+                className="flex size-8 items-center justify-center rounded-[var(--r-ctl)] text-[var(--muted)] transition-colors duration-150 hover:bg-[var(--bg-raise-2)] hover:text-[var(--text)]"
               >
-                <CircleHelp className="size-[18px]" aria-hidden />
+                <CircleHelp className="size-[17px]" aria-hidden />
               </button>
             </div>
           </div>
         </header>
 
-        {error && (
+        {error && !lowBanner && (
           <div className="px-6 pt-3">
             <div className="mx-auto w-full max-w-[1180px]">
               <ErrorBanner />
@@ -220,56 +213,64 @@ export default function App() {
           </div>
         )}
 
-        <div className="relative">
+        <main className="relative flex-1 overflow-x-clip">
+          <div aria-hidden className="stage-dots pointer-events-none absolute inset-x-0 top-0 h-[440px]" />
           <div
-            aria-hidden
-            className="pointer-events-none absolute inset-x-0 top-0 h-[560px]"
-            style={{ background: "radial-gradient(70% 65% at 50% 44%, var(--board-glow), transparent 78%)" }}
-          />
-          {tab === "lighting" ? (
-            <div className="relative mx-auto grid w-full max-w-[1560px] gap-4 px-6 pb-5 pt-5 min-[1200px]:grid-cols-[minmax(0,1fr)_480px] min-[1200px]:items-start min-[1200px]:gap-6">
-              <section aria-label="Keyboard preview" className="flex min-w-0 flex-col gap-3 min-[1200px]:sticky min-[1200px]:top-[76px] min-[1200px]:min-h-[calc(100vh-92px)] min-[1200px]:justify-center">
-                <KeyboardPreview className="w-full" hero />
-                <div className="relative z-20 mx-auto w-full rounded-[var(--r-panel)] border border-white/10 bg-[var(--bg-raise)] px-4 py-2.5" style={{ maxWidth: heroBoardWidth() }}>
-                  <SyncBar />
-                </div>
-                <p className="mx-auto hidden text-center text-[12px] text-[var(--muted)] min-[1200px]:block" style={{ maxWidth: heroBoardWidth() }}>
-                  <span className="font-semibold text-[var(--text)]">{effectName}</span>
-                </p>
-                <LightingPanels />
+            className={cn(
+              "relative mx-auto grid w-full gap-4 px-6 pb-6 pt-8",
+              wide ? "max-w-[1560px] min-[1120px]:grid-cols-[minmax(0,1fr)_400px] min-[1120px]:items-start min-[1120px]:gap-6" : "max-w-[1180px]",
+            )}
+          >
+            <div className="flex min-w-0 flex-col gap-3">
+              <section aria-label="Keyboard preview" className="relative z-10">
+                <KeyboardPreview className="w-full" size={hero ? "hero" : "compact"} overlay={tab === "device" && connected ? <DevicePins /> : undefined} />
               </section>
-              <main aria-label="Lighting controls" className="min-w-0 min-[1200px]:sticky min-[1200px]:top-[76px] min-[1200px]:max-h-[calc(100vh-92px)] min-[1200px]:overflow-y-auto min-[1200px]:pr-1"><EffectsPanel /></main>
-            </div>
-          ) : (
-            <>
-              {tab !== "device" && (
-                <section aria-label="Keyboard preview" className="relative mx-auto flex w-full max-w-[1320px] flex-col gap-2 px-6 pt-5">
-                  <div className="mx-auto w-full max-w-[600px]">
-                    <KeyboardPreview className="w-full" />
-                  </div>
-                  <div className="flex flex-wrap items-center justify-center gap-1.5">
-                    <span className="inline-flex h-6 items-center rounded-full border border-[var(--line-strong)] px-2.5 text-[12px] font-medium text-[var(--text)]">{effectName}</span>
-                    <button type="button" onClick={() => jumpTo("#lighting-brightness [role='slider']")} className={chipBtn}>
-                      {effective ? brightnessLabel(effective.underglow.brightness) : "—"}
-                    </button>
-                    <button type="button" onClick={openLightBar} className={chipBtn}>
-                      {sideLedName}
-                    </button>
-                    {draftQueuedOffline && (
-                      <span className="inline-flex h-6 items-center rounded-full border border-[var(--accent)]/40 px-2.5 text-[12px] font-medium text-[var(--accent)]">Queued</span>
-                    )}
-                  </div>
-                </section>
+
+              {!hero && (
+                <div className="readout -mt-1 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] text-[var(--dim)]">
+                  <span className={compactReadout}>
+                    UNDERGLOW <span className="text-[var(--text)]">{effectName}</span>
+                  </span>
+                  <span aria-hidden>·</span>
+                  <button type="button" onClick={() => jumpTo("#lighting-brightness [role='slider']")} className={jumpBtn}>
+                    BRIGHT <span className="text-[var(--text)]">{effective ? `${effective.underglow.brightness}/9` : "—"}</span>
+                  </button>
+                  <span aria-hidden>·</span>
+                  <button type="button" onClick={openLightBar} className={jumpBtn}>
+                    BAR <span className="text-[var(--text)]">{sideLedName}</span>
+                  </button>
+                  {draftQueuedOffline && <span className="text-[var(--warn)]">QUEUED</span>}
+                </div>
               )}
-              <main className="relative mx-auto w-full max-w-[1180px] flex-1 px-6 pb-5 pt-4">
-                <div className="flex flex-col gap-5">{panel}</div>
-              </main>
-            </>
-          )}
-        </div>
+
+              <div key={tab} role="tabpanel" aria-label={NAV_ITEMS.find((n) => n.value === tab)?.label} className="tab-in flex min-w-0 flex-col gap-3">
+                {tab === "lighting" ? (
+                  <>
+                    <div className="panel relative z-20 mx-auto w-full px-4 py-2.5" style={{ maxWidth: heroBoardWidth() }}>
+                      <SyncBar />
+                    </div>
+                    <LightingPanels />
+                  </>
+                ) : (
+                  Screen ? <Screen /> : null
+                )}
+                {error && lowBanner && (
+                  <div className="mx-auto w-full max-w-[600px]">
+                    <ErrorBanner />
+                  </div>
+                )}
+              </div>
+            </div>
+            {wide && (
+              <div aria-label="Lighting controls" className="min-w-0 min-[1120px]:sticky min-[1120px]:top-[64px] min-[1120px]:max-h-[calc(100vh-80px)] min-[1120px]:overflow-y-auto min-[1120px]:pr-1">
+                <EffectsPanel />
+              </div>
+            )}
+          </div>
+        </main>
       </div>
 
-      <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
+      <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} version={APP_VERSION} />
       <Toast />
     </MotionConfig>
   );

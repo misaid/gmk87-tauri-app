@@ -44,7 +44,23 @@ export const GLOSSARY: ReadonlyArray<{ term: string; def: string }> = [
   },
 ];
 
-export function HelpDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform ?? "");
+const MOD = isMac ? "⌘" : "Ctrl";
+
+/** Shortcut legends; the number keys follow the tab order in the header. */
+export const SHORTCUTS: ReadonlyArray<{ keys: string[]; does: string }> = [
+  { keys: ["1"], does: "Device" },
+  { keys: ["2"], does: "Lighting" },
+  { keys: ["3"], does: "Display" },
+  { keys: ["4"], does: "Profiles" },
+  { keys: ["?"], does: "Open this help" },
+  { keys: ["P"], does: "Pause or resume animations" },
+  { keys: [MOD, "Z"], does: "Undo" },
+  { keys: [MOD, "Shift", "Z"], does: "Redo" },
+  { keys: [MOD, "↵"], does: "Apply a held draft to the keyboard" },
+];
+
+export function HelpDialog({ open, onClose, version }: { open: boolean; onClose: () => void; version?: string }) {
   const panelRef = useRef<HTMLDivElement>(null);
   useDialogFocusTrap(panelRef, open);
   useEffect(() => {
@@ -77,18 +93,31 @@ export function HelpDialog({ open, onClose }: { open: boolean; onClose: () => vo
           <button
             type="button"
             onClick={onClose}
-            className="rounded-[8px] px-2 py-1 text-xs text-[var(--muted)] transition-colors hover:bg-[var(--panel-2)] hover:text-[var(--text)]"
+            className="rounded-[var(--r-ctl)] px-2 py-1 text-xs text-[var(--muted)] transition-colors hover:bg-[var(--panel-2)] hover:text-[var(--text)]"
           >
             Close
           </button>
         </div>
-        <div className="mt-3 rounded-[var(--r-panel)] border border-[var(--line)] p-3 text-xs leading-relaxed text-[var(--muted)]">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--dim)]">Shortcuts</p>
-          <p className="mt-1.5 text-[var(--text)]">
-            1–4 tabs · ? help · p pause · Ctrl/Cmd+Z undo
-          </p>
-        </div>
-        <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--dim)]">Glossary</p>
+        <p className="silk mt-4">Shortcuts</p>
+        <table className="mt-2 w-full border-collapse text-[12.5px]">
+          <tbody>
+            {SHORTCUTS.map((row) => (
+              <tr key={row.does} className="border-t border-[var(--line)] first:border-t-0">
+                <th scope="row" className="w-[40%] py-1.5 pr-3 text-left font-normal">
+                  <span className="inline-flex items-center gap-1">
+                    {row.keys.map((k) => (
+                      <kbd key={k} className="keycap-dark readout inline-flex h-6 min-w-6 items-center justify-center px-1.5 text-[11px]" style={{ fontFamily: k === "↵" ? "var(--font-ui)" : undefined }}>
+                        {k}
+                      </kbd>
+                    ))}
+                  </span>
+                </th>
+                <td className="py-1.5 text-[var(--muted)]">{row.does}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p className="silk mt-5">Glossary</p>
         <dl className="mt-2 flex flex-col gap-2.5">
           {GLOSSARY.map((g) => (
             <div key={g.term} className="rounded-[var(--r-panel)] border border-[var(--line)] p-3">
@@ -97,6 +126,7 @@ export function HelpDialog({ open, onClose }: { open: boolean; onClose: () => vo
             </div>
           ))}
         </dl>
+        {version && <p className="readout mt-4 text-[11px] text-[var(--dim)]">GMK87 Configurator v{version}</p>}
       </div>
     </div>
   );
