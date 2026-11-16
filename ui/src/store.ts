@@ -112,7 +112,6 @@ const LS_HISTORY = "gmk87.lightingHistory.v1";
 /** v2: live apply is the default; the old v1 key meant "opt in to auto-apply". */
 const LS_AUTO = "gmk87.autoApply.v2";
 const LS_ACTIVE_PROFILE = "gmk87.activeProfile.v1";
-const LS_ONBOARDED = "gmk87.onboarded.v1";
 
 function loadJSON<T>(key: string, fallback: T): T {
   try {
@@ -221,8 +220,6 @@ interface AppStore {
   displayHistory: DisplayHistoryEntry[];
   /** Last display contents actually acknowledged by the board (for undo). */
   lastUploaded: Record<Slot, SlotEntry> | null;
-  onboarded: boolean;
-  showOnboarding: boolean;
   /** Transient success feedback (toast) — cleared after a few seconds. */
   notice: string | null;
   /** 'error' toasts get a red style + longer dwell — errors are not successes. */
@@ -294,8 +291,6 @@ interface AppStore {
   undoLighting: () => Promise<void>;
   restoreLightingAt: (index: number) => Promise<void>;
   undoDisplayUpload: () => Promise<void>;
-  setOnboarded: (v: boolean) => void;
-  setShowOnboarding: (v: boolean) => void;
   setNotice: (msg: string | null, kind?: "success" | "error") => void;
   setAnimationsPaused: (v: boolean) => void;
   setShowWriteConfirm: (v: boolean) => void;
@@ -410,7 +405,6 @@ function withEntry(
 }
 
 export const useAppStore = create<AppStore>((set, get) => {
-  const initialOnboarded = loadJSON<boolean>(LS_ONBOARDED, false) === true;
   const initialHistory = loadJSON<ipc.DeviceState[]>(LS_HISTORY, []);
   const initialDraft = loadJSON<ipc.DeviceState | null>(LS_DRAFT, null);
 
@@ -506,8 +500,6 @@ export const useAppStore = create<AppStore>((set, get) => {
     lastSyncedAt: null,
     displayHistory: [],
     lastUploaded: null,
-    onboarded: initialOnboarded,
-    showOnboarding: !initialOnboarded,
     notice: null,
     noticeKind: null,
     animationsPaused: false,
@@ -1018,11 +1010,6 @@ export const useAppStore = create<AppStore>((set, get) => {
       }
     },
 
-    setOnboarded: (v) => {
-      saveJSON(LS_ONBOARDED, v);
-      set({ onboarded: v, showOnboarding: !v });
-    },
-    setShowOnboarding: (v) => set({ showOnboarding: v }),
     setNotice: (msg, kind = "success") => set({ notice: msg, noticeKind: msg ? kind : null }),
     setAnimationsPaused: (v) => set({ animationsPaused: v }),
     setShowWriteConfirm: (v) => set({ showWriteConfirm: v }),
