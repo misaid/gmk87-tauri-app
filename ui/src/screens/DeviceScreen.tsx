@@ -1,11 +1,12 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { Clipboard, Loader2 } from "lucide-react";
-import { partAnchors, displayLayout, caseLayout } from "@/components/keyboard";
+import { partAnchors, displayPlateLayout, caseLayout } from "@/components/keyboard";
 import { isLinux } from "@/components/PermissionCard";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { PanelHead } from "@/components/PanelHead";
 import * as ipc from "@/lib/ipc";
 import { useAppStore } from "@/store";
 
@@ -86,38 +87,31 @@ function Pin({ n, label, tag, tx, ty }: { n: number; label: string; tag: { x: nu
 /** The three leader pins drawn over the board on the Device tab (App passes them to the persistent preview). */
 export function DevicePins() {
   const anchors = partAnchors();
-  const ch = caseLayout().size[1];
-  const screenTop = anchors.screen.y - (displayLayout().size[1] / ch) * 50;
+  const [cw, ch] = caseLayout().size;
+  // Pin 2 lands on the top edge of the black module panel, left of the digits, so its leader never crosses the clock.
+  const module = displayPlateLayout();
+  const screenX = ((module.position[0] - module.size[0] / 2 + module.size[0] * 0.22 + cw / 2) / cw) * 100;
+  const screenTop = ((module.position[1] - module.size[1] / 2 + ch / 2) / ch) * 100;
   return (
     <>
       <Pin n={1} label="USB connection" tag={{ x: 50, y: -8 }} tx={50} ty={0} />
-      <Pin n={2} label="Screen and board clock" tag={{ x: anchors.screen.x, y: -8 }} tx={anchors.screen.x} ty={screenTop} />
-      <Pin n={3} label="Windows key lock" tag={{ x: anchors.win.x, y: 105 }} tx={anchors.win.x} ty={anchors.win.y + 4} />
+      <Pin n={2} label="Screen and board clock" tag={{ x: screenX, y: -8 }} tx={screenX} ty={screenTop} />
+      <Pin n={3} label="Windows key lock" tag={{ x: anchors.win.x, y: 103.5 }} tx={anchors.win.x} ty={anchors.win.y + 4} />
     </>
   );
 }
 
-function PanelHead({ n, title, children }: { n: number; title: string; children?: ReactNode }) {
-  return (
-    <h2 id={`callout-${n}`} tabIndex={-1} className="mb-3 flex items-center gap-2.5 outline-offset-4">
-      <span aria-hidden className="readout text-[11px] text-[var(--dim)]">{String(n).padStart(2, "0")}</span>
-      <span className="silk">{title}</span>
-      <span aria-hidden className="h-px flex-1 bg-[var(--line)]" />
-      {children}
-    </h2>
-  );
-}
-
-function Callout({ n, title, className = "", children }: { n: number; title: string; className?: string; children: ReactNode }) {
+function Callout({ n, title, className = "", index = 0, stagger = false, children }: { n: number; title: string; className?: string; index?: number; stagger?: boolean; children: ReactNode }) {
   const hot = useHot();
   return (
     <section
       aria-labelledby={`callout-${n}`}
       onMouseEnter={() => setHot(n)}
       onMouseLeave={() => setHot(null)}
-      className={`panel p-4 transition-colors duration-150 ${hot === n ? "border-[var(--line-strong)] border-t-[var(--text)]" : ""} ${className}`}
+      style={{ "--i": index } as CSSProperties}
+      className={`panel p-4 transition-colors duration-150 ${stagger ? "stagger-in" : ""} ${hot === n ? "border-[var(--line-strong)] border-t-[var(--text)]" : ""} ${className}`}
     >
-      <PanelHead n={n} title={title} />
+      <PanelHead n={n} title={title} id={`callout-${n}`} />
       {children}
     </section>
   );
@@ -144,11 +138,45 @@ function nextStep(kind: string | null | undefined, transport: string): string {
 
 function ScanLine() {
   return (
-    <div aria-hidden className="relative h-px w-56 overflow-hidden bg-[var(--line)]">
+    <div aria-hidden className="relative h-px w-[360px] max-w-full overflow-hidden bg-[var(--line)]">
       <span className="scan-sweep absolute inset-y-0 left-0 w-1/3 bg-[var(--text)]" />
     </div>
   );
 }
+
+function clock(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+/** One line of the scan table: label, dot leader, value. */
+function ScanRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <li className="flex items-baseline gap-2 border-t border-[var(--line)] py-1 first:border-t-0">
+      <span className="text-[var(--muted)]">{label}</span>
+      <span aria-hidden className="mb-[3px] min-w-3 flex-1 self-end border-b border-dotted border-[var(--line-strong)]" />
+      <span>{children}</span>
+    </li>
+  );
+}
+
+/** What the scan has seen so far: cable, dongle, and when it last looked. */
+function ScanTable({ devices, lastScanAt }: { devices: ipc.DeviceInfo[]; lastScanAt: number | null }) {
+  const wired = devices.some((d) => d.transport === "wired");
+  const dongle = devices.some((d) => d.transport === "wireless24g");
+  return (
+    <ul aria-label="Scan results" className="readout w-[360px] max-w-full text-[12px] text-[var(--text)]">
+      <ScanRow label="USB CABLE">{wired ? <span className="text-[var(--success)]">FOUND</span> : <span className="text-[var(--dim)]">SCANNING</span>}</ScanRow>
+      <ScanRow label="2.4 GHZ DONGLE">{dongle ? <span className="text-[var(--success)]">FOUND · CLICK TO CONNECT</span> : <span className="text-[var(--dim)]">NOT FOUND</span>}</ScanRow>
+      <ScanRow label="LAST SCAN">{lastScanAt ? clock(lastScanAt) : "—"}</ScanRow>
+    </ul>
+  );
+}
+
+/** Set once the connected panels have had their entrance; cleared when the link drops. */
+let staggerDone = false;
+
 
 export default function DeviceScreen() {
   const devices = useAppStore((s) => s.devices);
@@ -167,7 +195,13 @@ export default function DeviceScreen() {
   const setNotice = useAppStore((s) => s.setNotice);
   const setLightingDraft = useAppStore((s) => s.setLightingDraft);
   const rereadState = useAppStore((st) => st.rereadState);
+  const lastScanAt = useAppStore((s) => s.lastScanAt);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  // The three panels stagger in when the link comes up, not on every return to this tab.
+  const [stagger] = useState(() => !staggerDone);
+  useEffect(() => {
+    staggerDone = connected;
+  }, [connected]);
 
   useEffect(() => {
     void refreshDevices();
@@ -180,7 +214,7 @@ export default function DeviceScreen() {
   }, [confirmDisconnect]);
 
   const diagnostics = (
-    <Button variant="ghost" size="sm" className="h-8 text-[12px]" onClick={() => void copyDiagnostics(setNotice)}>
+    <Button variant="outline" size="sm" className="h-8 text-[12px]" onClick={() => void copyDiagnostics(setNotice)}>
       <Clipboard className="size-3.5" aria-hidden />
       Copy diagnostics
     </Button>
@@ -189,18 +223,19 @@ export default function DeviceScreen() {
   if (!connected) {
     if (devices.length === 0) {
       return (
-        <div className="mx-auto flex w-full max-w-[560px] flex-col items-center gap-3 pb-6 pt-5 text-center">
-          <h1 className="display">Plug in your GMK87</h1>
-          <p className="text-[13px] text-[var(--muted)]">Looking on USB and the 2.4 GHz dongle…</p>
+        <div className="mx-auto flex w-full max-w-[560px] flex-col items-center gap-2.5 pb-0 pt-1 text-center">
+          <h2 className="display text-[34px]">Plug in your GMK87</h2>
           <ScanLine />
-          <div className="mt-1">{diagnostics}</div>
+          <ScanTable devices={devices} lastScanAt={lastScanAt} />
+          <p className="text-[12.5px] text-[var(--muted)]">Cable in, mode switch on the back set to USB.</p>
+          <div>{diagnostics}</div>
         </div>
       );
     }
     const wiredFirst = [...devices].sort((a, b) => Number(b.transport === "wired") - Number(a.transport === "wired"));
     return (
       <div className="mx-auto flex w-full max-w-[600px] flex-col gap-3 pb-6 pt-3">
-        <PanelHead n={1} title="Link" />
+        <PanelHead n={1} title="Link" id="callout-1" />
         <div className="flex flex-col gap-2.5">
           {wiredFirst.map((device) => {
             const isConnecting = connectingPath === device.path;
@@ -257,7 +292,10 @@ export default function DeviceScreen() {
             );
           })}
         </div>
-        <div className="flex justify-end">{diagnostics}</div>
+        <div className="mt-2 flex flex-col items-center gap-3.5">
+          <ScanTable devices={devices} lastScanAt={lastScanAt} />
+          {diagnostics}
+        </div>
       </div>
     );
   }
@@ -266,8 +304,8 @@ export default function DeviceScreen() {
   const transportLabel = active?.transport === "wireless24g" ? "2.4 GHz dongle" : "Wired USB";
 
   return (
-    <div className="grid gap-4 pb-4 pt-2 min-[900px]:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)]">
-      <Callout n={1} title="Link">
+    <div className="grid grid-cols-2 gap-3 pb-4 min-[1100px]:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)]">
+      <Callout n={1} title="Link" index={0} stagger={stagger} className="col-span-2 min-[1100px]:col-span-1">
         <div className="flex items-center gap-3 rounded-[var(--r-ctl)] bg-[var(--bg-sunk)] p-3">
           <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-[var(--success)]" />
           <div className="min-w-0 flex-1">
@@ -312,7 +350,7 @@ export default function DeviceScreen() {
         </div>
       </Callout>
 
-      <Callout n={2} title="Clock">
+      <Callout n={2} title="Clock" index={1} stagger={stagger}>
         <dl className="grid grid-cols-[auto_1fr] items-baseline gap-x-4 gap-y-1.5">
           <dt className="text-[12px] text-[var(--muted)]">Last written</dt>
           <dd className="readout text-[22px] leading-none text-[var(--text)]" title={state ? formatDeviceDate(state.time as DeviceTime) : undefined}>
@@ -328,7 +366,7 @@ export default function DeviceScreen() {
         </Button>
       </Callout>
 
-      <Callout n={3} title="Windows key">
+      <Callout n={3} title="Windows key" index={2} stagger={stagger}>
         <label className="flex items-center gap-3 text-[var(--text)]">
           <Switch checked={state?.winLock ?? false} disabled={!state} onCheckedChange={(checked) => setLightingDraft?.({ winLock: checked })} />
           <span>

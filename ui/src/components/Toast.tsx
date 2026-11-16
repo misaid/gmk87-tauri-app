@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useAppStore } from "@/store";
 
+/** A key-shaped notice: bottom-centre, one LED for the outcome, mono text. Click or Esc puts it away. */
 export function Toast() {
   const notice = useAppStore((s) => s.notice);
   const noticeKind = useAppStore((s) => s.noticeKind);
@@ -10,7 +11,14 @@ export function Toast() {
     if (!notice) return;
     const dwell = noticeKind === "error" ? 10000 : 6000;
     const t = window.setTimeout(() => setNotice(null), dwell);
-    return () => window.clearTimeout(t);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setNotice(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.clearTimeout(t);
+      window.removeEventListener("keydown", onKey);
+    };
   }, [notice, noticeKind, setNotice]);
 
   if (!notice) return null;
@@ -19,21 +27,15 @@ export function Toast() {
 
   return (
     <div
-      className={
-        isError
-          ? "fixed right-4 top-16 z-50 flex items-center gap-3 rounded-full border border-[var(--danger)]/40 bg-[#180d0d]/95 px-4 py-2 text-xs text-[#fecaca] shadow-lg"
-          : "fixed right-4 top-16 z-50 flex items-center gap-3 rounded-full border border-[var(--success)]/30 bg-[#0c1512]/95 px-4 py-2 text-xs text-[#bbf7d0] shadow-lg"
-      }
+      key={notice}
       role={isError ? "alert" : "status"}
+      title="Click to dismiss"
+      onClick={() => setNotice(null)}
+      className="toast-in keycap-dark readout fixed bottom-6 left-1/2 z-50 flex max-w-[min(92vw,560px)] cursor-pointer items-center gap-2.5 px-4 py-2.5 text-[12px] font-medium"
+      style={{ background: "linear-gradient(180deg, var(--key-top), var(--key-bot))" }}
     >
-      <span>{notice}</span>
-      <button
-        type="button"
-        className={`underline underline-offset-2 ${isError ? "text-[#fecaca]/70" : "text-[#bbf7d0]/70"}`}
-        onClick={() => setNotice(null)}
-      >
-        Dismiss
-      </button>
+      <span aria-hidden className="size-1.5 shrink-0 rounded-full" style={{ background: isError ? "var(--danger)" : "var(--success)", boxShadow: `0 0 8px ${isError ? "var(--danger)" : "var(--success)"}` }} />
+      <span className="min-w-0">{notice}</span>
     </div>
   );
 }

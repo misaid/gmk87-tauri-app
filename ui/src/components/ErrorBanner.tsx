@@ -17,18 +17,19 @@ export function ErrorBanner() {
     >
       <span className="min-w-0 flex-1">{error}</span>
       <span className="flex gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            dismiss();
-            if (errorKind === "device_gone" || errorKind === "not_connected") {
+        {errorKind === "not_connected" && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              dismiss();
               void refreshDevices().then(() => setNotice?.("Refreshed"));
-            }
-          }}
-        >
-          Refresh
-        </Button>
+            }}
+          >
+            Refresh
+          </Button>
+        )}
         <Button type="button" variant="ghost" size="sm" onClick={dismiss}>
           Dismiss
         </Button>

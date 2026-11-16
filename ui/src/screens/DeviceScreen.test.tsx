@@ -103,6 +103,26 @@ describe("DeviceScreen", () => {
     expect(screen.queryByRole("button", { name: "Connect" })).not.toBeInTheDocument();
   });
 
+  it("shows a scan table that agrees with what was found", () => {
+    mockState.devices = [];
+    mockState.lastScanAt = new Date(2026, 0, 1, 2, 31, 7).getTime();
+    const { unmount } = render(<DeviceScreen />);
+    const table = screen.getByRole("list", { name: "Scan results" });
+    expect(table).toHaveTextContent(/USB CABLE\s*SCANNING/);
+    expect(table).toHaveTextContent(/2\.4 GHZ DONGLE\s*NOT FOUND/);
+    expect(table).toHaveTextContent(/LAST SCAN\s*02:31:07/);
+    unmount();
+    mockState.devices = [
+      { path: "/dev/hidraw13", label: "GMK87 (2.4G)", transport: "wireless24g", productId: 0x5088, hasVia: false },
+      ...defaultDevices,
+    ];
+    render(<DeviceScreen />);
+    const found = screen.getByRole("list", { name: "Scan results" });
+    expect(found).toHaveTextContent(/USB CABLE\s*FOUND/);
+    expect(found).toHaveTextContent(/FOUND · CLICK TO CONNECT/);
+    mockState.lastScanAt = null;
+  });
+
   it("tags the wired row as recommended when a dongle is also present", () => {
     mockState.devices = [
       { path: "/dev/hidraw13", label: "GMK87 (2.4G)", transport: "wireless24g", productId: 0x5088, hasVia: false },

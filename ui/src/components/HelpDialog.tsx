@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
 import { useDialogFocusTrap } from "@/lib/useDialog";
 
+const PROJECT_URL = "https://github.com/misaid/gmk87-tauri-app";
+
 export const GLOSSARY: ReadonlyArray<{ term: string; def: string }> = [
   {
     term: "Underglow",
@@ -83,50 +85,61 @@ export function HelpDialog({ open, onClose, version }: { open: boolean; onClose:
     >
       <div
         ref={panelRef}
-        className="dialog-panel max-h-[80vh] w-full max-w-lg overflow-y-auto p-6"
+        className="dialog-panel max-h-[84vh] w-full max-w-lg overflow-y-auto p-6 min-[900px]:max-w-[820px]"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-start justify-between">
-          <h2 id="help-title" className="text-base font-semibold text-[var(--text)]">
+          <h2 id="help-title" className="display text-[18px] uppercase tracking-[0.02em] text-[var(--text)]">
             Help
           </h2>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-[var(--r-ctl)] px-2 py-1 text-xs text-[var(--muted)] transition-colors hover:bg-[var(--panel-2)] hover:text-[var(--text)]"
+            className="rounded-[var(--r-ctl)] px-2 py-1 text-xs text-[var(--muted)] transition-colors hover:bg-[var(--bg-raise-2)] hover:text-[var(--text)]"
           >
             Close
           </button>
         </div>
-        <p className="silk mt-4">Shortcuts</p>
-        <table className="mt-2 w-full border-collapse text-[12.5px]">
-          <tbody>
-            {SHORTCUTS.map((row) => (
-              <tr key={row.does} className="border-t border-[var(--line)] first:border-t-0">
-                <th scope="row" className="w-[40%] py-1.5 pr-3 text-left font-normal">
-                  <span className="inline-flex items-center gap-1">
-                    {row.keys.map((k) => (
-                      <kbd key={k} className="keycap-dark readout inline-flex h-6 min-w-6 items-center justify-center px-1.5 text-[11px]" style={{ fontFamily: k === "↵" ? "var(--font-ui)" : undefined }}>
-                        {k}
-                      </kbd>
-                    ))}
-                  </span>
-                </th>
-                <td className="py-1.5 text-[var(--muted)]">{row.does}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <p className="silk mt-5">Glossary</p>
-        <dl className="mt-2 flex flex-col gap-2.5">
-          {GLOSSARY.map((g) => (
-            <div key={g.term} className="rounded-[var(--r-panel)] border border-[var(--line)] p-3">
-              <dt className="text-[13px] font-medium text-[var(--text)]">{g.term}</dt>
-              <dd className="mt-1 text-xs leading-relaxed text-[var(--muted)]">{g.def}</dd>
-            </div>
-          ))}
-        </dl>
-        {version && <p className="readout mt-4 text-[11px] text-[var(--dim)]">GMK87 Configurator v{version}</p>}
+        <div className="mt-4 grid gap-x-8 gap-y-5 min-[900px]:grid-cols-2">
+          <div>
+            <p className="silk">Shortcuts</p>
+            <table className="mt-2 w-full border-collapse text-[12.5px]">
+              <tbody>
+                {SHORTCUTS.map((row) => (
+                  <tr key={row.does} className="border-t border-[var(--line)] first:border-t-0">
+                    <th scope="row" className="w-[40%] py-1.5 pr-3 text-left font-normal">
+                      <span className="inline-flex items-center gap-1">
+                        {row.keys.map((k) => (
+                          <kbd key={k} className="keycap-dark readout inline-flex h-6 min-w-6 items-center justify-center px-1.5 text-[11px]" style={{ fontFamily: k === "↵" ? "var(--font-ui)" : undefined }}>
+                            {k}
+                          </kbd>
+                        ))}
+                      </span>
+                    </th>
+                    <td className="py-1.5 text-[var(--muted)]">{row.does}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div>
+            <p className="silk">Glossary</p>
+            <dl className="mt-2 flex flex-col">
+              {GLOSSARY.map((g) => (
+                <div key={g.term} className="border-t border-[var(--line)] py-2 first:border-t-0">
+                  <dt className="text-[13px] font-[550] text-[var(--text)]">{g.term}</dt>
+                  <dd className="mt-0.5 text-xs leading-relaxed text-[var(--muted)]">{g.def}</dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        </div>
+        <p className="readout mt-5 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-[var(--line)] pt-3 text-[11px] text-[var(--dim)]">
+          {version && <span>GMK87 Configurator v{version}</span>}
+          <a href={PROJECT_URL} target="_blank" rel="noreferrer" className="text-[var(--muted)] underline underline-offset-4 transition-colors hover:text-[var(--text)]">
+            Open project page
+          </a>
+        </p>
       </div>
     </div>
   );
