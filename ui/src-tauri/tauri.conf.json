@@ -20,13 +20,39 @@
         "center": true
       }
     ],
-    "security": { "csp": null }
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost"
+    }
   },
   "bundle": {
     "active": true,
-    "targets": ["appimage", "nsis"],
+    "targets": [
+      "appimage",
+      "deb",
+      "nsis"
+    ],
     "category": "Utility",
     "shortDescription": "GMK87 keyboard configurator",
-    "longDescription": "Desktop tool for the ZUOYA GMK87: display images and GIFs, RGB lighting, and clock sync over USB."
+    "longDescription": "Desktop tool for the ZUOYA GMK87: display images and GIFs, RGB lighting, and clock sync over USB.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/64x64.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "publisher": "misaid",
+    "copyright": "Copyright (C) 2026 misaid",
+    "license": "GPL-3.0-or-later",
+    "licenseFile": "../../LICENSE",
+    "homepage": "https://github.com/misaid/gmk87-tauri-app",
+    "linux": {
+      "deb": {
+        "files": {
+          "/usr/lib/udev/rules.d/50-gmk87.rules": "../../packaging/50-gmk87.rules"
+        }
+      }
+    }
   }
 }
