@@ -82,7 +82,7 @@ export function HelpDialog({ open, onClose }: { open: boolean; onClose: () => vo
             Close
           </button>
         </div>
-        <div className="mt-3 rounded-[12px] border border-[var(--line)] p-3 text-xs leading-relaxed text-[var(--muted)]">
+        <div className="mt-3 rounded-[var(--r-panel)] border border-[var(--line)] p-3 text-xs leading-relaxed text-[var(--muted)]">
           <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--dim)]">Shortcuts</p>
           <p className="mt-1.5 text-[var(--text)]">
             1–4 tabs · ? help · p pause · Ctrl/Cmd+Z undo
@@ -91,7 +91,7 @@ export function HelpDialog({ open, onClose }: { open: boolean; onClose: () => vo
         <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--dim)]">Glossary</p>
         <dl className="mt-2 flex flex-col gap-2.5">
           {GLOSSARY.map((g) => (
-            <div key={g.term} className="rounded-[12px] border border-[var(--line)] p-3">
+            <div key={g.term} className="rounded-[var(--r-panel)] border border-[var(--line)] p-3">
               <dt className="text-[13px] font-medium text-[var(--text)]">{g.term}</dt>
               <dd className="mt-1 text-xs leading-relaxed text-[var(--muted)]">{g.def}</dd>
             </div>

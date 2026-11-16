@@ -109,7 +109,7 @@ export function ProfileGallery({ compact = false }: { compact?: boolean }) {
     <li key="save" className={cardW}>
       {saving ? (
         <form
-          className="flex h-full min-h-[88px] flex-col justify-center gap-1.5 rounded-[12px] border border-dashed border-white/40 bg-[var(--panel-2)] p-2.5"
+          className="flex h-full min-h-[88px] flex-col justify-center gap-1.5 rounded-[var(--r-panel)] border border-dashed border-white/40 bg-[var(--panel-2)] p-2.5"
           onSubmit={(e) => {
             e.preventDefault();
             saveCurrent();
@@ -133,7 +133,7 @@ export function ProfileGallery({ compact = false }: { compact?: boolean }) {
         <button
           type="button"
           onClick={() => setSaving(true)}
-          className="flex h-full min-h-[88px] w-full flex-col items-center justify-center gap-1 rounded-[12px] border border-dashed border-[var(--line-strong)] text-[12px] font-medium text-[var(--text)] transition-colors hover:border-white/50 hover:bg-white/[0.05] focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
+          className="flex h-full min-h-[88px] w-full flex-col items-center justify-center gap-1 rounded-[var(--r-panel)] border border-dashed border-[var(--line-strong)] text-[12px] font-medium text-[var(--text)] transition-colors hover:border-white/50 hover:bg-white/[0.05]"
         >
           <Plus className="size-4" aria-hidden />
           Save current
@@ -148,11 +148,11 @@ export function ProfileGallery({ compact = false }: { compact?: boolean }) {
       className={compact ? "flex gap-2 overflow-x-auto pb-1.5" : "grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4"}
     >
       {saveCard}
-      {!presetsLoaded && presets.length === 0 && [0, 1, 2].map((i) => <li key={i} aria-hidden className={`min-h-[88px] animate-pulse rounded-[12px] bg-white/[0.06] ${cardW}`} />)}
+      {!presetsLoaded && presets.length === 0 && [0, 1, 2].map((i) => <li key={i} aria-hidden className={`min-h-[88px] animate-pulse rounded-[var(--r-panel)] bg-white/[0.06] ${cardW}`} />)}
       {items.map((item) => (
         <li
           key={item.id}
-          className={`group flex flex-col gap-1.5 rounded-[12px] border bg-[var(--panel-2)] p-2 ${cardW} ${item.active ? "border-white/60" : "border-[var(--line)]"}`}
+          className={`group flex flex-col gap-1.5 rounded-[var(--r-panel)] border bg-[var(--panel-2)] p-2 ${cardW} ${item.active ? "border-white/60" : "border-[var(--line)]"}`}
           onMouseEnter={() => setHot(item.id)}
           onMouseLeave={() => setHot(null)}
         >
@@ -164,7 +164,7 @@ export function ProfileGallery({ compact = false }: { compact?: boolean }) {
             onClick={() => apply(item)}
             onFocus={() => setHot(item.id)}
             onBlur={() => setHot(null)}
-            className="flex flex-col gap-1.5 rounded-[8px] text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
+            className="flex flex-col gap-1.5 rounded-[8px] text-left"
           >
             <BoardThumb lighting={item.lighting} live={hot === item.id} />
             {renaming === item.profile?.id ? null : (

@@ -69,7 +69,7 @@ export function EffectGallery({
             role="tab"
             aria-selected={filter === f.id}
             onClick={() => setFilter(f.id)}
-            className={`h-6 flex-1 rounded-full px-2 text-[12px] font-medium @[560px]:flex-none @[560px]:px-3 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-white ${filter === f.id ? "bg-[var(--pill)] text-[var(--text)]" : "text-[var(--muted)] hover:text-[var(--text)]"}`}
+            className={`h-6 flex-1 rounded-full px-2 text-[12px] font-medium @[560px]:flex-none @[560px]:px-3 transition-colors ${filter === f.id ? "bg-[var(--pill)] text-[var(--text)]" : "text-[var(--muted)] hover:text-[var(--text)]"}`}
           >
             {f.label}
           </button>

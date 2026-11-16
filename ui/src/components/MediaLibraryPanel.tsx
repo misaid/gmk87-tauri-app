@@ -19,7 +19,7 @@ function LibraryTile({ item, onUse }: { item: LibraryItem; onUse: (slot?: Slot) 
         onClick={() => onUse()}
         title={`${item.name}\nUsed ${item.useCount}× · last ${formatAgo(item.lastUsedAt)}`}
         aria-label={`Use ${item.name}`}
-        className="relative block aspect-[240/135] w-full overflow-hidden rounded-[10px] border border-[var(--line)] bg-black transition-colors hover:border-[var(--line-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+        className="relative block aspect-[240/135] w-full overflow-hidden rounded-[10px] border border-[var(--line)] bg-black transition-colors hover:border-[var(--line-strong)]"
       >
         {item.thumb ? (
           <img src={item.thumb} alt="" draggable={false} className="size-full object-cover" />
@@ -70,7 +70,7 @@ function MediaLibraryPanelImpl() {
   const total = totalBytes(library);
 
   return (
-    <section className="flex flex-col gap-3 rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4 lg:col-span-2" aria-labelledby="display-library">
+    <section className="flex flex-col gap-3 rounded-[var(--r-panel)] border border-[var(--line)] bg-[var(--panel)] p-4 lg:col-span-2" aria-labelledby="display-library">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 id="display-library" className="text-[13px] font-semibold tracking-[0.01em] text-[var(--text)]">
           Library · recent images & GIFs
@@ -82,7 +82,7 @@ function MediaLibraryPanelImpl() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search by name"
             aria-label="Search library"
-            className="h-8 w-44 rounded-[8px] border border-[var(--line)] bg-[var(--panel-2)] px-2.5 text-xs text-[var(--text)] placeholder:text-[var(--muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+            className="h-8 w-44 rounded-[8px] border border-[var(--line)] bg-[var(--panel-2)] px-2.5 text-xs text-[var(--text)] placeholder:text-[var(--muted)]"
           />
           {library.length > 0 &&
             (confirmClear ? (
@@ -110,7 +110,7 @@ function MediaLibraryPanelImpl() {
       </div>
 
       {library.length === 0 ? (
-        <p className="rounded-[12px] border border-dashed border-[var(--line)] p-6 text-center text-xs text-[var(--muted)]">
+        <p className="rounded-[var(--r-panel)] border border-dashed border-[var(--line)] p-6 text-center text-xs text-[var(--muted)]">
           No images yet.
         </p>
       ) : shown.length === 0 ? (

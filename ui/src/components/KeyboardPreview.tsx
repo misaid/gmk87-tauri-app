@@ -784,7 +784,7 @@ export function KeyboardPreview({ className, interactive = true, hero = false, o
       {previewEffect !== null && previewEffect !== (effective ?? OFFLINE_STATE).underglow.effect && (
         <span
           role="status"
-          className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 whitespace-nowrap rounded-full border border-white/20 bg-black/65 px-3 py-1 text-[11px] font-medium text-white backdrop-blur"
+          className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 whitespace-nowrap rounded-full border border-white/20 bg-black/65 px-3 py-1 text-[11px] font-medium text-white"
         >
           Previewing {UNDERGLOW_EFFECTS.find((e) => e.value === previewEffect)?.name ?? "effect"} — click to stage
         </span>

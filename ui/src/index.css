@@ -1,112 +1,225 @@
 @import "tailwindcss";
 
+/* DARKROOM: the chrome has no colour of its own. Every coloured pixel is light from the
+   board, which reaches the page only through borders, shadows and the backdrop. */
 :root {
-  --radius: 0.6rem;
-  --bg: #07080b;
-  --panel: rgba(255, 255, 255, 0.028);
-  --panel-2: rgba(255, 255, 255, 0.05);
+  --bg: #060607;
+  --bg-raise: #0c0c0e;
+  --bg-raise-2: #141417;
+  --bg-sunk: #020203;
+  --line: rgba(255, 255, 255, 0.09);
+  --line-strong: rgba(255, 255, 255, 0.18);
+  --pill: rgba(255, 255, 255, 0.07);
+  --text: #f2f0eb;
+  --muted: #a3a09a;
+  --dim: #85827c;
+
+  --cap-top: #fbfbfc;
+  --cap-mid: #eceef2;
+  --cap-bot: #dcdfe6;
+  --cap-ink: #1d2026;
+  --cap-skirt: #9ea3ad;
+  --key-top: #232429;
+  --key-bot: #17181c;
+  --key-skirt: #08080a;
+
+  --success: #3ddc97;
+  --warn: #ffb020;
+  --danger: #ff5a4f;
+
   /* Ambient board colour: written by KeyboardPreview (no re-render). k = 0..1 strength. */
   --board-rgb: 120 130 160;
   --board-k: 0;
   --board-glow: rgb(var(--board-rgb) / calc(var(--board-k) * 0.36));
-  --line: color-mix(in srgb, rgb(var(--board-rgb)) calc(var(--board-k) * 12%), rgba(255, 255, 255, 0.075));
-  --line-strong: color-mix(in srgb, rgb(var(--board-rgb)) calc(var(--board-k) * 12%), rgba(255, 255, 255, 0.14));
-  --accent-ambient: color-mix(in srgb, rgb(var(--board-rgb)) calc(var(--board-k) * 12%), #e6e9ef);
-  --pill: color-mix(in srgb, rgb(var(--board-rgb)) calc(var(--board-k) * 14%), rgba(255, 255, 255, 0.07));
-  --text: #e9eaee;
-  --muted: #969ba6;
-  --dim: #6b7280;
-  --accent: #e6e9ef;
-  --accent-safe: #e6e9ef;
-  --success: #34d399;
-  --danger: #f87171;
-  --warn: #fbbf24;
-  /* Legacy type scale kept for any stragglers */
-  --text-h1: 1.25rem;
-  --text-h2: 0.9375rem;
-  --text-body: 0.8125rem;
-  --space-section: 1.25rem;
-  --space-card: 1rem;
-  --focus: var(--accent);
+  --lume: rgb(var(--board-rgb));
+  --lume-edge: color-mix(in srgb, rgb(var(--board-rgb)) calc(var(--board-k) * 60%), var(--line-strong));
+
+  --r-panel: 4px;
+  --r-ctl: 3px;
+  --r-cap: 5px;
+  --t-snap: 90ms;
+  --t-move: 160ms;
+  --t-bloom: 600ms;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  --font-ui: "Archivo Variable", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "Cascadia Mono", Consolas, monospace;
+
+  /* Aliases kept so components that predate the palette keep working. */
+  --accent: var(--text);
+  --accent-safe: var(--text);
+  --accent-ambient: var(--text);
+  --panel: var(--bg-raise);
+  --panel-2: var(--bg-raise-2);
   color-scheme: dark;
 }
 
-html,
-body,
-#root {
-  height: 100%;
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--bg);
+    color: var(--text);
+    font-family: var(--font-ui);
+    font-stretch: 100%;
+    font-size: 13px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* The board's ambient pool lives on its own fixed layer, so a colour change repaints
+     this one layer instead of the whole page background. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background: radial-gradient(1000px 560px at 50% 200px, rgb(var(--board-rgb) / calc(var(--board-k) * 0.16)), transparent 72%);
+    will-change: opacity;
+  }
+
+  h1 {
+    font-stretch: 125%;
+    font-size: 26px;
+    font-weight: 650;
+    line-height: 1.1;
+    letter-spacing: -0.01em;
+  }
+
+  h2 {
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
 }
 
-body {
-  margin: 0;
-  background-color: var(--bg);
-  background-image: radial-gradient(1100px 520px at 50% -12%, rgba(120, 150, 210, 0.06), transparent 70%);
-  background-attachment: fixed;
-  color: var(--text);
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  font-size: 13px;
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
+@layer components {
+  /* Edge-lit surface: opaque, hairline, and the top edge catches the board's light. */
+  .panel {
+    background: var(--bg-raise);
+    border: 1px solid var(--line);
+    border-top-color: var(--lume-edge);
+    border-radius: var(--r-panel);
+  }
+
+  /* Silkscreen legend: panel labels and nav captions. */
+  .silk {
+    font-family: var(--font-ui);
+    font-stretch: 125%;
+    font-size: 10.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--muted);
+  }
+
+  /* Values, paths, counts, times. */
+  .readout {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .display {
+    font-stretch: 125%;
+    font-weight: 650;
+    line-height: 1.1;
+    letter-spacing: -0.01em;
+  }
+
+  /* Controls are keys. Primary is a white cap that travels 2px when pressed. */
+  .keycap,
+  .keycap-dark {
+    border-radius: var(--r-cap);
+    font-weight: 600;
+    transition: transform var(--t-snap) var(--ease), box-shadow var(--t-snap) var(--ease);
+  }
+  .keycap {
+    background: linear-gradient(180deg, var(--cap-top), var(--cap-mid) 60%, var(--cap-bot));
+    color: var(--cap-ink);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 2px 0 var(--cap-skirt), 0 3px 6px rgba(0, 0, 0, 0.55);
+  }
+  .keycap:active:not(:disabled) {
+    transform: translateY(2px);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 0 0 var(--cap-skirt), 0 1px 2px rgba(0, 0, 0, 0.6);
+  }
+  .keycap-dark {
+    background: linear-gradient(180deg, var(--key-top), var(--key-bot));
+    color: var(--text);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 2px 0 var(--key-skirt), 0 3px 6px rgba(0, 0, 0, 0.5);
+  }
+  .keycap-dark:active:not(:disabled) {
+    transform: translateY(2px);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 0 0 var(--key-skirt), 0 1px 2px rgba(0, 0, 0, 0.5);
+  }
+  /* Active nav cap: white, held down 1px, underlit by the board. */
+  .keycap-dark[data-state="active"] {
+    background: linear-gradient(180deg, var(--cap-top), var(--cap-mid) 60%, var(--cap-bot));
+    color: var(--cap-ink);
+    transform: translateY(1px);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 1px 0 var(--cap-skirt),
+      0 8px 16px -6px rgb(var(--board-rgb) / calc(0.25 + var(--board-k) * 0.6));
+  }
+  .keycap-danger {
+    color: var(--danger);
+    border: 1px solid var(--danger);
+  }
+
+  /* Static dot grid behind the board only; fades into the page. */
+  .stage-dots {
+    background-image: radial-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+    background-size: 22px 22px;
+    -webkit-mask-image: radial-gradient(ellipse at center, #000 30%, transparent 75%);
+    mask-image: radial-gradient(ellipse at center, #000 30%, transparent 75%);
+  }
+
+  /* Subtle scrollbars that match the dark shell. */
+  ::-webkit-scrollbar {
+    width: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  /* Dialog system: one shape for every modal. */
+  .dialog-panel {
+    border-radius: var(--r-panel);
+    border: 1px solid var(--line-strong);
+    background: var(--bg-raise);
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.85);
+  }
 }
 
-/* The board's ambient tint lives on its own fixed layer, so a colour change repaints
-   this one layer instead of the whole page background. */
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background: radial-gradient(1000px 560px at 50% 200px, rgb(var(--board-rgb) / calc(var(--board-k) * 0.1)), transparent 72%);
-  will-change: opacity;
-}
-
-h1 { font-size: 1.1rem; font-weight: 600; line-height: 1.25; }
-h2 { font-size: 0.8125rem; font-weight: 600; letter-spacing: 0.01em; }
-
-/* Fixed product accent (violet) — board colour lives in the preview, not the chrome.
-   White core + accent halo stays legible on dark. */
+/* One focus ring everywhere. Unlayered on purpose: it must beat every utility. */
 *:focus-visible {
-  outline: 2px solid #fff;
+  outline: 2px solid var(--text);
   outline-offset: 2px;
-  box-shadow: 0 0 0 4px var(--focus, var(--accent));
 }
 
-/* Accent text helper (fixed violet). */
-.accent-text { color: var(--accent-safe); }
-
-/* Panel surfaces: one shape for every section */
-.panel {
-  border: 1px solid var(--line);
-  background: var(--panel);
-  border-radius: 18px;
-}
-
-/* Eyebrow labels */
-.eyebrow {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.16em;
-  color: var(--dim);
-  font-weight: 600;
-}
-
-/* Subtle scrollbars that match the dark shell. */
-::-webkit-scrollbar {
-  width: 10px;
-}
-::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
-  border-radius: 999px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-/* Dialog system — one shape for every modal */
-.dialog-panel {
-  border-radius: 18px;
-  border: 1px solid var(--line-strong);
-  background: #101319;
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8);
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

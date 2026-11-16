@@ -15,7 +15,7 @@ const GLOW_COLORS: ReadonlyArray<{ name: string; rgb: [number, number, number] }
   { name: "White", rgb: [255, 255, 255] },
 ];
 
-const RING_OFFSET = "ring-offset-[#10131a]";
+const RING_OFFSET = "ring-offset-[color:var(--bg-raise)]";
 
 /** Index of the preset swatch matching the live colour, or -1 for a custom colour. */
 export function activeSwatchIndex(color: readonly number[], rainbow: number): number {
@@ -36,7 +36,6 @@ export function LightingDock() {
   const activeIdx = activeSwatchIndex(underglow.color, underglow.rainbow);
   const customActive = !rainbowActive && activeIdx === -1;
   const customFill = `rgb(${underglow.color.map((c) => Math.round(c)).join(",")})`;
-  const tint = `rgb(${underglow.color.map((c) => Math.round(c)).join(",")})`;
   const moving = !["static", "off"].includes(underglowCategory(underglow.effect));
 
   function stage(patch: Parameters<typeof setLightingDraft>[0]) {
@@ -44,7 +43,7 @@ export function LightingDock() {
   }
 
   const label = "whitespace-nowrap text-[12px] text-[var(--muted)]";
-  const value = "font-semibold text-[var(--text)]";
+  const value = "readout text-[var(--text)]";
 
   return (
     <div className="@container w-full">
@@ -104,7 +103,7 @@ export function LightingDock() {
           id="lighting-brightness"
           aria-label="Brightness"
           className="w-full @[640px]:w-[104px]"
-          rangeColor={tint}
+          ticks={10}
           min={0}
           max={9}
           step={1}
@@ -121,7 +120,7 @@ export function LightingDock() {
           id="lighting-speed"
           aria-label="Speed"
           className="w-full @[640px]:w-[104px]"
-          rangeColor={tint}
+          ticks={10}
           disabled={!moving}
           min={0}
           max={9}

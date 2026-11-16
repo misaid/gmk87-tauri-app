@@ -8,7 +8,7 @@ import { OFFLINE_STATE, selectEffectiveState, useAppStore } from "@/store";
 
 const heading = "text-[10.5px] font-semibold uppercase tracking-[0.12em] text-[var(--dim)]";
 const card =
-  "rounded-[16px] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.015))] bg-[rgba(12,14,20,0.6)] p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.14),0_14px_40px_-16px_rgba(0,0,0,0.75)] backdrop-blur-xl";
+  "rounded-[var(--r-panel)] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.015))] bg-[var(--bg-raise)] p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.14),0_14px_40px_-16px_rgba(0,0,0,0.75)]";
 
 /** Left column under the board: looks and profiles as one gallery, then colour and the light bar. */
 export function LightingPanels() {

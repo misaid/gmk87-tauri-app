@@ -66,7 +66,7 @@ export function LightBarPopover({ anchor, onClose }: { anchor: RefObject<HTMLEle
       ref={ref}
       role="dialog"
       aria-label="Side light bar"
-      className="fixed z-50 flex flex-col gap-3.5 rounded-[16px] border border-white/10 bg-[rgba(14,16,22,0.88)] p-4 text-[13px] shadow-[0_18px_50px_-12px_rgba(0,0,0,0.85),inset_0_1px_0_rgba(255,255,255,0.1)] backdrop-blur-xl"
+      className="fixed z-50 flex flex-col gap-3.5 rounded-[var(--r-panel)] border border-white/10 bg-[var(--bg-raise)] p-4 text-[13px] shadow-[0_18px_50px_-12px_rgba(0,0,0,0.85),inset_0_1px_0_rgba(255,255,255,0.1)]"
       style={{ left: pos.left, top: pos.top, width: WIDTH }}
     >
       <div className="flex items-center justify-between">
@@ -110,7 +110,7 @@ export function LightBarPopover({ anchor, onClose }: { anchor: RefObject<HTMLEle
             onClick={() => stage({ ledColor: color.value, ledRainbow: 0, ...(led.mode === 1 ? { ledMode: 3 } : {}) })}
             className={
               led.color === color.value
-                ? "size-6 rounded-full ring-2 ring-white ring-offset-2 ring-offset-[#10131a]"
+                ? "size-6 rounded-full ring-2 ring-white ring-offset-2 ring-offset-[color:var(--bg-raise)]"
                 : "size-6 rounded-full ring-1 ring-white/20 transition-transform duration-150 hover:scale-110"
             }
             style={{ background: LED_COLOR_SWATCHES[color.value] }}
@@ -125,6 +125,7 @@ export function LightBarPopover({ anchor, onClose }: { anchor: RefObject<HTMLEle
           id="lighting-saturation"
           aria-label="Saturation"
           className="mt-1"
+          ticks={10}
           min={0}
           max={9}
           step={1}

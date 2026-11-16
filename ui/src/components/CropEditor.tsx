@@ -220,7 +220,7 @@ function CropEditorImpl() {
         tabIndex={0}
         role="group"
         aria-label="Display image. Arrow keys pan. Plus and minus zoom."
-        className="relative aspect-[240/135] w-full max-w-2xl cursor-grab touch-none select-none overflow-hidden rounded-lg border border-white/10 bg-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+        className="relative aspect-[240/135] w-full max-w-2xl cursor-grab touch-none select-none overflow-hidden rounded-lg border border-white/10 bg-black"
         onPointerDown={(event) => {
           drag.current = { x: event.clientX, y: event.clientY };
           live.current = useAppStore.getState().entries[useAppStore.getState().slot].crop;

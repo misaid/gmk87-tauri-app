@@ -65,7 +65,7 @@ export function ProfileMenu({ initialOpen = false }: { initialOpen?: boolean }) 
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
-        className="flex h-8 items-center gap-2 rounded-full border border-[var(--line-strong)] bg-[var(--panel-2)] pl-3 pr-2 text-[12px] text-[var(--text)] transition-colors hover:border-white/40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
+        className="flex h-8 items-center gap-2 rounded-full border border-[var(--line-strong)] bg-[var(--panel-2)] pl-3 pr-2 text-[12px] text-[var(--text)] transition-colors hover:border-white/40"
       >
         <span className="text-[var(--muted)]">Profile</span>
         <span className="font-semibold">{active?.name ?? (matchingLook(current) ? `${matchingLook(current)!.replace(/-/g, " ")} look` : "Unsaved look")}</span>
@@ -73,7 +73,7 @@ export function ProfileMenu({ initialOpen = false }: { initialOpen?: boolean }) 
         <ChevronDown className="size-3.5 text-[var(--muted)]" aria-hidden />
       </button>
       {open && (
-        <div role="menu" aria-label="Profiles" className="absolute left-0 top-full z-40 mt-2 w-[260px] rounded-[14px] border border-white/10 bg-[rgba(14,16,22,0.96)] p-2 text-[12px] shadow-[0_18px_50px_-12px_rgba(0,0,0,0.85)] backdrop-blur-xl">
+        <div role="menu" aria-label="Profiles" className="absolute left-0 top-full z-40 mt-2 w-[260px] rounded-[var(--r-panel)] border border-white/10 bg-[var(--bg-raise)] p-2 text-[12px] shadow-[0_18px_50px_-12px_rgba(0,0,0,0.85)]">
           <p className="px-2 pb-1 pt-0.5 text-[10.5px] font-semibold uppercase tracking-[0.12em] text-[var(--dim)]">Save current as…</p>
           <div className="flex items-center gap-1.5 px-1">
             <input
