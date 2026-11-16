@@ -44,7 +44,7 @@ function Pin({ n, label, x, y, tx, ty, hot, setHot, children }: { n: number; lab
         el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
         el?.focus({ preventScroll: true });
       }}
-      className={`absolute z-20 flex size-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border text-[11px] font-bold shadow-[0_2px_10px_rgba(0,0,0,0.6)] transition-transform focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white ${on ? "scale-125 border-white bg-white text-[#0b0d12]" : "border-white/70 bg-[#0b0d12]/90 text-white"}`}
+      className={`absolute z-20 flex size-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border text-[11px] font-bold shadow-[0_2px_10px_rgba(0,0,0,0.6)] transition-transform ${on ? "scale-125 border-white bg-white text-[#0b0d12]" : "border-white/70 bg-[#0b0d12]/90 text-white"}`}
       style={{ left: `${x}%`, top: `${y}%` }}
     >
       {children ?? n}
@@ -62,9 +62,9 @@ function Callout({ n, title, icon, hot, setHot, className = "", children }: { n:
       aria-labelledby={`callout-${n}`}
       onMouseEnter={() => setHot(n)}
       onMouseLeave={() => setHot(null)}
-      className={`rounded-[18px] border bg-[var(--panel)] p-4 transition-colors ${hot === n ? "border-white/50" : "border-[var(--line)]"} ${className}`}
+      className={`rounded-[var(--r-panel)] border bg-[var(--panel)] p-4 transition-colors ${hot === n ? "border-white/50" : "border-[var(--line)]"} ${className}`}
     >
-      <h2 id={`callout-${n}`} tabIndex={-1} className="mb-2.5 flex items-center gap-2 text-[13px] font-semibold tracking-[0.01em] text-[var(--text)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-white">
+      <h2 id={`callout-${n}`} tabIndex={-1} className="mb-2.5 flex items-center gap-2 text-[13px] font-semibold tracking-[0.01em] text-[var(--text)]">
         <span aria-hidden className="flex size-5 items-center justify-center rounded-full bg-white text-[11px] font-bold text-[#0b0d12]">{n}</span>
         {title}
         {icon}
@@ -161,7 +161,7 @@ export default function DeviceScreen() {
               const isConnecting = connectingPath === device.path;
               const transportLabel = device.transport === "wireless24g" ? "2.4 GHz dongle" : "Wired USB";
               return (
-                <div key={device.path} className="flex items-center gap-3 rounded-[12px] border border-[var(--line)] bg-[var(--panel-2)] p-3">
+                <div key={device.path} className="flex items-center gap-3 rounded-[var(--r-panel)] border border-[var(--line)] bg-[var(--panel-2)] p-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="truncate font-medium text-[var(--text)]">{device.label}</span>
@@ -196,9 +196,13 @@ export default function DeviceScreen() {
               size="sm"
               className="h-7 text-[11px] text-[var(--muted)]"
               onClick={async () => {
-                const text = await ipc.copyDiagnostics();
-                await navigator.clipboard.writeText(text);
-                setNotice?.("Diagnostics copied ✓");
+                try {
+                  const text = await ipc.copyDiagnostics();
+                  await navigator.clipboard.writeText(text);
+                  setNotice?.("Diagnostics copied ✓");
+                } catch {
+                  setNotice?.("Could not copy diagnostics", "error");
+                }
               }}
             >
               <Clipboard className="size-3.5" aria-hidden />

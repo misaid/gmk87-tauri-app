@@ -7,6 +7,17 @@ import { LIBRARY_DRAG_TYPE, MediaLibraryPanel } from "@/components/MediaLibraryP
 import { budgetError } from "@/lib/budget";
 import { selectTotalFrames, useAppStore } from "@/store";
 
+function frameCount(n: number): string {
+  return `${n} ${n === 1 ? "frame" : "frames"}`;
+}
+
+/** One line for a slot button: "Empty", or the name with its frame count once known. */
+function slotSummary(e: { name: string; info: { frames: number } | null }): string {
+  if (!e.name && !e.info) return "Empty";
+  const name = e.name || "image";
+  return e.info ? `${name} · ${frameCount(e.info.frames)}` : name;
+}
+
 export default function DisplayScreen() {
   const fileInput = useRef<HTMLInputElement>(null);
   const slot = useAppStore((s) => s.slot);
@@ -31,7 +42,7 @@ export default function DisplayScreen() {
   return (
     <div className="grid gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
       <section
-        className="flex flex-col gap-3 rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4"
+        className="flex flex-col gap-3 rounded-[var(--r-panel)] border border-[var(--line)] bg-[var(--panel)] p-4"
         aria-labelledby="display-crop"
         onDragOver={(ev) => {
           if (ev.dataTransfer.types.includes("Files")) ev.preventDefault();
@@ -75,7 +86,7 @@ export default function DisplayScreen() {
                   Slot {s === "slot0" ? "0" : "1"}
                 </span>
                 <span className="block truncate text-[11px] text-[var(--muted)]">
-                  {e.name || "empty"} · {e.info?.frames ?? "—"} frames
+                  {slotSummary(e)}
                 </span>
               </button>
             );
@@ -84,7 +95,7 @@ export default function DisplayScreen() {
         <CropEditor />
       </section>
 
-      <section className="flex flex-col gap-4 rounded-[18px] border border-[var(--line)] bg-[var(--panel)] p-4" aria-labelledby="display-upload">
+      <section className="flex flex-col gap-4 rounded-[var(--r-panel)] border border-[var(--line)] bg-[var(--panel)] p-4" aria-labelledby="display-upload">
         <h2 id="display-upload" className="text-[13px] font-semibold tracking-[0.01em] text-[var(--text)]">
           Send to board
         </h2>
@@ -150,7 +161,7 @@ export default function DisplayScreen() {
           </div>
           {compressed && entry.info && (
             <p className="mt-1.5 text-[11px] text-[#a5b4fc]">
-              {`${entry.info.sourceFrames} → ${entry.info.frames} frames`}
+              {`${entry.info.sourceFrames} → ${frameCount(entry.info.frames)}`}
             </p>
           )}
           {problem && <p className="mt-1.5 text-[11px] text-[#fde68a]">{problem}</p>}

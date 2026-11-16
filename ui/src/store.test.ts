@@ -31,6 +31,7 @@ vi.mock("./lib/ipc", () => ({
   copyDiagnostics: vi.fn(),
 }));
 
+import * as ipc from "./lib/ipc";
 import { DEFAULT_CROP } from "./lib/crop";
 import { dirtySlots, useAppStore, type SlotEntry } from "./store";
 
@@ -44,6 +45,7 @@ describe("store", () => {
       devices: [],
       connected: false,
       connectingPath: null,
+      userDisconnected: false,
       activeTab: "device",
       error: null,
       slot: "slot0",
@@ -416,9 +418,74 @@ describe("store", () => {
     expect(useAppStore.getState().activeTab).toBe("device");
   });
 
-  it("auto-connects only when exactly one device is found", async () => {
-    await useAppStore.getState().autoConnect();
-    expect(useAppStore.getState().connected).toBe(true);
+  describe("auto-connect", () => {
+    const wired = { path: "/dev/hidraw4", label: "GMK87 (wired)", transport: "wired", productId: 0x5055, hasVia: true };
+    const dongle = { path: "/dev/hidraw10", label: "GMK87 (2.4 GHz)", transport: "wireless24g", productId: 0x5088, hasVia: false };
+    const listDevices = vi.mocked(ipc.listDevices);
+    const connect = vi.mocked(ipc.connect);
+
+    beforeEach(() => {
+      connect.mockClear();
+    });
+
+    it("connects to the only device", async () => {
+      listDevices.mockResolvedValueOnce([wired] as never);
+      await useAppStore.getState().autoConnect();
+      expect(connect).toHaveBeenCalledWith("/dev/hidraw4");
+      expect(useAppStore.getState().connected).toBe(true);
+    });
+
+    it("prefers the wired board when several are found", async () => {
+      listDevices.mockResolvedValueOnce([dongle, wired] as never);
+      await useAppStore.getState().autoConnect();
+      expect(connect).toHaveBeenCalledWith("/dev/hidraw4");
+    });
+
+    it("connects to the dongle when it is the only device", async () => {
+      listDevices.mockResolvedValueOnce([dongle] as never);
+      await useAppStore.getState().autoConnect();
+      expect(connect).toHaveBeenCalledWith("/dev/hidraw10");
+    });
+
+    it("stays disconnected after the user disconnects, until the list empties", async () => {
+      listDevices.mockResolvedValue([wired] as never);
+      await useAppStore.getState().autoConnect();
+      await useAppStore.getState().disconnectDevice();
+      expect(useAppStore.getState().userDisconnected).toBe(true);
+      connect.mockClear();
+      await useAppStore.getState().autoConnect();
+      expect(connect).not.toHaveBeenCalled();
+      listDevices.mockResolvedValueOnce([]);
+      await useAppStore.getState().autoConnect();
+      expect(useAppStore.getState().userDisconnected).toBe(false);
+      await useAppStore.getState().autoConnect();
+      expect(connect).toHaveBeenCalledWith("/dev/hidraw4");
+    });
+
+    it("a manual connect clears userDisconnected", async () => {
+      useAppStore.setState({ userDisconnected: true });
+      await useAppStore.getState().connectTo("/dev/hidraw4");
+      expect(useAppStore.getState().userDisconnected).toBe(false);
+    });
+
+    it("does not retry a path that failed to open, and reports a failing scan once", async () => {
+      listDevices.mockResolvedValue([wired] as never);
+      connect.mockRejectedValueOnce({ kind: "hid", message: "open failed" });
+      await useAppStore.getState().autoConnect();
+      expect(useAppStore.getState().error).toBe("open failed");
+      connect.mockClear();
+      await useAppStore.getState().autoConnect();
+      expect(connect).not.toHaveBeenCalled();
+
+      listDevices.mockRejectedValue("scan failed");
+      await useAppStore.getState().refreshDevices();
+      useAppStore.getState().dismissError();
+      await useAppStore.getState().refreshDevices();
+      expect(useAppStore.getState().error).toBeNull();
+      listDevices.mockResolvedValueOnce([]);
+      await useAppStore.getState().refreshDevices();
+      listDevices.mockResolvedValue([wired] as never);
+    });
   });
 
   describe("trust layer", () => {

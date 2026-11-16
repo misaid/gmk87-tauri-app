@@ -57,10 +57,19 @@ export default function App() {
 
   useLiveApply();
 
-  // Pairing first: scan on launch and connect straight away when exactly one board is found.
+  // Pairing first: scan on launch and connect without a click. While there is no link the
+  // scan repeats, so a board plugged in later is picked up too.
   useEffect(() => {
     void autoConnect();
   }, [autoConnect]);
+
+  useEffect(() => {
+    if (connected || connectingPath !== null) return;
+    const id = window.setInterval(() => {
+      if (!document.hidden) void autoConnect();
+    }, 1500);
+    return () => window.clearInterval(id);
+  }, [connected, connectingPath, autoConnect]);
 
   // Both display slots come back with the last image and crop that were written to them.
   useEffect(() => {
@@ -107,7 +116,7 @@ export default function App() {
   const Screen = SCREENS[tab];
 
   const chipBtn =
-    "inline-flex h-6 items-center rounded-full border border-[var(--line-strong)] px-2.5 text-[12px] text-[var(--text)] transition-colors hover:border-white/40 hover:bg-white/[0.06] focus-visible:outline focus-visible:outline-2 focus-visible:outline-white";
+    "inline-flex h-6 items-center rounded-full border border-[var(--line-strong)] px-2.5 text-[12px] text-[var(--text)] transition-colors hover:border-white/40 hover:bg-white/[0.06]";
   /** Switch to Lighting if needed, then scroll to and focus the matching control. */
   function jumpTo(selector: string) {
     const go = () => {
@@ -157,7 +166,7 @@ export default function App() {
   return (
     <MotionConfig reducedMotion="user">
       <div className="flex min-h-full flex-col">
-        <header className="sticky top-0 z-40 border-b border-[var(--line)] bg-[color-mix(in_srgb,var(--bg)_85%,transparent)] backdrop-blur-[8px]">
+        <header className="sticky top-0 z-40 border-b border-[var(--line)] bg-[var(--bg)]">
           <div className="grid h-14 grid-cols-[1fr_auto_1fr] items-center gap-3 px-4">
             <div className="flex items-center gap-2.5 leading-tight">
               <span className="relative flex size-2">
@@ -170,7 +179,7 @@ export default function App() {
               </span>
             </div>
             <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
-              <TabsList className="rounded-full border border-[var(--line)] bg-[var(--panel)] p-1">
+              <TabsList>
                 {NAV_ITEMS.map((item) => {
                   const locked = !connected && item.value !== "device";
                   return (
@@ -178,7 +187,6 @@ export default function App() {
                   <TabsTrigger
                     value={item.value}
                     disabled={locked}
-                    className="rounded-full px-3.5 py-1 text-[13px] font-medium text-[var(--muted)] transition-colors duration-150 hover:text-[var(--text)] data-[state=active]:bg-[var(--pill)] data-[state=active]:text-[var(--text)] disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     {item.label}
                   </TabsTrigger>
@@ -222,7 +230,7 @@ export default function App() {
             <div className="relative mx-auto grid w-full max-w-[1560px] gap-4 px-6 pb-5 pt-5 min-[1200px]:grid-cols-[minmax(0,1fr)_480px] min-[1200px]:items-start min-[1200px]:gap-6">
               <section aria-label="Keyboard preview" className="flex min-w-0 flex-col gap-3 min-[1200px]:sticky min-[1200px]:top-[76px] min-[1200px]:min-h-[calc(100vh-92px)] min-[1200px]:justify-center">
                 <KeyboardPreview className="w-full" hero />
-                <div className="relative z-20 mx-auto w-full rounded-[14px] border border-white/10 bg-[rgba(12,14,20,0.6)] px-4 py-2.5 backdrop-blur-xl" style={{ maxWidth: heroBoardWidth() }}>
+                <div className="relative z-20 mx-auto w-full rounded-[var(--r-panel)] border border-white/10 bg-[var(--bg-raise)] px-4 py-2.5" style={{ maxWidth: heroBoardWidth() }}>
                   <SyncBar />
                 </div>
                 <p className="mx-auto hidden text-center text-[12px] text-[var(--muted)] min-[1200px]:block" style={{ maxWidth: heroBoardWidth() }}>

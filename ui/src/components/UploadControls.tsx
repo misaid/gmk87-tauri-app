@@ -109,7 +109,7 @@ export function UploadControls() {
                 const dropped = e.info?.dropped?.length ?? 0;
                 return (
                   <li key={s}>
-                    <span className="text-[var(--text)]">Slot {num(s)}:</span> {e.name || "image"} · {e.info?.frames ?? "—"} frames
+                    <span className="text-[var(--text)]">Slot {num(s)}:</span> {e.name || "image"}{e.info ? ` · ${e.info.frames} ${e.info.frames === 1 ? "frame" : "frames"}` : ""}
                     {dropped > 0 && e.info && (
                       <span className="text-[#c4b5fd]"> (from {e.info.sourceFrames})</span>
                     )}

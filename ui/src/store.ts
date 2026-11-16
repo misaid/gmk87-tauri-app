@@ -185,6 +185,8 @@ interface AppStore {
   state: ipc.DeviceState | null;
   connected: boolean;
   connectingPath: string | null;
+  /** The user chose Disconnect: no automatic reconnect until they connect again or unplug. */
+  userDisconnected: boolean;
   activeTab: Tab;
   setActiveTab: (tab: Tab) => void;
   error: string | null;
@@ -243,7 +245,7 @@ interface AppStore {
 
   refreshDevices: () => Promise<void>;
   connectTo: (path: string) => Promise<void>;
-  /** Launch helper: scan, and connect straight away when exactly one keyboard is found. */
+  /** Scan, and connect without a click: the wired board when present, otherwise the only device. */
   autoConnect: () => Promise<void>;
   disconnectDevice: () => Promise<void>;
   setCrop: (crop: CropParams) => void;
@@ -288,6 +290,11 @@ interface AppStore {
   setAnimationsPaused: (v: boolean) => void;
   setShowWriteConfirm: (v: boolean) => void;
 }
+
+/** Last scan failure shown, so a failing scan loop reports once instead of on every tick. */
+let lastScanError: string | null = null;
+/** A path an automatic connect already failed on; not retried until it leaves the device list. */
+let autoFailedPath: string | null = null;
 
 function kindOf(error: unknown): string | null {
   if (error && typeof error === "object" && "kind" in error) {
@@ -431,11 +438,28 @@ export const useAppStore = create<AppStore>((set, get) => {
     }
   }
 
+  async function openDevice(path: string, automatic: boolean) {
+    set({ connectingPath: path });
+    try {
+      const state = await ipc.connect(path);
+      const queued = get().draft;
+      set({ state, connected: state.connected, error: null, errorKind: null, draft: queued, draftDirty: queued != null ? JSON.stringify(patchFromState(queued)) !== JSON.stringify(patchFromState(state)) : false });
+      if (queued == null) clearKey(LS_DRAFT);
+      await get().refreshPreview();
+    } catch (error) {
+      if (automatic) autoFailedPath = path;
+      set({ error: message(error), errorKind: kindOf(error) });
+    } finally {
+      set({ connectingPath: null });
+    }
+  }
+
   return {
     devices: [],
     state: null,
     connected: false,
     connectingPath: null,
+    userDisconnected: false,
     activeTab: "device",
     // Pairing comes first: nothing but the Device screen opens until connected.
     setActiveTab: (activeTab) => {
@@ -551,39 +575,38 @@ export const useAppStore = create<AppStore>((set, get) => {
 
     refreshDevices: async () => {
       try {
-        set({ devices: await ipc.listDevices() });
+        const devices = await ipc.listDevices();
+        lastScanError = null;
+        if (devices.length === 0) set({ devices, userDisconnected: false });
+        else set({ devices });
+        if (autoFailedPath && !devices.some((d) => d.path === autoFailedPath)) autoFailedPath = null;
       } catch (error) {
-        set({ error: message(error), errorKind: kindOf(error) });
+        const text = message(error);
+        if (text === lastScanError) return;
+        lastScanError = text;
+        set({ error: text, errorKind: kindOf(error) });
       }
     },
 
     autoConnect: async () => {
       await get().refreshDevices();
-      const { devices, connected, connectingPath } = get();
-      if (devices.length === 1 && !connected && connectingPath === null) {
-        await get().connectTo(devices[0].path);
-      }
+      const { devices, connected, connectingPath, userDisconnected } = get();
+      if (connected || connectingPath !== null || userDisconnected || devices.length === 0) return;
+      const target = devices.find((d) => d.transport === "wired") ?? devices[0];
+      if (target.path === autoFailedPath) return;
+      await openDevice(target.path, true);
     },
 
     connectTo: async (path) => {
-      set({ connectingPath: path });
-      try {
-        const state = await ipc.connect(path);
-        const queued = get().draft;
-        set({ state, connected: state.connected, error: null, errorKind: null, draft: queued, draftDirty: queued != null ? JSON.stringify(patchFromState(queued)) !== JSON.stringify(patchFromState(state)) : false });
-        if (queued == null) clearKey(LS_DRAFT);
-        await get().refreshPreview();
-      } catch (error) {
-        set({ error: message(error), errorKind: kindOf(error) });
-      } finally {
-        set({ connectingPath: null });
-      }
+      autoFailedPath = null;
+      set({ userDisconnected: false });
+      await openDevice(path, false);
     },
 
     disconnectDevice: async () => {
       await ipc.disconnect();
       // Keep any staged draft — disconnect is not discard.
-      set({ state: null, connected: false, activeTab: "device" });
+      set({ state: null, connected: false, activeTab: "device", userDisconnected: true });
     },
 
     setCrop: (crop) => {
@@ -791,8 +814,8 @@ export const useAppStore = create<AppStore>((set, get) => {
         state: null,
         draft: null,
         draftDirty: false,
-        error: "Keyboard disconnected.",
-        errorKind: null,
+        error: "Keyboard disconnected. Plug it back in and the app reconnects on its own.",
+        errorKind: "device_gone",
       }),
 
     applyLighting: async (patch) => {
