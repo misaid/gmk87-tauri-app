@@ -187,10 +187,16 @@ interface AppStore {
   connectingPath: string | null;
   /** Path of the open device, so the header can say wired or 2.4 GHz. */
   connectedPath: string | null;
+  /** Transport of the open device, captured at connect time (the scan list can change later). */
+  connectedTransport: ipc.DeviceInfo["transport"] | null;
+  /** When the last device scan finished (ms since epoch); the Device screen shows it. */
+  lastScanAt: number | null;
   /** Path whose last connect attempt failed; the Device screen shows the error on that row. */
   connectErrorPath: string | null;
   /** The user chose Disconnect: no automatic reconnect until they connect again or unplug. */
   userDisconnected: boolean;
+  /** Path that was open when the user pressed Disconnect; auto-connect resumes once it leaves the scan. */
+  userDisconnectedPath: string | null;
   activeTab: Tab;
   setActiveTab: (tab: Tab) => void;
   error: string | null;
@@ -447,7 +453,8 @@ export const useAppStore = create<AppStore>((set, get) => {
     try {
       const state = await ipc.connect(path);
       const queued = get().draft;
-      set({ state, connected: state.connected, connectedPath: state.connected ? path : null, connectErrorPath: null, error: null, errorKind: null, draft: queued, draftDirty: queued != null ? JSON.stringify(patchFromState(queued)) !== JSON.stringify(patchFromState(state)) : false });
+      const transport = get().devices.find((d) => d.path === path)?.transport ?? null;
+      set({ state, connected: state.connected, connectedPath: state.connected ? path : null, connectedTransport: state.connected ? transport : null, connectErrorPath: null, error: null, errorKind: null, draft: queued, draftDirty: queued != null ? JSON.stringify(patchFromState(queued)) !== JSON.stringify(patchFromState(state)) : false });
       if (queued == null) clearKey(LS_DRAFT);
       await get().refreshPreview();
     } catch (error) {
@@ -464,8 +471,11 @@ export const useAppStore = create<AppStore>((set, get) => {
     connected: false,
     connectingPath: null,
     connectedPath: null,
+    connectedTransport: null,
+    lastScanAt: null,
     connectErrorPath: null,
     userDisconnected: false,
+    userDisconnectedPath: null,
     activeTab: "device",
     // Pairing comes first: nothing but the Device screen opens until connected.
     setActiveTab: (activeTab) => {
@@ -583,8 +593,10 @@ export const useAppStore = create<AppStore>((set, get) => {
       try {
         const devices = await ipc.listDevices();
         lastScanError = null;
-        if (devices.length === 0) set({ devices, userDisconnected: false });
-        else set({ devices });
+        const { userDisconnected, userDisconnectedPath } = get();
+        // Unplugging the device the user disconnected from re-arms auto-connect.
+        const unplugged = userDisconnected && (userDisconnectedPath ? !devices.some((d) => d.path === userDisconnectedPath) : devices.length === 0);
+        set(unplugged ? { devices, lastScanAt: Date.now(), userDisconnected: false, userDisconnectedPath: null } : { devices, lastScanAt: Date.now() });
         if (autoFailedPath && !devices.some((d) => d.path === autoFailedPath)) autoFailedPath = null;
       } catch (error) {
         const text = message(error);
@@ -598,21 +610,29 @@ export const useAppStore = create<AppStore>((set, get) => {
       await get().refreshDevices();
       const { devices, connected, connectingPath, userDisconnected } = get();
       if (connected || connectingPath !== null || userDisconnected || devices.length === 0) return;
-      const target = devices.find((d) => d.transport === "wired") ?? devices[0];
-      if (target.path === autoFailedPath) return;
+      // Only a cable connects by itself. The dongle answers nothing until the board is switched
+      // to 2.4 GHz, so it waits for a click instead of powering on a board that may be off.
+      const target = devices.find((d) => d.transport === "wired");
+      if (!target || target.path === autoFailedPath) return;
       await openDevice(target.path, true);
     },
 
     connectTo: async (path) => {
       autoFailedPath = null;
-      set({ userDisconnected: false });
+      set({ userDisconnected: false, userDisconnectedPath: null });
       await openDevice(path, false);
     },
 
     disconnectDevice: async () => {
-      await ipc.disconnect();
-      // Keep any staged draft — disconnect is not discard.
-      set({ state: null, connected: false, connectedPath: null, activeTab: "device", userDisconnected: true });
+      const path = get().connectedPath;
+      let failure: { error: string; errorKind: string | null } | null = null;
+      try {
+        await ipc.disconnect();
+      } catch (error) {
+        failure = { error: message(error), errorKind: kindOf(error) };
+      }
+      // Keep any staged draft — disconnect is not discard. The local link state clears either way.
+      set({ state: null, connected: false, connectedPath: null, connectedTransport: null, activeTab: "device", userDisconnected: true, userDisconnectedPath: path, ...(failure ?? {}) });
     },
 
     setCrop: (crop) => {
@@ -816,12 +836,13 @@ export const useAppStore = create<AppStore>((set, get) => {
       set({
         connected: false,
         connectedPath: null,
+        connectedTransport: null,
         activeTab: "device",
         connectingPath: null,
         state: null,
         draft: null,
         draftDirty: false,
-        error: "Keyboard disconnected. Plug it back in and the app reconnects on its own.",
+        error: "Keyboard unplugged. Plug it back in and it reconnects by itself.",
         errorKind: "device_gone",
       }),
 

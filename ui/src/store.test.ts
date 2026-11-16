@@ -441,10 +441,49 @@ describe("store", () => {
       expect(connect).toHaveBeenCalledWith("/dev/hidraw4");
     });
 
-    it("connects to the dongle when it is the only device", async () => {
+    it("never auto-connects to the dongle alone; a manual connect works and remembers the transport", async () => {
       listDevices.mockResolvedValueOnce([dongle] as never);
       await useAppStore.getState().autoConnect();
-      expect(connect).toHaveBeenCalledWith("/dev/hidraw10");
+      expect(connect).not.toHaveBeenCalled();
+      expect(useAppStore.getState().connected).toBe(false);
+      await useAppStore.getState().connectTo("/dev/hidraw10");
+      expect(useAppStore.getState().connectedTransport).toBe("wireless24g");
+      // The scan list changing afterwards does not change what the header reports.
+      useAppStore.setState({ devices: [] });
+      expect(useAppStore.getState().connectedTransport).toBe("wireless24g");
+    });
+
+    it("resumes auto-connect once the disconnected device is unplugged, even with the dongle present", async () => {
+      listDevices.mockResolvedValue([wired, dongle] as never);
+      await useAppStore.getState().autoConnect();
+      expect(useAppStore.getState().connectedTransport).toBe("wired");
+      await useAppStore.getState().disconnectDevice();
+      connect.mockClear();
+      await useAppStore.getState().autoConnect();
+      expect(connect).not.toHaveBeenCalled();
+      listDevices.mockResolvedValueOnce([dongle] as never);
+      await useAppStore.getState().autoConnect();
+      expect(useAppStore.getState().userDisconnected).toBe(false);
+      expect(connect).not.toHaveBeenCalled();
+      await useAppStore.getState().autoConnect();
+      expect(connect).toHaveBeenCalledWith("/dev/hidraw4");
+    });
+
+    it("records when the last scan finished", async () => {
+      listDevices.mockResolvedValueOnce([] as never);
+      await useAppStore.getState().refreshDevices();
+      expect(useAppStore.getState().lastScanAt).toBeGreaterThan(0);
+    });
+
+    it("a failing disconnect still clears the local link and reports the error", async () => {
+      listDevices.mockResolvedValue([wired] as never);
+      await useAppStore.getState().autoConnect();
+      vi.mocked(ipc.disconnect).mockRejectedValueOnce({ kind: "hid", message: "close failed" });
+      await useAppStore.getState().disconnectDevice();
+      const s = useAppStore.getState();
+      expect(s.connected).toBe(false);
+      expect(s.error).toBe("close failed");
+      expect(s.errorKind).toBe("hid");
     });
 
     it("stays disconnected after the user disconnects, until the list empties", async () => {
