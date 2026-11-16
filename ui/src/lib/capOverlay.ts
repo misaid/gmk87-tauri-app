@@ -38,13 +38,13 @@ export class CapOverlay {
   }
 
   /** Repaints; skips work when no cap's quantised state changed. */
-  draw(frame: Float32Array): void {
+  draw(frame: Float32Array, powers?: Float32Array): void {
     const ctx = this.ctx;
     let dirty = this.last.length !== this.rects.length;
     const sig: string[] = dirty ? new Array(this.rects.length) : this.last;
     for (let k = 0; k < this.rects.length; k++) {
       const o = k * FRAME_STRIDE;
-      const s = `${frame[o]},${frame[o + 1]},${frame[o + 2]},${Math.round(frame[o + 3] * 60)}`;
+      const s = `${frame[o]},${frame[o + 1]},${frame[o + 2]},${Math.round(frame[o + 3] * 60)},${powers ? Math.round(powers[k] * 20) : 20}`;
       if (sig[k] !== s) {
         sig[k] = s;
         dirty = true;
@@ -71,7 +71,8 @@ export class CapOverlay {
         ctx.fill(this.paths[k]);
       }
       // filter: brightness(0.9 + 0.1 * i) multiplies the cap by b; black at (1 - b) does the same.
-      const darken = 1 - (0.9 + 0.1 * i);
+      // Unlit caps sit a touch darker only where the board has power; a dark board keeps white caps.
+      const darken = (1 - (0.9 + 0.1 * i)) * (powers ? powers[k] : 1);
       if (darken > 0.001) {
         ctx.fillStyle = `rgba(0,0,0,${darken.toFixed(3)})`;
         ctx.fill(this.paths[k]);
