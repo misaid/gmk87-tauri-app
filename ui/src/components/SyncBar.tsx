@@ -8,7 +8,7 @@ const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigat
 const MOD = isMac ? "⌘" : "Ctrl";
 
 function Kbd({ children }: { children: string }) {
-  return <kbd className="ml-1 rounded border border-white/15 bg-white/[0.06] px-1 font-mono text-[10px] leading-4 text-[var(--muted)]">{children}</kbd>;
+  return <kbd className="readout ml-1 rounded-[var(--r-ctl)] border border-[var(--cap-skirt)]/60 px-1 text-[10px] leading-4 text-[var(--cap-ink)]/70">{children}</kbd>;
 }
 
 /** Persistent trust layer: where the board stands relative to what you see. */
@@ -65,26 +65,26 @@ export function SyncBar() {
           ? { icon: <Loader2 className="size-3.5 animate-spin" aria-hidden />, tone: "text-[var(--text)]", label: "Applying…", sub: "" }
           : status === "offline"
             ? { icon: <CloudOff className="size-3.5" aria-hidden />, tone: "text-[var(--warn)]", label: "Not connected", sub: draftDirty ? "Queued" : "" }
-            : { icon: <TriangleAlert className="size-3.5" aria-hidden />, tone: "text-[#ff6b6b]", label: "Couldn’t apply", sub: "Draft kept" };
+            : { icon: <TriangleAlert className="size-3.5" aria-hidden />, tone: "text-[var(--danger)]", label: "Couldn’t apply", sub: "Draft kept" };
 
   const btn =
-    "inline-flex h-8 items-center rounded-full px-3 text-[12px] font-medium transition-colors disabled:pointer-events-none disabled:opacity-35";
-  const icon = "inline-flex size-8 items-center justify-center rounded-full text-[var(--muted)] transition-colors hover:bg-white/[0.07] hover:text-[var(--text)] disabled:pointer-events-none disabled:opacity-30";
+    "inline-flex h-8 items-center rounded-[var(--r-ctl)] px-3 text-[12px] font-medium transition-colors disabled:pointer-events-none disabled:opacity-35";
+  const icon = "inline-flex size-8 items-center justify-center rounded-[var(--r-ctl)] text-[var(--muted)] transition-colors hover:bg-[var(--bg-raise-2)] hover:text-[var(--text)] disabled:pointer-events-none disabled:opacity-30";
 
   return (
-    <div role="group" aria-label="Sync status" className="flex flex-wrap items-center gap-x-3 gap-y-2">
+    <div role="group" aria-label="Sync status" className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-x-3 gap-y-1">
       <div className="group relative flex min-w-0 items-center gap-2" tabIndex={changes.length ? 0 : undefined}>
-        <span role="status" aria-live="polite" className={`inline-flex items-center gap-1.5 text-[12.5px] font-semibold ${pill.tone}`}>
+        <span role="status" aria-live="polite" className={`readout inline-flex items-center gap-1.5 text-[12px] uppercase tracking-[0.06em] ${pill.tone}`}>
           {pill.icon}
           {pill.label}
         </span>
-        <span className="truncate text-[12px] text-[var(--muted)]">
+        <span className="readout truncate text-[11px] text-[var(--dim)]">
           {status === "draft" && changes.length > 0 ? `${changes.slice(0, 2).join(" · ")}${changes.length > 2 ? ` · +${changes.length - 2} more` : ""}` : pill.sub}
         </span>
         {changes.length > 0 && (
           <div
             role="tooltip"
-            className="pointer-events-none invisible absolute left-0 top-full z-30 mt-2 w-[300px] rounded-[var(--r-panel)] border border-white/10 bg-[var(--bg-raise)] p-3 text-[12px] opacity-0 shadow-[0_18px_50px_-12px_rgba(0,0,0,0.85)] transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
+            className="panel pointer-events-none invisible absolute left-0 top-full z-30 mt-2 w-[300px] p-3 text-[12px] opacity-0 shadow-[0_18px_50px_-12px_rgba(0,0,0,0.85)] transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
           >
             <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.1em] text-[var(--muted)]">
               {changes.length} change{changes.length > 1 ? "s" : ""} to apply
@@ -112,7 +112,7 @@ export function SyncBar() {
             <Ellipsis className="size-4" aria-hidden />
           </button>
           {menuOpen && (
-            <div className="absolute right-0 top-full z-40 mt-2 w-[250px] rounded-[var(--r-panel)] border border-white/10 bg-[var(--bg-raise)] p-3 text-[12px] shadow-[0_18px_50px_-12px_rgba(0,0,0,0.85)]">
+            <div className="panel absolute right-0 top-full z-40 mt-2 w-[250px] p-3 text-[12px] shadow-[0_18px_50px_-12px_rgba(0,0,0,0.85)]">
               <label className="flex cursor-pointer items-start gap-2 text-[var(--text)]">
                 <input type="checkbox" className="mt-0.5 accent-[var(--accent)]" checked={!autoApply} onChange={(e) => setAutoApply(!e.target.checked)} />
                 <span>
@@ -131,7 +131,7 @@ export function SyncBar() {
                       role="radio"
                       aria-checked={previewMode === m}
                       onClick={() => setLightingMode(m)}
-                      className={`h-7 rounded-md text-[11px] font-medium transition-colors ${previewMode === m ? "bg-white text-[#0b0d12]" : "bg-white/[0.06] text-[var(--muted)] hover:bg-white/[0.1] hover:text-[var(--text)]"}`}
+                      className={`keycap-dark h-7 text-[11px] ${previewMode === m ? "text-[var(--cap-ink)]" : "text-[var(--muted)]"}`}
                     >
                       {LIGHTING_MODE_LABEL[m]}
                     </button>
@@ -147,13 +147,13 @@ export function SyncBar() {
         <button type="button" className={icon} aria-label="Redo" title={`Redo (${MOD}+Shift+Z)`} disabled={!canRedo || applying} onClick={() => void redo()}>
           <Redo2 className="size-4" aria-hidden />
         </button>
-        <button type="button" className={`${btn} text-[var(--muted)] hover:bg-white/[0.07] hover:text-[var(--text)]`} disabled={!draftDirty || applying} onClick={discardDraft}>
+        <button type="button" className={`${btn} text-[var(--muted)] hover:bg-[var(--bg-raise-2)] hover:text-[var(--text)]`} disabled={!draftDirty || applying} onClick={discardDraft}>
           Revert
         </button>
         {!autoApply && (
         <button
           type="button"
-          className={`${btn} bg-white text-[#0b0d12] shadow-[0_0_18px_-6px_rgba(255,255,255,0.7)] hover:bg-white/90`}
+          className={`${btn} keycap`}
           disabled={!draftDirty || !connected || applying}
           onClick={() => void commitDraft()}
         >

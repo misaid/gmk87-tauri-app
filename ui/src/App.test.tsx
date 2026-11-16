@@ -84,6 +84,19 @@ describe("App shell", () => {
     expect(screen.getByRole("row", { name: /3\s*Display/ })).toBeInTheDocument();
   });
 
+  it("shows the screen title as the rail h1 and runs the write pulse once per write", () => {
+    render(<App />);
+    plugIn();
+    expect(screen.getByRole("heading", { level: 1, name: "Device" })).toBeInTheDocument();
+    expect(document.querySelector(".rail-pulse")).toBeNull();
+    act(() => useAppStore.setState({ lastSyncedAt: Date.now() }));
+    const first = document.querySelector(".rail-pulse");
+    expect(first).not.toBeNull();
+    act(() => useAppStore.setState({ lastSyncedAt: Date.now() + 5 }));
+    expect(document.querySelector(".rail-pulse")).not.toBe(first);
+    expect(document.querySelectorAll(".rail-pulse")).toHaveLength(1);
+  });
+
   it("keeps one board canvas across every tab", () => {
     render(<App />);
     plugIn();

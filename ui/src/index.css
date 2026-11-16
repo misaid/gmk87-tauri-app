@@ -32,7 +32,7 @@
   --board-k: 0;
   --board-glow: rgb(var(--board-rgb) / calc(var(--board-k) * 0.36));
   --lume: rgb(var(--board-rgb));
-  --lume-edge: color-mix(in srgb, rgb(var(--board-rgb)) calc(var(--board-k) * 60%), var(--line-strong));
+  --lume-edge: color-mix(in srgb, rgb(var(--board-rgb)) calc(var(--board-k) * 85%), var(--line-strong));
 
   --r-panel: 4px;
   --r-ctl: 3px;
@@ -78,9 +78,9 @@
     content: "";
     position: fixed;
     inset: 0;
-    z-index: -1;
+    z-index: 0;
     pointer-events: none;
-    background: radial-gradient(1000px 560px at 50% 200px, rgb(var(--board-rgb) / calc(var(--board-k) * 0.16)), transparent 72%);
+    background: radial-gradient(1100px 620px at 50% 240px, rgb(var(--board-rgb) / calc(var(--board-k) * 0.3)), transparent 72%);
     will-change: opacity;
   }
 
@@ -113,6 +113,7 @@
     border: 1px solid var(--line);
     border-top-color: var(--lume-edge);
     border-radius: var(--r-panel);
+    box-shadow: inset 0 1px 0 var(--lume-edge), inset 0 26px 32px -28px rgb(var(--board-rgb) / calc(var(--board-k) * 0.5));
   }
 
   /* Silkscreen legend: panel labels and nav captions. */
@@ -172,7 +173,16 @@
     color: var(--cap-ink);
     transform: translateY(1px);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 1px 0 var(--cap-skirt),
-      0 8px 16px -6px rgb(var(--board-rgb) / calc(0.25 + var(--board-k) * 0.6));
+      0 10px 20px -6px rgb(var(--board-rgb) / calc(0.3 + var(--board-k) * 0.7));
+  }
+  /* A selected category cap reads the same way, without the underglow. */
+  .keycap-dark[aria-selected="true"],
+  .keycap-dark[aria-checked="true"],
+  .keycap-dark[aria-pressed="true"] {
+    background: linear-gradient(180deg, var(--cap-top), var(--cap-mid) 60%, var(--cap-bot));
+    color: var(--cap-ink);
+    transform: translateY(1px);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 1px 0 var(--cap-skirt);
   }
   .keycap-danger {
     color: var(--danger);
@@ -181,10 +191,128 @@
 
   /* Static dot grid behind the board only; fades into the page. */
   .stage-dots {
-    background-image: radial-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px);
-    background-size: 22px 22px;
-    -webkit-mask-image: radial-gradient(ellipse at center, #000 30%, transparent 75%);
-    mask-image: radial-gradient(ellipse at center, #000 30%, transparent 75%);
+    z-index: -1;
+    background-image:
+      linear-gradient(to bottom, transparent 55%, var(--bg)),
+      linear-gradient(to right, var(--bg), transparent 18%, transparent 82%, var(--bg)),
+      radial-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+    background-size: 100% 100%, 100% 100%, 22px 22px;
+  }
+
+  /* The board's light pooling on the desk just under the case. Behind every panel. */
+  .stage-floor {
+    pointer-events: none;
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    height: 180px;
+    margin-top: -24px;
+    background: radial-gradient(60% 100% at 50% 0%, rgb(var(--board-rgb) / calc(var(--board-k) * 0.35)), transparent 70%);
+  }
+
+  /* The rail under the board: hairline, title, readouts. The write pulse runs along its top edge. */
+  .rail {
+    position: relative;
+    border-top: 1px solid var(--line-strong);
+    container-type: inline-size;
+  }
+  .rail-pulse-track {
+    pointer-events: none;
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -1px;
+    height: 1px;
+    overflow: hidden;
+  }
+  .rail-pulse {
+    display: block;
+    width: 120px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--lume), transparent);
+    animation: rail-pulse 600ms var(--ease) both;
+  }
+
+  /* Tiles: effects, looks and profiles share one shape. A key in a tray, lit when selected. */
+  .tile {
+    position: relative;
+    border: 1px solid var(--line);
+    border-radius: var(--r-panel);
+    background: var(--bg-raise-2);
+    transition: transform var(--t-snap) var(--ease), border-color var(--t-move) var(--ease), box-shadow var(--t-move) var(--ease);
+  }
+  .tile:hover {
+    border-color: var(--line-strong);
+  }
+  .tile:active {
+    transform: translateY(2px);
+  }
+  .tile[aria-checked="true"],
+  .tile[aria-pressed="true"],
+  .tile[data-active="true"] {
+    border-color: var(--text);
+    transform: translateY(1px);
+    box-shadow: 0 10px 18px -10px rgb(var(--board-rgb) / calc(0.25 + var(--board-k) * 0.6));
+  }
+  .tile[aria-checked="true"]:active,
+  .tile[aria-pressed="true"]:active,
+  .tile[data-active="true"]:active {
+    transform: translateY(2px);
+  }
+  .tile-well {
+    position: relative;
+    border-radius: var(--r-ctl);
+    background: var(--bg-sunk);
+    padding: 4px;
+  }
+  .tile-led {
+    position: absolute;
+    top: 7px;
+    right: 7px;
+    width: 5px;
+    height: 5px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.12);
+    pointer-events: none;
+  }
+  .tile[aria-checked="true"] .tile-led,
+  .tile[aria-pressed="true"] .tile-led,
+  .tile[data-active="true"] .tile-led {
+    background: var(--lume);
+    box-shadow: 0 0 8px var(--lume);
+  }
+
+  /* Colour swatches stay round: they are LEDs. Selected: a ring in the text colour, a 2px gap, and the LED's own glow. */
+  .swatch {
+    width: 26px;
+    height: 26px;
+    border-radius: 999px;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2);
+    transition: transform var(--t-snap) var(--ease), box-shadow var(--t-move) var(--ease);
+  }
+  button.swatch:hover:not(:disabled) {
+    transform: scale(1.1);
+  }
+  .swatch-on {
+    box-shadow: 0 0 0 2px var(--bg-raise), 0 0 0 4px var(--text), 0 0 14px -2px var(--sw, var(--text));
+  }
+
+  /* Staggered entrance for the Device panels once the link is up. */
+  .stagger-in {
+    animation: stagger-in var(--t-move) var(--ease) both;
+    animation-delay: calc(var(--i, 0) * 60ms);
+  }
+  /* The link dot pulses once when the board connects. */
+  .dot-pulse {
+    animation: dot-pulse var(--t-bloom) var(--ease) both;
+  }
+  /* Toast and boot screen. */
+  .toast-in {
+    animation: toast-in var(--t-move) var(--ease) both;
+  }
+  .screen-boot {
+    animation: screen-boot 500ms steps(1, end) both;
   }
 
   /* Tab content settles in: opacity plus 4px, no blank frame in between. */
@@ -193,7 +321,7 @@
   }
   /* The board's screen cuts to the clock a beat after the light wipe starts. */
   .screen-on {
-    animation: screen-on 120ms var(--ease) 420ms both;
+    animation: screen-on 120ms var(--ease) 500ms both;
   }
   /* Scanning hairline on the empty Device screen: one translateX sweep. */
   .scan-sweep {
@@ -243,6 +371,56 @@
   }
   to {
     opacity: 1;
+  }
+}
+@keyframes rail-pulse {
+  from {
+    transform: translateX(-120px);
+  }
+  to {
+    transform: translateX(100cqw);
+  }
+}
+@keyframes stagger-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes dot-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  45% {
+    transform: scale(1.8);
+    opacity: 0.4;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+@keyframes screen-boot {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
   }
 }
 @keyframes scan-sweep {

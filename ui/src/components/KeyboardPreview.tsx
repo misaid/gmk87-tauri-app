@@ -13,6 +13,8 @@ import {
   plateLayout,
   recessLayout,
   type LabeledKey,
+  KNOB_FACE,
+  KNOB_SHADOW,
 } from "./keyboard";
 import { ambientFrom, ledBarSample } from "./lighting";
 import { CapOverlay } from "@/lib/capOverlay";
@@ -45,7 +47,21 @@ const easeInOut = (x: number) => (x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2,
 
 export type BoardSize = "hero" | "compact";
 /** Height in px the board is drawn at for each stage size. */
-const BOARD_HEIGHT: Record<BoardSize, number> = { hero: 400, compact: 270 };
+const BOARD_HEIGHT: Record<BoardSize, number> = { hero: 400, compact: 300 };
+
+/**
+ * CSS max-width of the case for a stage size. On short windows the board gives up height so
+ * the controls under it stay in view. The rail and the panels under the board use the same value.
+ */
+export function caseMaxWidthCss(size: BoardSize): string {
+  const [w, h] = caseLayout().size;
+  const aspect = w / h;
+  const max = Math.round(BOARD_HEIGHT[size] * aspect);
+  // hero keeps 220px of board at the least, compact 190px.
+  const floor = Math.round((size === "hero" ? 220 : 190) * aspect);
+  const reserve = size === "hero" ? 360 : 390;
+  return `min(${max}px, max(${floor}px, calc((100vh - ${reserve}px) * ${aspect.toFixed(4)})))`;
+}
 
 const SPILL_BOX: CSSProperties = {
   left: -SPILL_X,
@@ -229,10 +245,7 @@ export function KeyboardPreview({ className, interactive = true, size = "hero", 
 
   // The case is sized by the board's aspect ratio; the canvas is the case plus
   // spill margins so the underglow can be drawn outside the board's footprint.
-  const aspect = board.size[0] / board.size[1];
-  const boardMaxWidth = Math.round(BOARD_HEIGHT[size] * aspect);
-  // On short windows the hero board gives up height so the controls under it stay in view.
-  const caseMaxWidth = hero ? `min(${boardMaxWidth}px, max(${Math.round(220 * aspect)}px, calc((100vh - 360px) * ${aspect.toFixed(4)})))` : `${boardMaxWidth}px`;
+  const caseMaxWidth = caseMaxWidthCss(size);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -525,12 +538,13 @@ export function KeyboardPreview({ className, interactive = true, size = "hero", 
 
 
   const showPreview = Boolean(previewUrl);
+
   const clock = effective ? effective.time : OFFLINE_STATE.time;
   const clockLabel = `${String(clock[4]).padStart(2, "0")}:${String(clock[5]).padStart(2, "0")}`;
   const dateLabel = `${new Date(clock[0], Math.max(0, clock[1] - 1), clock[2]).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}`;
 
   // Plain matte-black knob with one notch, like the real one.
-  const knobFace = "radial-gradient(circle at 36% 28%, #3b3e46 0%, #1b1d22 55%, #0f1013 100%)";
+  const knobFace = KNOB_FACE;
 
   return (
     <div
@@ -693,8 +707,17 @@ export function KeyboardPreview({ className, interactive = true, size = "hero", 
             {showPreview && previewUrl ? (
               <img src={previewUrl} alt="" className="h-full w-full object-cover" draggable={false} />
             ) : connectedNow ? (
+              <>
+              {/* Boot: the board's name for 500ms after power, then the clock fades in (CSS only, no loop). */}
               <span
-                className="screen-on flex h-full w-full flex-col items-center justify-center gap-[3%] bg-[radial-gradient(ellipse_at_50%_40%,rgba(90,150,255,0.22),transparent_75%)]"
+                aria-hidden
+                className="screen-boot absolute inset-0 z-10 flex items-center justify-center bg-black uppercase leading-none"
+                style={{ color: "var(--muted)", fontFamily: "var(--font-mono)", fontSize: "clamp(7px, 12cqw, 16px)", letterSpacing: "0.2em" }}
+              >
+                GMK87
+              </span>
+              <span
+                className="screen-on relative flex h-full w-full flex-col items-center justify-center gap-[3%] bg-[radial-gradient(ellipse_at_50%_40%,rgba(90,150,255,0.22),transparent_75%)]"
                 style={{ color: "#e6f1ff" }}
               >
                 <span
@@ -709,6 +732,7 @@ export function KeyboardPreview({ className, interactive = true, size = "hero", 
                   </span>
                 )}
               </span>
+              </>
             ) : (
               <span
                 className="flex h-full w-full items-center justify-center font-medium uppercase leading-none"
@@ -737,7 +761,7 @@ export function KeyboardPreview({ className, interactive = true, size = "hero", 
               width: `${knobRect.width}%`,
               height: `${knobRect.height}%`,
               backgroundImage: knobFace,
-              boxShadow: "inset 0 1px 1px rgba(255,255,255,0.14), 0 0 0 1px #2a2d34, 0 2px 4px rgba(0,0,0,0.6)",
+              boxShadow: KNOB_SHADOW,
             }}
           >
             <span className="absolute left-1/2 top-[10%] h-[24%] w-[7%] -translate-x-1/2 rounded-full bg-white/80" />
@@ -827,7 +851,7 @@ export function KeyboardPreview({ className, interactive = true, size = "hero", 
       {previewEffect !== null && previewEffect !== (effective ?? OFFLINE_STATE).underglow.effect && (
         <span
           role="status"
-          className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 whitespace-nowrap rounded-full border border-white/20 bg-black/65 px-3 py-1 text-[11px] font-medium text-white"
+          className="keycap-dark readout pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 whitespace-nowrap px-3 py-1 text-[11px] font-medium"
         >
           Previewing {UNDERGLOW_EFFECTS.find((e) => e.value === previewEffect)?.name ?? "effect"} — click to stage
         </span>

@@ -207,3 +207,7 @@ export function partAnchors(): { screen: PartAnchor; knob: PartAnchor; bar: Part
   const win = labeledKeys().find((k) => k.label === "WIN") ?? labeledKeys()[0];
   return { screen: pct(displayLayout().position), knob: pct(knobLayout().position), bar: pct(ledBarLayout().position), win: pct(win.position) };
 }
+
+/** The matte-black knob face: one gradient shared by the board and the Display bezel. */
+export const KNOB_FACE = "radial-gradient(circle at 36% 28%, #3b3e46 0%, #1b1d22 55%, #0f1013 100%)";
+export const KNOB_SHADOW = "inset 0 1px 1px rgba(255,255,255,0.14), 0 0 0 1px #2a2d34, 0 2px 4px rgba(0,0,0,0.6)";
