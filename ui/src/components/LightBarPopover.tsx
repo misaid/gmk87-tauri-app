@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
@@ -66,19 +66,19 @@ export function LightBarPopover({ anchor, onClose }: { anchor: RefObject<HTMLEle
       ref={ref}
       role="dialog"
       aria-label="Side light bar"
-      className="fixed z-50 flex flex-col gap-3.5 rounded-[var(--r-panel)] border border-white/10 bg-[var(--bg-raise)] p-4 text-[13px] shadow-[0_18px_50px_-12px_rgba(0,0,0,0.85),inset_0_1px_0_rgba(255,255,255,0.1)]"
+      className="panel fixed z-50 flex flex-col gap-4 p-4 text-[13px] shadow-[0_18px_50px_-12px_rgba(0,0,0,0.85)]"
       style={{ left: pos.left, top: pos.top, width: WIDTH }}
     >
       <div className="flex items-center justify-between">
-        <h2 className="text-[13px] font-semibold text-[var(--text)]">Side light bar</h2>
-        <button type="button" aria-label="Close" onClick={onClose} className="rounded-md px-1.5 text-[16px] leading-none text-[var(--muted)] hover:text-[var(--text)]">
+        <h2 className="silk">Side light bar</h2>
+        <button type="button" aria-label="Close" onClick={onClose} className="rounded-[var(--r-ctl)] px-1.5 text-[16px] leading-none text-[var(--muted)] transition-colors hover:bg-[var(--bg-raise-2)] hover:text-[var(--text)]">
           ×
         </button>
       </div>
       <span
         aria-hidden
-        className="block h-1.5 w-full rounded-full ring-1 ring-white/10"
-        style={{ background: LED_COLOR_SWATCHES[led.color], opacity: led.color === 8 ? 0.25 : 1 }}
+        className="block h-1.5 w-full rounded-full"
+        style={{ background: LED_COLOR_SWATCHES[led.color], opacity: led.color === 8 ? 0.25 : 1, boxShadow: `0 0 12px -2px ${LED_COLOR_SWATCHES[led.color]}` }}
       />
       <div className="grid grid-cols-2 gap-1.5">
         {LED_MODES.map((mode, i) => (
@@ -88,12 +88,7 @@ export function LightBarPopover({ anchor, onClose }: { anchor: RefObject<HTMLEle
             aria-pressed={led.mode === mode.value}
             // Rainbow overrides the colour, so picking a colour or a non-rainbow mode clears it.
             onClick={() => stage(mode.value === 1 ? { ledMode: 1 } : { ledMode: mode.value, ledRainbow: 0 })}
-            className={
-              (i === LED_MODES.length - 1 && LED_MODES.length % 2 === 1 ? "col-span-2 " : "") +
-              (led.mode === mode.value
-                ? "h-8 rounded-[7px] bg-[var(--accent)]/20 px-2.5 text-xs font-medium text-[var(--text)] shadow-[inset_0_0_0_1px_var(--accent-ambient)]"
-                : "h-8 rounded-[7px] bg-[var(--panel-2)] px-2.5 text-xs text-[var(--muted)] transition-colors hover:text-[var(--text)]")
-            }
+            className={`keycap-dark h-8 px-2.5 text-xs ${i === LED_MODES.length - 1 && LED_MODES.length % 2 === 1 ? "col-span-2" : ""}`}
           >
             {mode.name}
           </button>
@@ -108,18 +103,14 @@ export function LightBarPopover({ anchor, onClose }: { anchor: RefObject<HTMLEle
             aria-pressed={led.color === color.value}
             title={color.name}
             onClick={() => stage({ ledColor: color.value, ledRainbow: 0, ...(led.mode === 1 ? { ledMode: 3 } : {}) })}
-            className={
-              led.color === color.value
-                ? "size-6 rounded-full ring-2 ring-white ring-offset-2 ring-offset-[color:var(--bg-raise)]"
-                : "size-6 rounded-full ring-1 ring-white/20 transition-transform duration-150 hover:scale-110"
-            }
-            style={{ background: LED_COLOR_SWATCHES[color.value] }}
+            className={`swatch !size-6 ${led.color === color.value ? "swatch-on" : ""}`}
+            style={{ background: LED_COLOR_SWATCHES[color.value], "--sw": LED_COLOR_SWATCHES[color.value] } as CSSProperties}
           />
         ))}
       </div>
       <div>
-        <Label htmlFor="lighting-saturation" className="text-[13px] text-[var(--muted)]">
-          Saturation <b className="ml-1 font-semibold text-[var(--text)]">{led.saturation}/9</b>
+        <Label htmlFor="lighting-saturation" className="silk flex items-baseline gap-2">
+          Saturation <b className="readout !text-[12px] font-medium normal-case tracking-normal text-[var(--text)]">{led.saturation}/9</b>
         </Label>
         <Slider
           id="lighting-saturation"

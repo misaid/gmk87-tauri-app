@@ -1,42 +1,53 @@
 import { LightingDock } from "@/components/LightingDock";
-import { heroBoardWidth } from "@/components/KeyboardPreview";
 import { openLightBar } from "@/components/LightBarPopover";
+import { PanelHead } from "@/components/PanelHead";
 import { ProfileGallery } from "@/components/ProfileGallery";
 import { EffectGallery } from "@/components/EffectGallery";
 import { LED_COLOR_SWATCHES, LED_MODES } from "@/lib/effects";
 import { OFFLINE_STATE, selectEffectiveState, useAppStore } from "@/store";
 
-const heading = "text-[10.5px] font-semibold uppercase tracking-[0.12em] text-[var(--dim)]";
-const card =
-  "rounded-[var(--r-panel)] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.015))] bg-[var(--bg-raise)] p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.14),0_14px_40px_-16px_rgba(0,0,0,0.75)]";
-
-/** Left column under the board: looks and profiles as one gallery, then colour and the light bar. */
-export function LightingPanels() {
+/** The side light bar as a key: the bar's own capsule drawn in its live colour, then the mode name. */
+function LightBarKey() {
   const effective = useAppStore(selectEffectiveState);
   const committed = useAppStore((s) => s.state);
   const { led } = effective ?? committed ?? OFFLINE_STATE;
   const modeName = LED_MODES.find((m) => m.value === led.mode)?.name ?? "Side bar";
+  const rainbow = led.rainbow === 1 || led.mode === 1;
   return (
-    <div className="mx-auto flex w-full flex-col gap-3 text-[13px]" style={{ maxWidth: heroBoardWidth() }}>
-      <section className={card} aria-label="Looks and profiles">
-        <h3 className={`${heading} mb-2`}>Looks and profiles</h3>
-        <ProfileGallery compact />
-      </section>
-      <section className={card} aria-label="Colour, brightness and speed">
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <h3 className={heading}>Colour</h3>
-          <button
-            type="button"
-            aria-haspopup="dialog"
-            onClick={openLightBar}
-            className="flex h-7 shrink-0 items-center gap-1.5 rounded-full border border-[var(--line-strong)] px-2.5 text-[12px] text-[var(--text)] transition-colors hover:bg-white/[0.06]"
-          >
-            <span aria-hidden className="size-2.5 rounded-full" style={{ background: LED_COLOR_SWATCHES[led.color] }} />
-            Light bar
-            <span className="text-[var(--muted)]">· {modeName}</span>
-          </button>
-        </div>
+    <button
+      type="button"
+      aria-haspopup="dialog"
+      onClick={openLightBar}
+      className="keycap-dark flex h-8 shrink-0 items-center gap-2.5 px-2.5 text-[12px]"
+    >
+      <span
+        aria-hidden
+        className="block h-[6px] w-7 rounded-full"
+        style={{
+          background: rainbow ? "linear-gradient(90deg,#e5484d,#ffd60a,#46a758,#0091ff,#8e4ec6)" : LED_COLOR_SWATCHES[led.color],
+          boxShadow: `0 0 8px -1px ${rainbow ? "#8e4ec6" : LED_COLOR_SWATCHES[led.color]}`,
+        }}
+      />
+      <span className="sr-only">Light bar</span>
+      <span aria-hidden className="silk !text-[10px]">Bar</span>
+      <span className="readout text-[11px] text-[var(--muted)]">{modeName}</span>
+    </button>
+  );
+}
+
+/** Left column under the rail: colour, brightness and speed first, then looks and profiles. */
+export function LightingPanels() {
+  return (
+    <div className="flex w-full flex-col gap-3 text-[13px]">
+      <section className="panel p-4" aria-labelledby="lighting-colour">
+        <PanelHead n={1} title="Colour" id="lighting-colour">
+          <LightBarKey />
+        </PanelHead>
         <LightingDock />
+      </section>
+      <section className="panel p-4" aria-labelledby="lighting-looks">
+        <PanelHead n={2} title="Looks" id="lighting-looks" />
+        <ProfileGallery compact />
       </section>
     </div>
   );
@@ -49,7 +60,7 @@ export function EffectsPanel() {
   const setLightingDraft = useAppStore((s) => s.setLightingDraft);
   const { underglow } = effective ?? committed ?? OFFLINE_STATE;
   return (
-    <section className={card} aria-label="Effects">
+    <section className="panel p-4" aria-label="Underglow effects">
       <EffectGallery
         value={underglow.effect}
         color={underglow.color}

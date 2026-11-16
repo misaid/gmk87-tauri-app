@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import { Plus } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
@@ -15,7 +16,6 @@ const GLOW_COLORS: ReadonlyArray<{ name: string; rgb: [number, number, number] }
   { name: "White", rgb: [255, 255, 255] },
 ];
 
-const RING_OFFSET = "ring-offset-[color:var(--bg-raise)]";
 
 /** Index of the preset swatch matching the live colour, or -1 for a custom colour. */
 export function activeSwatchIndex(color: readonly number[], rainbow: number): number {
@@ -42,111 +42,87 @@ export function LightingDock() {
     if (typeof setLightingDraft === "function") setLightingDraft(patch);
   }
 
-  const label = "whitespace-nowrap text-[12px] text-[var(--muted)]";
-  const value = "readout text-[var(--text)]";
-
   return (
     <div className="@container w-full">
-    <div
-      role="group"
-      aria-label="Underglow controls"
-      className="flex w-full flex-col gap-3 @[640px]:flex-row @[640px]:flex-wrap @[640px]:items-center @[640px]:justify-between @[640px]:gap-x-4 @[640px]:gap-y-2.5"
-    >
-      <div className="flex items-center gap-2">
-        {GLOW_COLORS.map((c, i) => {
-          const selected = i === activeIdx;
-          return (
-            <button
-              key={c.name}
-              type="button"
-              aria-label={c.name}
-              aria-pressed={selected}
-              disabled={rainbowActive}
-              title={c.name}
-              onClick={() => stage({ underglowColor: c.rgb })}
-              className={
-                selected
-                  ? `size-7 rounded-full ring-2 ring-white ring-offset-2 ${RING_OFFSET}`
-                  : `size-7 rounded-full ring-1 ring-white/25 transition-transform duration-150 hover:scale-110 ${rainbowActive ? "opacity-40" : ""}`
-              }
-              style={{ background: `rgb(${c.rgb.join(",")})` }}
-            />
-          );
-        })}
-        <label
-          title={rainbowActive ? "Rainbow is on" : "Custom colour"}
-          data-active={customActive || undefined}
-          className={`relative grid size-7 place-items-center rounded-full focus-within:ring-2 focus-within:ring-white ${customActive || rainbowActive ? `ring-2 ring-white ring-offset-2 ${RING_OFFSET}` : "ring-1 ring-white/30"} ${rainbowActive ? "pointer-events-none" : "cursor-pointer"}`}
-          style={{ background: customActive ? customFill : "conic-gradient(#ff3b30, #ffcc00, #30d158, #40c8e0, #0a84ff, #8b5cf6, #ff3b30)" }}
-        >
-          <Plus className="size-3.5 text-white drop-shadow" aria-hidden />
-          <input
-            type="color"
-            aria-label="Custom underglow colour"
-            disabled={rainbowActive}
-            className="sr-only"
-            value={hex}
-            onChange={(e) => {
-              const v = e.target.value;
-              stage({ underglowColor: [parseInt(v.slice(1, 3), 16), parseInt(v.slice(3, 5), 16), parseInt(v.slice(5, 7), 16)] });
-            }}
-          />
-        </label>
-      </div>
+      <div role="group" aria-label="Underglow controls" className="flex w-full flex-col gap-5">
+        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            {GLOW_COLORS.map((c, i) => {
+              const selected = i === activeIdx;
+              return (
+                <button
+                  key={c.name}
+                  type="button"
+                  aria-label={c.name}
+                  aria-pressed={selected}
+                  disabled={rainbowActive}
+                  title={c.name}
+                  onClick={() => stage({ underglowColor: c.rgb })}
+                  className={`swatch ${selected ? "swatch-on" : ""} ${rainbowActive ? "opacity-40" : ""}`}
+                  style={{ background: `rgb(${c.rgb.join(",")})`, "--sw": `rgb(${c.rgb.join(",")})` } as CSSProperties}
+                />
+              );
+            })}
+            <label
+              title={rainbowActive ? "Rainbow is on" : "Custom colour"}
+              data-active={customActive || undefined}
+              className={`swatch relative grid place-items-center focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-[var(--text)] ${customActive || rainbowActive ? "swatch-on" : ""} ${rainbowActive ? "pointer-events-none" : "cursor-pointer"}`}
+              style={{ background: customActive ? customFill : "conic-gradient(#ff3b30, #ffcc00, #30d158, #40c8e0, #0a84ff, #8b5cf6, #ff3b30)", "--sw": customActive ? customFill : "#8b5cf6" } as CSSProperties}
+            >
+              <Plus className="size-3.5 text-white drop-shadow" aria-hidden />
+              <input
+                type="color"
+                aria-label="Custom underglow colour"
+                disabled={rainbowActive}
+                className="sr-only"
+                value={hex}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  stage({ underglowColor: [parseInt(v.slice(1, 3), 16), parseInt(v.slice(3, 5), 16), parseInt(v.slice(5, 7), 16)] });
+                }}
+              />
+            </label>
+          </div>
+          <div className="flex items-center gap-5">
+            <label className="flex items-center gap-2 text-[12px] text-[var(--text)]">
+              <Switch checked={rainbowActive} onCheckedChange={(checked) => stage({ underglowRainbow: checked ? 1 : 0 })} />
+              Rainbow
+            </label>
+            <label className={`flex items-center gap-2 text-[12px] ${canReverse ? "text-[var(--text)]" : "opacity-40"}`} title={canReverse ? undefined : "This effect has no direction"}>
+              <Switch
+                checked={underglow.orientation === 1}
+                disabled={!canReverse}
+                onCheckedChange={(checked) => stage({ underglowOrientation: checked ? 1 : 0 })}
+              />
+              Reverse
+            </label>
+          </div>
+        </div>
 
-      <div className="grid grid-cols-2 gap-4 @[640px]:contents">
-      <div className="flex flex-col gap-0.5 @[640px]:flex-row @[640px]:items-center @[640px]:gap-2.5">
-        <label htmlFor="lighting-brightness" className={label}>
-          Bright · <span className={value}>{underglow.brightness}/9</span>
-        </label>
-        <Slider
-          id="lighting-brightness"
-          aria-label="Brightness"
-          className="w-full @[640px]:w-[104px]"
-          ticks={10}
-          min={0}
-          max={9}
-          step={1}
-          value={[underglow.brightness]}
-          onValueChange={([v]) => stage({ underglowBrightness: v })}
-        />
+        <div className="grid grid-cols-1 gap-x-8 gap-y-4 @[460px]:grid-cols-2">
+          <Meter id="lighting-brightness" label="Brightness" aria="Brightness" value={underglow.brightness} onChange={(v) => stage({ underglowBrightness: v })} />
+          <div className={`transition-opacity ${moving ? "" : "opacity-40"}`} title={moving ? undefined : "This effect has no motion"}>
+            <Meter id="lighting-speed" label="Speed" aria="Speed" value={displayedSpeed} disabled={!moving} onChange={(v) => stage({ underglowSpeed: 9 - v })} />
+          </div>
+        </div>
       </div>
-
-      <div className={`flex flex-col gap-0.5 @[640px]:flex-row @[640px]:items-center @[640px]:gap-2.5 transition-opacity ${moving ? "" : "opacity-40"}`} title={moving ? undefined : "This effect has no motion"}>
-        <label htmlFor="lighting-speed" className={label}>
-          Speed · <span className={value}>{displayedSpeed}/9</span>
-        </label>
-        <Slider
-          id="lighting-speed"
-          aria-label="Speed"
-          className="w-full @[640px]:w-[104px]"
-          ticks={10}
-          disabled={!moving}
-          min={0}
-          max={9}
-          step={1}
-          value={[displayedSpeed]}
-          onValueChange={([v]) => stage({ underglowSpeed: 9 - v })}
-        />
-      </div>
-      </div>
-
-      <div className="flex items-center gap-5 @[640px]:contents">
-      <label className="flex items-center gap-2 text-[12px] text-[var(--text)]">
-        <Switch checked={rainbowActive} onCheckedChange={(checked) => stage({ underglowRainbow: checked ? 1 : 0 })} />
-        Rainbow
-      </label>
-      <label className={`flex items-center gap-2 text-[12px] ${canReverse ? "text-[var(--text)]" : "opacity-40"}`} title={canReverse ? undefined : "This effect has no direction"}>
-        <Switch
-          checked={underglow.orientation === 1}
-          disabled={!canReverse}
-          onCheckedChange={(checked) => stage({ underglowOrientation: checked ? 1 : 0 })}
-        />
-        Reverse
-      </label>
-      </div>
-    </div>
     </div>
   );
 }
 
+/** Silkscreen label above; the value as a big mono numeral beside a detent slider. */
+function Meter({ id, label, aria, value, disabled, onChange }: { id: string; label: string; aria: string; value: number; disabled?: boolean; onChange: (v: number) => void }) {
+  return (
+    <div id={id} className="flex flex-col gap-1">
+      <span className="silk">{label}</span>
+      <div className="flex items-center gap-3">
+        <span className="sr-only">{value}/9</span>
+        <span aria-hidden className="flex w-[34px] shrink-0 items-baseline justify-end">
+          <span className="readout text-[20px] leading-none text-[var(--text)]">{value}</span>
+          <span className="readout text-[11px] text-[var(--dim)]">/9</span>
+        </span>
+        <Slider aria-label={aria} className="min-w-0 flex-1" ticks={10} disabled={disabled} min={0} max={9} step={1} value={[value]} onValueChange={([v]) => onChange(v)} />
+      </div>
+    </div>
+  );
+}

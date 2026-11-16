@@ -63,5 +63,5 @@ export function BoardThumb({ lighting, live = false, className = "" }: { lightin
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, live, reduce]);
 
-  return <canvas ref={ref} aria-hidden className={`block w-full rounded-[6px] ${className}`} style={{ aspectRatio: `${aspect}` }} />;
+  return <canvas ref={ref} aria-hidden className={`block w-full rounded-[2px] ${className}`} style={{ aspectRatio: `${aspect}` }} />;
 }
