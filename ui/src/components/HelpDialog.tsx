@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useDialogFocusTrap } from "@/lib/useDialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 const PROJECT_URL = "https://github.com/misaid/gmk87-tauri-app";
 
@@ -136,7 +137,15 @@ export function HelpDialog({ open, onClose, version }: { open: boolean; onClose:
         </div>
         <p className="readout mt-5 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-[var(--line)] pt-3 text-[11px] text-[var(--dim)]">
           {version && <span>GMK87 Configurator v{version}</span>}
-          <a href={PROJECT_URL} target="_blank" rel="noreferrer" className="text-[var(--muted)] underline underline-offset-4 transition-colors hover:text-[var(--text)]">
+          <a
+            href={PROJECT_URL}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => {
+              e.preventDefault();
+              openUrl(PROJECT_URL).catch(() => window.open(PROJECT_URL, "_blank", "noreferrer"));
+            }}
+            className="text-[var(--muted)] underline underline-offset-4 transition-colors hover:text-[var(--text)]">
             Open project page
           </a>
         </p>

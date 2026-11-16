@@ -26,6 +26,9 @@ installed.
 > [`docs/hardware-testing.md`](docs/hardware-testing.md) before writing to a real
 > keyboard; it records what was seen and the safety rules any run must follow.
 
+The app icon is the keycap mark from `docs/images/logo-mark.svg`; the generated
+icon set lives in `ui/src-tauri/icons/`.
+
 ## Contents
 
 - [Features](#features)
@@ -93,8 +96,10 @@ current settings (the hardware cannot be read at all, see
 ## Quick start
 
 Each tagged version publishes a Linux AppImage and a Windows installer on the
-[releases page](https://github.com/misaid/gmk87-tauri-app/releases). To build from
-source instead:
+[releases page](https://github.com/misaid/gmk87-tauri-app/releases) (plus a `.deb`
+that installs the udev rule, and SHA-256 checksums). The Windows installer is not
+code-signed, so SmartScreen may warn on first run. On Linux with the AppImage,
+install the udev rule once (see below). To build from source instead:
 
 ```bash
 # Linux prerequisites (Debian/Ubuntu shown)
@@ -103,7 +108,7 @@ sudo apt install libudev-dev pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev \
 # plus Rust (see rust-toolchain.toml) and bun: https://bun.sh
 
 git clone https://github.com/misaid/gmk87-tauri-app
-cd keyboard-software
+cd gmk87-tauri-app
 
 # Linux only: let your user open the keyboard without root
 sudo cp packaging/50-gmk87.rules /etc/udev/rules.d/
@@ -182,7 +187,13 @@ sudo udevadm trigger
 gmk87-cli probe
 ```
 
-Packages install the rule to `/usr/lib/udev/rules.d/`. Do not run the CLI with
+One-liner for AppImage users, straight from the repository:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/misaid/gmk87-tauri-app/main/packaging/50-gmk87.rules | sudo tee /etc/udev/rules.d/50-gmk87.rules >/dev/null && sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+The `.deb` package installs the rule to `/usr/lib/udev/rules.d/` itself. Do not run the CLI with
 `sudo`: the rule already gives the logged-in user access, and root-run commands
 would leave a root-owned snapshot in `~/.local/share/gmk87/` that later
 unprivileged runs could not update.
