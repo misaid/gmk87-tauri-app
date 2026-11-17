@@ -16,8 +16,40 @@ HID. It needs no vendor software, and on Linux no root once the udev rule is
 installed.
 
 <p align="center">
-  <img src="docs/images/lighting.png" alt="The Lighting page: a live preview of the keyboard with per-key glow, a gallery of 19 effects, colour, brightness and speed controls" width="900">
+  <img src="docs/images/lighting.png" alt="The Lighting page: a live preview of the keyboard with a rainbow per-key glow, a gallery of 19 effects, colour, brightness and speed controls" width="900">
 </p>
+
+### At a glance
+
+| | |
+|---|---|
+| **What it is** | A cross-platform desktop app (Linux, Windows, macOS) plus a CLI, talking to a keyboard over a reverse-engineered USB HID protocol. |
+| **Stack** | Rust workspace (4 crates) · Tauri v2 · React 19 + TypeScript · Tailwind · zustand · WebGL2 and Canvas rendering. |
+| **Quality** | 213 front-end tests (vitest), Rust unit and mock-transport tests, clippy `-D warnings`, CI on Linux and Windows, tagged releases with checksums. |
+| **Interesting problems** | A write-only device that cannot be read back, a 1,171-packet-per-frame upload protocol, a real-time per-key lighting preview that matches the hardware, and platform-aware connection monitoring. |
+
+### Engineering highlights
+
+- **Protocol work from scratch.** The keyboard's vendor channel is documented
+  from packet captures and hardware tests in [`docs/protocol.md`](docs/protocol.md),
+  including corrections to earlier community notes. The codec, checksums, 48-byte
+  config block and RGB565 image pipeline live in a pure, I/O-free crate.
+- **A layered, testable architecture.** Protocol → device → application → UI.
+  The app layer has no Tauri dependency, so the whole orchestration is
+  unit-tested against a mock transport and never touches real hardware in CI.
+- **A write-only device, handled honestly.** The keyboard cannot be read, so the
+  app owns the configuration, persists a snapshot, and always writes the full
+  block. The UI makes this visible with draft mode, undo/redo and revert.
+- **Real-time rendering that stays cheap.** The on-screen keyboard is a shared
+  WebGL2 shader with a CPU fallback, adaptive frame pacing and a power-on
+  sequence, so it looks like the board without burning a laptop battery.
+- **Safety learned the hard way.** An interrupted upload once produced stray
+  keystrokes on a real machine; the retained incident report in
+  [`docs/hardware-testing.md`](docs/hardware-testing.md) drives the write rules
+  the code enforces.
+- **Production concerns covered.** Hot-plug detection, Windows-safe connection
+  watchdog, error boundary, content security policy, bundled fonts, accessible
+  keyboard navigation and reduced-motion support.
 
 > **Hardware status.** The wired write path is verified end to end: on
 > 2026-11-01 the keyboard accepted a clock write, a lighting write and a
@@ -25,9 +57,6 @@ installed.
 > persistence are still unverified. Read
 > [`docs/hardware-testing.md`](docs/hardware-testing.md) before writing to a real
 > keyboard; it records what was seen and the safety rules any run must follow.
-
-The app icon is the keycap mark from `docs/images/logo-mark.svg`; the generated
-icon set lives in `ui/src-tauri/icons/`.
 
 ## Contents
 
@@ -84,14 +113,16 @@ current settings (the hardware cannot be read at all, see
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/images/device.png" alt="Device page with the connection card and board clock"><br><sub><b>Device</b>: connect, sync the clock, lock the Windows key.</sub></td>
-    <td width="50%"><img src="docs/images/display.png" alt="Display page with the crop editor and two image slots"><br><sub><b>Display</b>: crop two slots and write them in one press.</sub></td>
+    <td width="50%"><img src="docs/images/device.png" alt="Device page with the connection, clock and Windows key panels under the keyboard"><br><sub><b>Device</b>: connect, sync the clock, lock the Windows key.</sub></td>
+    <td width="50%"><img src="docs/images/display.png" alt="Display page with two image slots, a screen preview and the frame budget meter"><br><sub><b>Display</b>: two slots, a frame budget, one-press write.</sub></td>
   </tr>
   <tr>
     <td width="50%"><img src="docs/images/profiles.png" alt="Profiles page with built-in looks and saved profiles"><br><sub><b>Profiles</b>: one-click looks and your saved setups.</sub></td>
-    <td width="50%"><img src="docs/images/lighting.png" alt="Lighting page with the effect gallery"><br><sub><b>Lighting</b>: 19 effects with live previews.</sub></td>
+    <td width="50%"><img src="docs/images/banner.svg" alt="GMK87 Configurator banner"><br><sub><b>Open source</b>: GPL-3.0, written in Rust and TypeScript.</sub></td>
   </tr>
 </table>
+
+<sub>Screenshots are rendered from the real UI with a mocked device.</sub>
 
 ## Quick start
 
