@@ -2,9 +2,49 @@ import { useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { CropEditor } from "@/components/CropEditor";
+import { PanelHead } from "@/components/PanelHead";
 import { UploadControls } from "@/components/UploadControls";
+import { LIBRARY_DRAG_TYPE, MediaLibraryPanel } from "@/components/MediaLibraryPanel";
 import { budgetError } from "@/lib/budget";
 import { selectTotalFrames, useAppStore } from "@/store";
+
+const MAX_FRAMES = 36;
+
+function frameCount(n: number): string {
+  return `${n} ${n === 1 ? "frame" : "frames"}`;
+}
+
+/** One line for a slot: "Empty", or the name with its frame count once known. */
+function slotSummary(e: { name: string; info: { frames: number } | null }): string {
+  if (!e.name && !e.info) return "Empty";
+  const name = e.name || "image";
+  return e.info ? `${name} · ${frameCount(e.info.frames)}` : name;
+}
+
+/** 36 cells, one per frame the board can hold: slot 0 solid, slot 1 muted, free dim, overflow red. */
+function FrameBudget({ slot0, slot1, total }: { slot0: number; slot1: number; total: number }) {
+  const over = Math.max(0, total - MAX_FRAMES);
+  return (
+    <div
+      className="flex items-center gap-3"
+      role="progressbar"
+      aria-valuenow={total}
+      aria-valuemin={0}
+      aria-valuemax={MAX_FRAMES}
+      aria-label="Frame budget used"
+    >
+      <div aria-hidden className="flex flex-1 gap-[2px]">
+        {Array.from({ length: MAX_FRAMES }, (_, i) => {
+          const overflow = over > 0 && i >= MAX_FRAMES - Math.min(MAX_FRAMES, over);
+          const color = overflow ? "var(--danger)" : i < slot0 ? "var(--text)" : i < slot0 + slot1 ? "var(--muted)" : "rgba(255,255,255,.1)";
+          const kind = overflow ? "over" : i < slot0 ? "slot0" : i < slot0 + slot1 ? "slot1" : "free";
+          return <span key={i} data-cell={kind} className="h-2.5 flex-1 rounded-[1px]" style={{ background: color }} />;
+        })}
+      </div>
+      <span className={`readout shrink-0 text-[12px] ${over > 0 ? "text-[var(--danger)]" : "text-[var(--text)]"}`}>{`${String(total).padStart(2, " ")} / ${MAX_FRAMES}`}</span>
+    </div>
+  );
+}
 
 export default function DisplayScreen() {
   const fileInput = useRef<HTMLInputElement>(null);
@@ -12,176 +52,138 @@ export default function DisplayScreen() {
   const setSlot = useAppStore((s) => s.setSlot);
   const entry = useAppStore((s) => s.entries[s.slot]);
   const entries = useAppStore((s) => s.entries);
+  const board = useAppStore((s) => s.state);
   const totalFrames = useAppStore(selectTotalFrames);
   const loadSource = useAppStore((s) => s.loadSource);
+  const libraryUse = useAppStore((s) => s.libraryUse);
   const setDelayMs = useAppStore((s) => s.setDelayMs);
-  const connected = useAppStore((s) => s.connected);
-  const setActiveTab = useAppStore((s) => s.setActiveTab);
   const displayHistory = useAppStore((s) => s.displayHistory);
-  const lastUploaded = useAppStore((s) => s.lastUploaded);
   const undoDisplayUpload = useAppStore((s) => s.undoDisplayUpload);
 
   const problem = entry.info ? budgetError({ totalFrames, delayMs: entry.delayMs }) : null;
-  const displayDraftDirty = entry.source != null && (lastUploaded == null || lastUploaded[slot].name !== entry.name);
   const compressed = entry.info && entry.info.dropped.length > 0;
+  const empty = !entry.source;
+  const framesOf = (s: "slot0" | "slot1") => entries[s].info?.frames ?? (board ? (s === "slot0" ? board.slot0Frames : board.slot1Frames) ?? 0 : 0);
 
   async function onFile(file: File) {
     const bytes = new Uint8Array(await file.arrayBuffer());
     void loadSource(bytes, file.name);
   }
 
+  const choose = (
+    <Button variant={empty ? "default" : "outline"} size="sm" className={empty ? "h-9" : undefined} onClick={() => fileInput.current?.click()}>
+      Choose image or GIF
+    </Button>
+  );
+
   return (
-    <div className="flex flex-col gap-6 pt-3">
-      <div>
-        <h1 className="text-[var(--text-h1)] font-semibold text-white">Display</h1>
-        <p className="mt-1 text-sm text-white/80">Put an animated image on the 240×135 board display.</p>
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-white/80" role="status">
-          <span className="font-medium">Editing Slot {slot === "slot0" ? "0" : "1"}</span>
-          <span className="text-white/70">— all steps below affect this slot.</span>
-          {(["slot0", "slot1"] as const).map((s) => (
-            <button key={s} type="button" onClick={() => setSlot(s)} aria-pressed={slot === s} className={slot === s ? "rounded-md bg-white px-2 py-1 text-xs font-medium text-black" : "rounded-md border border-white/15 px-2 py-1 text-xs text-white/80"}>
-              Slot {s === "slot0" ? "0" : "1"}
-            </button>
-          ))}
+    <div className="grid gap-3 min-[900px]:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+      <section
+        className="panel flex flex-col gap-3 p-4"
+        aria-labelledby="display-crop"
+        onDragOver={(ev) => {
+          if (ev.dataTransfer.types.includes("Files")) ev.preventDefault();
+        }}
+        onDrop={(ev) => {
+          const file = ev.dataTransfer.files?.[0];
+          if (!file) return;
+          ev.preventDefault();
+          void onFile(file);
+        }}
+      >
+        <PanelHead n={1} title="Screen" id="display-crop" className="mb-0" />
+        <div className="mx-auto flex w-full max-w-[620px] gap-2.5" aria-label="Display slots">
+          {(["slot0", "slot1"] as const).map((s) => {
+            const e = entries[s];
+            const hasImage = Boolean(e.source || e.previewUrl);
+            return (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setSlot(s)}
+                onDragOver={(ev) => {
+                  if (ev.dataTransfer.types.includes(LIBRARY_DRAG_TYPE)) ev.preventDefault();
+                }}
+                onDrop={(ev) => {
+                  const id = ev.dataTransfer.getData(LIBRARY_DRAG_TYPE);
+                  if (!id) return;
+                  ev.preventDefault();
+                  ev.stopPropagation();
+                  void libraryUse(id, s);
+                }}
+                aria-pressed={slot === s}
+                className="tile flex min-w-0 max-w-[190px] flex-1 flex-col gap-2 p-2 text-left"
+              >
+                <span aria-hidden className="relative flex aspect-[132/74] w-full items-center justify-center overflow-hidden rounded-[3px] bg-[#050608]" style={{ boxShadow: "inset 0 1px 3px rgba(0,0,0,.9)" }}>
+                  {e.previewUrl ? (
+                    <img src={e.previewUrl} alt="" draggable={false} className="size-full object-cover [image-rendering:pixelated]" />
+                  ) : (
+                    <span className="readout text-[10px] tracking-[0.16em] text-[var(--dim)]">{hasImage ? "…" : "EMPTY"}</span>
+                  )}
+                </span>
+                <span className="block min-w-0 px-0.5">
+                  <span className="silk block !text-[10px]">Slot {s === "slot0" ? "0" : "1"}</span>
+                  <span className="readout mt-0.5 block truncate text-[11px] text-[var(--muted)]">{slotSummary(e)}</span>
+                </span>
+                <span aria-hidden className="tile-led" />
+              </button>
+            );
+          })}
         </div>
-      </div>
-      {displayDraftDirty && (
-        <p className="rounded-lg border border-sky-400/30 bg-sky-400/10 p-3 text-sm text-white/80" role="status">
-          Display draft: <span className="font-medium text-sky-300">{entry.name || "image"}</span> — Write image to board in step 4 when you're ready. Nothing is on the display yet.
-        </p>
-      )}
-      {!connected && (
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-400/30 bg-amber-400/10 p-3 text-sm text-white/80" role="note">
-          <span>You're offline — you can prepare images, but upload unlocks after connecting.</span>
-          <Button variant="outline" size="sm" onClick={() => setActiveTab("device")}>
-            Go to Device
-          </Button>
-        </div>
-      )}
-      {/* Step 1 — Choose */}
-      <section className="flex flex-col gap-3" aria-labelledby="display-step1">
-        <h2 id="display-step1" className="flex items-center gap-2 text-[var(--text-h2)] font-medium text-white">
-          <span className="flex size-6 items-center justify-center rounded-full bg-white/10 text-xs font-semibold">1</span>
-          Choose image or GIF
-        </h2>
-        <div className="flex flex-wrap items-center gap-3">
-          <Button variant="outline" size="sm" onClick={() => fileInput.current?.click()}>
-            Choose image or GIF
-          </Button>
-          <input
-            ref={fileInput}
-            type="file"
-            accept="image/*,.gif"
-            className="hidden"
-            aria-label="Choose image or GIF"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) void onFile(file);
-            }}
-          />
-        </div>
-        <p className="text-xs text-white/70">Each slot holds one animated image. Slots are sent together — the other slot is preserved.</p>
-      </section>
-
-      {/* Step 2 — Crop */}
-      <section className="flex flex-col gap-3" aria-labelledby="display-step2">
-        <h2 id="display-step2" className="flex items-center gap-2 text-[var(--text-h2)] font-medium text-white">
-          <span className={`flex size-6 items-center justify-center rounded-full text-xs font-semibold ${entry.source ? "bg-emerald-400/20 text-emerald-300" : "bg-white/10"}`}>2</span>
-          Crop to 240 × 135
-        </h2>
-        <fieldset disabled={!entry.source} className={entry.source ? "" : "pointer-events-none opacity-50"} aria-disabled={!entry.source}>
-          <CropEditor />
-        </fieldset>
-        {!entry.source && <p className="text-xs text-white/70">Choose an image above to start cropping.</p>}
-      </section>
-
-      {/* Step 3 — Timing */}
-      <section className="flex flex-col gap-3 rounded-lg border border-white/10 p-4" aria-labelledby="display-step3">
-        <h2 id="display-step3" className="flex items-center gap-2 text-[var(--text-h2)] font-medium text-white">
-          <span className={`flex size-6 items-center justify-center rounded-full text-xs font-semibold ${entry.info ? "bg-emerald-400/20 text-emerald-300" : "bg-white/10"}`}>3</span>
-          Timing
-        </h2>
-        <div>
-          <div className="mb-1 flex justify-between text-white/80">
-            <span>Frame delay (Slot {slot === "slot0" ? "0" : "1"})</span>
-            <span className="flex items-center gap-2">
-              <span>{entry.delayMs} ms · {entry.delayMs <= 166 ? "Fast" : entry.delayMs <= 333 ? "Normal" : "Slow"}</span>
-              <input
-                type="number"
-                min={60}
-                max={500}
-                step={10}
-                aria-label="Frame delay milliseconds"
-                className="w-20 rounded-md border border-white/15 bg-neutral-900 px-2 py-0.5 text-sm text-white"
-                value={entry.delayMs}
-                onChange={(e) => setDelayMs(Math.min(500, Math.max(60, Number(e.target.value))))}
-              />
-            </span>
-          </div>
-          <Slider
-            id="frame-delay"
-            min={60}
-            max={500}
-            step={10}
-            value={[entry.delayMs]}
-            onValueChange={([value]) => setDelayMs(value)}
-          />
-          <p className="mt-1 text-xs text-white/70">Faster animation uses more frames. Check the live budget before you choose the delay.</p>
-        </div>
-        <div>
-          <div className="flex justify-between text-white/80">
-            <span>Animation length (both slots)</span>
-            <span>{`${totalFrames} / 36`}</span>
-          </div>
-          <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10" role="progressbar" aria-valuenow={totalFrames} aria-valuemin={0} aria-valuemax={36} aria-label="Frame budget used">
-            <div
-              className={
-                totalFrames > 36
-                  ? "h-full rounded-full bg-red-400"
-                  : totalFrames > 30
-                    ? "h-full rounded-full bg-amber-400"
-                    : "h-full rounded-full bg-emerald-400"
-              }
-              style={{ width: `${Math.min(100, (totalFrames / 36) * 100)}%` }}
-            />
-          </div>
-          <div className="mt-2 flex gap-2 text-xs text-white/70">
-            <span className="rounded bg-white/5 px-2 py-1">Slot 0: {entries.slot0.info?.frames ?? "—"} frames</span>
-            <span className="rounded bg-white/5 px-2 py-1">Slot 1: {entries.slot1.info?.frames ?? "—"} frames</span>
-            <span className="rounded bg-white/5 px-2 py-1">{totalFrames > 36 ? "Over budget" : totalFrames > 30 ? "Nearly full" : "Fits"}</span>
-          </div>
-          {compressed && entry.info && (
-            <p className="mt-1 text-xs text-sky-300">
-              {`Compressed from ${entry.info.sourceFrames} to ${entry.info.frames} frames to fit the budget.`}
-            </p>
-          )}
-          {problem && <p className="mt-2 text-xs text-amber-300">{problem}</p>}
-        </div>
-      </section>
-
-      {/* Step 4 — Upload */}
-      <section className="flex flex-col gap-3 rounded-lg border border-white/10 p-4" aria-labelledby="display-step4">
-        <h2 id="display-step4" className="flex items-center gap-2 text-[var(--text-h2)] font-medium text-white">
-          <span className="flex size-6 items-center justify-center rounded-full bg-white/10 text-xs font-semibold">4</span>
-          Write image to board
-        </h2>
-        <UploadControls />
-
-        {displayHistory && displayHistory.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-white/10 p-3">
-            <span className="text-xs text-white/70">
-              Previous write: {displayHistory.at(-1)?.label} · {displayHistory.length} in history
-            </span>
-            <Button variant="ghost" size="sm" className="ml-auto" onClick={() => void undoDisplayUpload()}>
-              Undo write{displayHistory.length > 1 ? ` (${displayHistory.length})` : ""}
-            </Button>
+        <CropEditor footer={empty ? null : choose} />
+        {empty && (
+          <div className="flex flex-col items-center gap-2.5 pb-1 text-center">
+            <p className="text-[12.5px] text-[var(--muted)]">Drop an image or GIF here</p>
+            {choose}
           </div>
         )}
-
-        <p className="text-xs text-white/70">
-          Writing rewrites both slots. The untouched slot is resent exactly as stored. The last 10 writes can be undone.
-        </p>
+        <input
+          ref={fileInput}
+          type="file"
+          accept="image/*,.gif"
+          className="hidden"
+          aria-label="Choose image or GIF"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) void onFile(file);
+          }}
+        />
       </section>
+
+      <section className="panel flex flex-col gap-5 self-start p-4" aria-labelledby="display-upload">
+        <PanelHead n={2} title="Send" id="display-upload" className="mb-0" />
+
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-baseline justify-between">
+            <span className="silk">Frame delay</span>
+            <span className="readout text-[12px] text-[var(--text)]">
+              {entry.delayMs} ms · {entry.delayMs <= 166 ? "Fast" : entry.delayMs <= 333 ? "Normal" : "Slow"}
+            </span>
+          </div>
+          <Slider id="frame-delay" aria-label="Frame delay" min={60} max={500} step={10} value={[entry.delayMs]} onValueChange={([value]) => setDelayMs(value)} />
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <span className="silk">Frame budget</span>
+          <FrameBudget slot0={framesOf("slot0")} slot1={framesOf("slot1")} total={totalFrames} />
+          {compressed && entry.info && <p className="readout text-[11px] text-[var(--muted)]">{`${entry.info.sourceFrames} → ${frameCount(entry.info.frames)}`}</p>}
+          {problem && <p className="readout text-[11px] text-[var(--warn)]">{problem}</p>}
+        </div>
+
+        <UploadControls />
+
+        {(displayHistory?.length ?? 0) > 0 && (
+          <button
+            type="button"
+            className="self-start text-xs text-[var(--muted)] underline-offset-4 transition-colors hover:text-[var(--text)] hover:underline"
+            onClick={() => void undoDisplayUpload()}
+          >
+            Undo last write
+          </button>
+        )}
+      </section>
+
+      <MediaLibraryPanel />
     </div>
   );
 }

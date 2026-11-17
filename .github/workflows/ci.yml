@@ -11,8 +11,28 @@ jobs:
           libwebkit2gtk-4.1-dev build-essential curl wget file
           libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
       - uses: oven-sh/setup-bun@v2
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            ui/src-tauri
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --all
       - run: cd ui && bun install --frozen-lockfile && bun run test && bun run build
       - run: cd ui/src-tauri && cargo test && cargo clippy --all-targets -- -D warnings
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            ui/src-tauri
+      - run: cargo test --all
+      - run: bun install --frozen-lockfile && bun run test && bun run build
+        working-directory: ui
+      - run: cargo test
+        working-directory: ui/src-tauri

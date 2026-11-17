@@ -1,4 +1,4 @@
-import { PermissionCard } from "@/components/PermissionCard";
+import { PermissionCard, isLinux } from "@/components/PermissionCard";
 import { Button } from "@/components/ui/button";
 import { useAppStore } from "@/store";
 
@@ -9,29 +9,30 @@ export function ErrorBanner() {
   const refreshDevices = useAppStore((s) => s.refreshDevices);
   const setNotice = useAppStore((s) => s.setNotice);
   if (!error) return null;
-  if (errorKind === "permission_denied") return <PermissionCard />;
+  if (errorKind === "permission_denied" && isLinux()) return <PermissionCard />;
   return (
     <div
       role="alert"
-      className="flex flex-wrap items-center justify-between gap-4 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-200"
+      className="panel flex flex-wrap items-center justify-between gap-3 border-l-2 border-l-[var(--danger)] px-4 py-2.5 text-[13px] text-[var(--text)]"
     >
       <span className="min-w-0 flex-1">{error}</span>
       <span className="flex gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            dismiss();
-            if (errorKind === "device_gone" || errorKind === "not_connected") {
-              void refreshDevices().then(() => setNotice?.("Devices refreshed ✓"));
-            }
-          }}
-        >
-          Refresh devices
-        </Button>
-        <button className="underline" onClick={dismiss}>
+        {errorKind === "not_connected" && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              dismiss();
+              void refreshDevices().then(() => setNotice?.("Refreshed"));
+            }}
+          >
+            Refresh
+          </Button>
+        )}
+        <Button type="button" variant="ghost" size="sm" onClick={dismiss}>
           Dismiss
-        </button>
+        </Button>
       </span>
     </div>
   );

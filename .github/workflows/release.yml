@@ -16,12 +16,25 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            args: --target x86_64-unknown-linux-gnu --bundles appimage
+            args: --target x86_64-unknown-linux-gnu --bundles appimage,deb
           - os: windows-latest
             args: --target x86_64-pc-windows-msvc --bundles nsis
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check tag matches version files
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          want="${GITHUB_REF_NAME#v}"
+          ok=1
+          check() { if [ "$2" != "$want" ]; then echo "::error::$1 is '$2', tag wants '$want'"; ok=0; fi; }
+          check ui/src-tauri/tauri.conf.json "$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' ui/src-tauri/tauri.conf.json | head -1)"
+          check ui/package.json "$(sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p' ui/package.json | head -1)"
+          check ui/src-tauri/Cargo.toml "$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' ui/src-tauri/Cargo.toml | head -1)"
+          check Cargo.toml "$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' Cargo.toml | head -1)"
+          [ "$ok" = 1 ]
 
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
@@ -53,7 +66,22 @@ jobs:
           projectPath: ui
           tagName: ${{ github.ref_name }}
           releaseName: GMK87 Configurator ${{ github.ref_name }}
-          releaseBody: "Desktop release. Linux: AppImage. Windows: NSIS installer."
+          releaseBody: "Desktop release. Linux: AppImage and .deb (the .deb installs the udev rule; for the AppImage see the README). Windows: NSIS installer (unsigned). SHA-256 checksums are attached as SHA256SUMS."
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
+
+  checksums:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish SHA-256 checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir assets && cd assets
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern '*.AppImage' --pattern '*.deb' --pattern '*.exe'
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+          gh release upload "$GITHUB_REF_NAME" SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber

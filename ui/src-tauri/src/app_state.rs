@@ -12,6 +12,9 @@ pub type Manager = DeviceManager<HidTransport>;
 pub struct Runtime {
     pub manager: Option<Manager>,
     pub path: Option<String>,
+    /// Bumped on every connect. A watchdog captured a lower value is stale and
+    /// must not tear down the newer connection.
+    pub connect_seq: u64,
 }
 
 pub struct AppState {

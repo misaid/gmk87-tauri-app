@@ -30,3 +30,18 @@ describe("underglowColor", () => {
     ).toBe("rgb(0, 0, 0)");
   });
 });
+
+import { partAnchors } from "./keyboard";
+
+describe("partAnchors", () => {
+  it("places the screen, knob, light bar and Win key inside the case", () => {
+    const a = partAnchors();
+    for (const p of [a.screen, a.knob, a.bar, a.win]) {
+      expect(p.x).toBeGreaterThan(0);
+      expect(p.x).toBeLessThan(100);
+      expect(p.y).toBeGreaterThan(0);
+      expect(p.y).toBeLessThan(100);
+    }
+    expect(a.win.x).toBeLessThan(a.screen.x);
+  });
+});

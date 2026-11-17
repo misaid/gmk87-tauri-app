@@ -1,250 +1,319 @@
-import { useEffect, useState, type CSSProperties } from "react";
-import { AnimatePresence, MotionConfig, motion, useReducedMotion } from "framer-motion";
-import { Image as ImageIcon, Lightbulb, Plug, User } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import type { ComponentType } from "react";
+import { MotionConfig, useReducedMotion } from "framer-motion";
+import { CircleHelp } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Button } from "@/components/ui/button";
 import { ErrorBanner } from "@/components/ErrorBanner";
-import { BoardStatus } from "@/components/BoardStatus";
-import { KeyboardPreview } from "@/components/KeyboardPreview";
-import { useDeviceEvents } from "@/lib/useDeviceEvents";
-import DeviceScreen from "@/screens/DeviceScreen";
-import DisplayScreen from "@/screens/DisplayScreen";
-import LightingScreen from "@/screens/LightingScreen";
-import ProfilesScreen from "@/screens/ProfilesScreen";
-import { GlossaryDialog, OnboardingWizard } from "@/components/Onboarding";
+import { isLinux } from "@/components/PermissionCard";
+import { KeyboardPreview, caseMaxWidthCss } from "@/components/KeyboardPreview";
+import { Rail } from "@/components/Rail";
+import { cn } from "@/lib/utils";
+import { openLightBar } from "@/components/LightBarPopover";
+import { HelpDialog } from "@/components/HelpDialog";
 import { Toast } from "@/components/Toast";
-import { WriteConfirm } from "@/components/WriteConfirm";
-import { CommandPalette } from "@/components/CommandPalette";
+import { useDeviceEvents } from "@/lib/useDeviceEvents";
+import { useLiveApply } from "@/lib/useLiveApply";
+import { SyncBar } from "@/components/SyncBar";
+import DeviceScreen, { DevicePins } from "@/screens/DeviceScreen";
+import DisplayScreen from "@/screens/DisplayScreen";
+import { EffectsPanel, LightingPanels } from "@/screens/LightingScreen";
+import ProfilesScreen from "@/screens/ProfilesScreen";
+import { LED_MODES, UNDERGLOW_EFFECTS } from "@/lib/effects";
 import { selectEffectiveState, useAppStore } from "@/store";
-import { UNDERGLOW_EFFECTS } from "@/lib/effects";
 
 const NAV_ITEMS = [
-  { value: "device", label: "Device", icon: Plug },
-  { value: "display", label: "Display", icon: ImageIcon },
-  { value: "lighting", label: "Lighting", icon: Lightbulb },
-  { value: "profiles", label: "Profiles", icon: User },
+  { value: "device", label: "Device" },
+  { value: "lighting", label: "Lighting" },
+  { value: "display", label: "Display" },
+  { value: "profiles", label: "Profiles" },
 ] as const;
 
 type Tab = (typeof NAV_ITEMS)[number]["value"];
 
-const SCREENS: Record<Tab, React.ComponentType> = {
+const SCREENS: Record<Exclude<Tab, "lighting">, ComponentType> = {
   device: DeviceScreen,
   display: DisplayScreen,
-  lighting: LightingScreen,
   profiles: ProfilesScreen,
 };
 
-// Stable product accent — chrome does not follow underglow (preview carries the colour).
-const ACCENT = "#8b5cf6";
+/** Number keys follow the tab order in the nav. */
+const TAB_KEYS: Record<string, Tab> = Object.fromEntries(NAV_ITEMS.map((item, i) => [String(i + 1), item.value]));
+const APP_VERSION = typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : "";
 
 export default function App() {
   useDeviceEvents();
-  const loadStoredDisplay = useAppStore((s) => s.loadStoredDisplay);
   const tab = useAppStore((s) => s.activeTab);
   const setTab = useAppStore((s) => s.setActiveTab);
   const effective = useAppStore(selectEffectiveState);
+  const connected = useAppStore((s) => s.connected);
+  const connectingPath = useAppStore((s) => s.connectingPath ?? null);
   const draftDirty = useAppStore((s) => s.draftDirty);
-  const reduceMotion = useReducedMotion();
-  const [glossaryOpen, setGlossaryOpen] = useState(false);
-  const discardDraft = useAppStore((s) => s.discardDraft);
-  const lastDiscardedDraft = useAppStore((s) => s.lastDiscardedDraft);
-  const restoreDraft = useAppStore((s) => s.restoreDraft);
-  const [paletteOpen, setPaletteOpen] = useState(false);
-
-  const undoLighting = useAppStore((s) => s.undoLighting);
+  const commitDraft = useAppStore((s) => s.commitDraft);
+  const undo = useAppStore((s) => s.undo);
+  const redo = useAppStore((s) => s.redo);
+  const applying = useAppStore((s) => s.applying);
   const undoDisplayUpload = useAppStore((s) => s.undoDisplayUpload);
   const togglePaused = useAppStore((s) => s.setAnimationsPaused);
   const paused = useAppStore((s) => s.animationsPaused);
-  const connected = useAppStore((s) => s.connected);
-  const connectingPath = useAppStore((s) => s.connectingPath ?? null);
+  const autoConnect = useAppStore((s) => s.autoConnect);
+  const loadStoredDisplay = useAppStore((s) => s.loadStoredDisplay);
+  const connectedPath = useAppStore((s) => s.connectedPath);
+  const connectedTransport = useAppStore((s) => s.connectedTransport);
+  const lastSyncedAt = useAppStore((s) => s.lastSyncedAt);
+  const lastUploaded = useAppStore((s) => s.lastUploaded);
+  const productId = useAppStore((s) => s.devices.find((d) => d.path === connectedPath)?.productId);
+  const linkKind = connectedTransport === "wireless24g" ? "2.4 GHZ" : "WIRED";
+  const reduceMotion = useReducedMotion();
+  const [helpOpen, setHelpOpen] = useState(false);
 
-  // Tab shortcuts: 1-3, ? = help, p = pause, Cmd/Ctrl+Z = undo, Cmd/Ctrl+K = palette
+  useLiveApply();
+
+  // One pulse along the rail per successful write: lighting/clock writes bump lastSyncedAt, display writes replace lastUploaded.
+  const [pulseKey, setPulseKey] = useState(0);
+  const seenWrite = useRef({ synced: lastSyncedAt, uploaded: lastUploaded });
+  useEffect(() => {
+    const seen = seenWrite.current;
+    if (seen.synced === lastSyncedAt && seen.uploaded === lastUploaded) return;
+    const real = (lastSyncedAt !== null && lastSyncedAt !== seen.synced) || (lastUploaded !== null && lastUploaded !== seen.uploaded);
+    seenWrite.current = { synced: lastSyncedAt, uploaded: lastUploaded };
+    if (real) setPulseKey((k) => k + 1);
+  }, [lastSyncedAt, lastUploaded]);
+
+  // Pairing first: scan on launch and connect without a click. While there is no link the
+  // scan repeats, so a board plugged in later is picked up too.
+  useEffect(() => {
+    void autoConnect();
+  }, [autoConnect]);
+
+  useEffect(() => {
+    if (connected || connectingPath !== null) return;
+    const id = window.setInterval(() => {
+      if (!document.hidden) void autoConnect();
+    }, 1500);
+    return () => window.clearInterval(id);
+  }, [connected, connectingPath, autoConnect]);
+
+  // Both display slots come back with the last image and crop that were written to them.
+  useEffect(() => {
+    void loadStoredDisplay();
+  }, [loadStoredDisplay]);
+
+  // Shortcuts: 1–4 tabs, ? help, p pause, Cmd/Ctrl+Z undo.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
         e.preventDefault();
-        setPaletteOpen(true);
+        if (connected && draftDirty) void commitDraft();
         return;
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+        if ((e.target as HTMLElement | null)?.closest("input[type='text'], textarea")) return;
         e.preventDefault();
         if (tab === "display") void undoDisplayUpload();
-        else void undoLighting();
+        else if (e.shiftKey) void redo();
+        else void undo();
         return;
       }
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const target = e.target as HTMLElement | null;
       if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
-      const inControl = target?.closest("button, [role='slider']");
-      // `p` pauses from anywhere except buttons (so a focused button keeps its own keys).
       if (e.key.toLowerCase() === "p") {
         if (target?.closest("button, select")) return;
-        togglePaused(!paused); useAppStore.getState().setNotice(paused ? "Animations playing — press p to pause" : "Animations paused — press p to resume"); return;
+        togglePaused(!paused);
+        useAppStore.getState().setNotice(paused ? "Animations on" : "Animations paused");
+        return;
       }
-      if (inControl) return;
-      const map: Record<string, Tab> = { "1": "device", "2": "display", "3": "lighting", "4": "profiles" };
-      if (map[e.key]) setTab(map[e.key]);
-      else if (e.key === "?") setGlossaryOpen(true);
+      // Digits and ? also work while a button has focus; sliders keep their own keys.
+      if (target?.closest("[role='slider'], [role='dialog']")) return;
+      const next = TAB_KEYS[e.key];
+      if (next) {
+        if (connected || next === "device") setTab(next);
+      } else if (e.key === "?") setHelpOpen(true);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [setTab, tab, undoLighting, undoDisplayUpload, togglePaused, paused]);
+  }, [setTab, tab, undo, redo, undoDisplayUpload, togglePaused, paused, connected, draftDirty, commitDraft]);
 
-  useEffect(() => {
-    void loadStoredDisplay();
-  }, [loadStoredDisplay]);
+  const Screen = tab === "lighting" ? null : SCREENS[tab];
+  /** Switch to Lighting if needed, then scroll to and focus the matching control. */
+  function jumpTo(selector: string) {
+    const go = () => {
+      const el = document.querySelector<HTMLElement>(selector);
+      if (!el) return;
+      el.scrollIntoView({ block: "center", behavior: reduceMotion ? "auto" : "smooth" });
+      el.focus({ preventScroll: true });
+    };
+    if (tab !== "lighting") {
+      setTab("lighting");
+      window.setTimeout(go, 200);
+    } else go();
+  }
 
-  const Screen = SCREENS[tab];
-
-  const rootStyle = {
-    "--accent": ACCENT,
-    "--accent-safe": ACCENT,
-    "--focus": ACCENT,
-  } as CSSProperties;
-
-  const committed = useAppStore((s) => s.state);
-  const entries = useAppStore((s) => s.entries);
-  const slot = useAppStore((s) => s.slot);
-  const lastUploaded = useAppStore((s) => s.lastUploaded);
-  const lastSyncedAt = useAppStore((s) => s.lastSyncedAt);
-  const draft = useAppStore((s) => s.draft);
-  const boardEffect = committed
-    ? UNDERGLOW_EFFECTS.find((e) => e.value === committed.underglow.effect)?.name ?? "Off"
+  const effectName = effective
+    ? UNDERGLOW_EFFECTS.find((e) => e.value === effective.underglow.effect)?.name ?? "Off"
     : "—";
-  const draftEffect = draft
-    ? UNDERGLOW_EFFECTS.find((e) => e.value === draft.underglow.effect)?.name ?? "Off"
-    : null;
-  const since = lastSyncedAt ? new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(lastSyncedAt)) : null;
-  const draftChangeCount = draft && committed
-    ? [
-        draft.underglow.effect !== committed.underglow.effect,
-        draft.underglow.brightness !== committed.underglow.brightness,
-        draft.underglow.speed !== committed.underglow.speed,
-        draft.underglow.orientation !== committed.underglow.orientation,
-        draft.underglow.rainbow !== committed.underglow.rainbow,
-        draft.underglow.color.join(",") !== committed.underglow.color.join(","),
-        draft.led.mode !== committed.led.mode,
-        draft.led.saturation !== committed.led.saturation,
-        draft.led.rainbow !== committed.led.rainbow,
-        draft.led.color !== committed.led.color,
-        draft.winLock !== committed.winLock,
-      ].filter(Boolean).length
-    : 0;
-  const displayStaged = entries[slot].source != null && (lastUploaded == null || lastUploaded[slot].name !== entries[slot].name);
+  const sideLedName = effective
+    ? LED_MODES.find((m) => m.value === effective.led.mode)?.name ?? "—"
+    : "—";
+  const draftQueuedOffline = draftDirty && !connected;
+  const error = useAppStore((s) => s.error);
+  const errorKind = useAppStore((s) => s.errorKind);
+  // The tall udev card sits under the Connect row on Device, so Connect stays above the fold.
+  const lowBanner = tab === "device" && errorKind === "permission_denied" && isLinux();
+
+  const link = connectingPath
+    ? { text: "OPENING…", dot: "bg-[var(--warn)] animate-pulse" }
+    : applying
+      ? { text: "WRITING…", dot: "bg-[var(--warn)] animate-pulse" }
+      : connected
+        ? { text: `LINK  ${linkKind}`, dot: "bg-[var(--success)]" }
+        : { text: "NO LINK", dot: "bg-transparent border border-[var(--dim)]" };
+
+  const wide = tab === "lighting";
+  // The board is large where it is the subject: Lighting, and Device once there is a link to point at.
+  const hero = tab === "lighting" || (tab === "device" && connected);
+  const stageWidth = caseMaxWidthCss(hero ? "hero" : "compact");
+  const jumpBtn = "readout -mx-1 rounded-[var(--r-ctl)] px-1 text-[11px] text-[var(--dim)] transition-colors hover:bg-[var(--bg-raise-2)] hover:text-[var(--text)]";
+  const LockedHint = "nav-locked-hint";
+  const title = NAV_ITEMS.find((n) => n.value === tab)?.label ?? "";
+
+  const railReadout =
+    tab === "device" ? (
+      connected && connectedPath ? (
+        <span>
+          PORT <span className="text-[var(--text)]">{connectedPath}</span>
+          {productId !== undefined && (
+            <>
+              {" · "}
+              <span className="text-[var(--text)]">0x{productId.toString(16).padStart(4, "0")}</span>
+            </>
+          )}
+        </span>
+      ) : (
+        <span className="text-[var(--text)]">NO LINK</span>
+      )
+    ) : tab === "lighting" ? (
+      <SyncBar />
+    ) : (
+      <>
+        <span className="inline-flex items-baseline gap-1.5">
+          UNDERGLOW <span className="text-[var(--text)]">{effectName}</span>
+        </span>
+        <span aria-hidden>·</span>
+        <button type="button" onClick={() => jumpTo("#lighting-brightness [role='slider']")} className={jumpBtn}>
+          BRIGHT <span className="text-[var(--text)]">{effective ? `${effective.underglow.brightness}/9` : "—"}</span>
+        </button>
+        <span aria-hidden>·</span>
+        <button type="button" onClick={openLightBar} className={jumpBtn}>
+          BAR <span className="text-[var(--text)]">{sideLedName}</span>
+        </button>
+        {draftQueuedOffline && <span className="text-[var(--warn)]">QUEUED</span>}
+      </>
+    );
 
   return (
     <MotionConfig reducedMotion="user">
-    <div className="flex h-full flex-col" style={rootStyle}>
-      <header className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-white/10 px-4 py-2">
-        <span className="flex items-center gap-2 text-sm font-semibold text-white"><span className={connectingPath ? "size-2.5 animate-pulse rounded-full bg-amber-400" : connected ? "size-2.5 rounded-full bg-emerald-400" : "size-2.5 rounded-full bg-red-400"} aria-hidden />GMK87<span className="text-xs font-normal text-white/70">{connectingPath ? "Connecting…" : connected ? "Connected" : "Disconnected"}</span></span>
-        <span className="ml-auto flex items-center gap-3 text-xs text-white/80">
-          <button type="button" className="rounded-md border border-white/15 px-2 py-1 hover:bg-white/10" onClick={() => setPaletteOpen(true)}>
-            ⌘K — commands
-          </button>
-          <button type="button" className="rounded-md border border-white/15 px-2 py-1 hover:bg-white/10" onClick={() => setGlossaryOpen(true)}>
-            Help
-          </button>
-        </span>
-      </header>
-      <div className="px-4 pt-3">
-        <ErrorBanner />
-      </div>
-      <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="flex min-h-0 flex-1">
-        <TabsList className="h-auto w-[200px] shrink-0 flex-col items-stretch justify-start gap-1 rounded-none bg-transparent p-3">
-          {NAV_ITEMS.map((item) => {
-            const Icon = item.icon;
-            return (
-            <TabsTrigger
-              key={item.value}
-              value={item.value}
-              className="relative justify-start rounded-md px-3 py-2 text-left data-[state=active]:bg-transparent"
-            >
-              {tab === item.value && (
-                <motion.span
-                  layoutId="nav-highlight"
-                  className="absolute inset-0 rounded-md"
-                  style={{ background: `${ACCENT}26`, boxShadow: `inset 0 0 0 1px ${ACCENT}66` }}
-                  transition={{ type: "spring", stiffness: 420, damping: 32 }}
-                />
-              )}
-              <span className="relative flex items-center gap-2">
-                <Icon className="size-4 shrink-0" aria-hidden />
-                {item.label}
-                {item.value === "lighting" && draftDirty && (
-                  <span role="status" className="ml-auto size-2 rounded-full bg-sky-400" title="Unsaved draft" />
-                )}
+      <div className="flex min-h-full flex-col">
+        <header className="sticky top-0 z-40 border-b border-[var(--line)] bg-[var(--bg)]">
+          <div className="grid h-[52px] grid-cols-[1fr_auto_1fr] items-center gap-3 px-4">
+            <div className="flex min-w-0 items-baseline gap-2.5">
+              <span className="display text-[17px] text-[var(--text)]" style={{ fontStretch: "125%" }}>GMK87</span>
+              <span className="readout truncate text-[10.5px] tracking-[0.14em] text-[var(--dim)] max-[999px]:hidden">CONFIGURATOR</span>
+            </div>
+            <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
+              <TabsList>
+                {NAV_ITEMS.map((item, i) => {
+                  const locked = !connected && item.value !== "device";
+                  return (
+                    <span key={item.value} title={locked ? "Connect a keyboard first" : undefined} className="inline-flex">
+                      <TabsTrigger value={item.value} disabled={locked} aria-describedby={locked ? LockedHint : undefined}>
+                        <span aria-hidden className="readout absolute left-[7px] top-[5px] text-[9.5px] leading-none opacity-55">{i + 1}</span>
+                        {item.label}
+                      </TabsTrigger>
+                    </span>
+                  );
+                })}
+              </TabsList>
+            </Tabs>
+            <span id={LockedHint} className="sr-only">
+              {connected ? "" : "Locked until a keyboard is connected."}
+            </span>
+            <div className="flex items-center justify-end gap-2">
+              <span role="status" className="readout flex items-center gap-2 whitespace-nowrap text-[11px] tracking-[0.08em] text-[var(--text)]">
+                <span key={connected ? "on" : "off"} aria-hidden className={cn("size-1.5 rounded-full", link.dot, connected && !connectingPath && !applying && "dot-pulse")} />
+                {link.text}
               </span>
-            </TabsTrigger>
-            );
-          })}
-          <div className="mt-auto px-3 pt-6 text-xs leading-relaxed text-white/70">
-            <p>⌘K commands · ? help · p pause · ⌘Z undo · 1–4 tabs</p>
+              <button
+                type="button"
+                aria-label="Help"
+                onClick={() => setHelpOpen(true)}
+                className="flex size-8 items-center justify-center rounded-[var(--r-ctl)] text-[var(--muted)] transition-colors duration-150 hover:bg-[var(--bg-raise-2)] hover:text-[var(--text)]"
+              >
+                <CircleHelp className="size-[17px]" aria-hidden />
+              </button>
+            </div>
           </div>
-        </TabsList>
+        </header>
 
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-4">
-          <div className="mx-auto w-full max-w-2xl">
-            <div className="mb-3 rounded-lg border border-white/10 bg-neutral-950/70 px-3 py-2 text-xs leading-relaxed text-white/80 xl:hidden" role="status">
-              <BoardStatus committed={committed} boardEffect={boardEffect} draft={draft} draftDirty={draftDirty} draftChangeCount={draftChangeCount} draftEffect={draftEffect} since={since} tab={tab} displayStaged={displayStaged} displayName={entries[slot].name || "image"} />
+        {error && !lowBanner && (
+          <div className="relative px-6 pt-3">
+            <div className="mx-auto w-full max-w-[1180px]">
+              <ErrorBanner />
             </div>
-            <div className="sticky top-0 z-10 mb-4 xl:hidden">
-              <KeyboardPreview zoomed={tab === "display"} className="h-[180px] w-full" />
-            </div>
-            {lastDiscardedDraft && !draftDirty ? (
-              <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-sky-400/30 bg-sky-400/10 p-3 text-xs text-white/80" role="status">
-                <span className="flex-1">Draft discarded. It is saved here until you make a new edit.</span>
-                <Button size="sm" onClick={restoreDraft}>Restore draft</Button>
+          </div>
+        )}
+
+        <main className="relative flex-1 overflow-x-clip">
+          <div aria-hidden className="stage-dots pointer-events-none absolute inset-x-0 top-0 h-[440px]" />
+          <div
+            className={cn(
+              "relative mx-auto grid w-full gap-4 px-6 pb-6",
+              tab === "device" && connected ? "pt-8" : "pt-6",
+              tab === "device" && !connected && "!pb-3",
+              wide ? "max-w-[1560px] min-[1120px]:grid-cols-[minmax(0,1fr)_400px] min-[1120px]:items-start min-[1120px]:gap-6" : "max-w-[1180px]",
+            )}
+          >
+            <div className="flex min-w-0 flex-col gap-3">
+              <section aria-label="Keyboard preview" className="relative z-10">
+                <KeyboardPreview className="w-full" size={hero ? "hero" : "compact"} overlay={tab === "device" && connected ? <DevicePins /> : undefined} />
+                <div aria-hidden className="stage-floor" />
+              </section>
+
+              <div className={cn("relative z-20 -mt-1", tab === "device" && connected && "mt-3")}>
+                <Rail title={title} maxWidth={stageWidth} pulseKey={pulseKey}>
+                  {railReadout}
+                </Rail>
               </div>
-            ) : null}
-            <AnimatePresence mode="wait">
-              <motion.div
+
+              <div
                 key={tab}
                 role="tabpanel"
-                initial={reduceMotion ? undefined : { opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={reduceMotion ? undefined : { opacity: 0, y: -8 }}
-                transition={{ duration: 0.18, ease: "easeOut" }}
+                aria-label={title}
+                className="tab-in relative z-20 mx-auto flex w-full min-w-0 flex-col gap-3 px-2"
+                style={{ maxWidth: `calc(${stageWidth} + 16px)` }}
               >
-                <Screen />
-              </motion.div>
-            </AnimatePresence>
-
-          </div>
-        </div>
-
-          <aside className="hidden w-[420px] shrink-0 border-l border-white/10 p-4 xl:block">
-            <div className="sticky top-0 flex flex-col gap-3">
-              <KeyboardPreview zoomed={tab === "display"} className="h-[300px] w-full" />
-              <p className="text-xs text-white/80">
-                Knob: drag up/down to change brightness{effective ? ` — now ${effective.underglow.brightness}/9` : ""}. Arrows work too.
-              </p>
-              <div className="rounded-lg border border-white/10 p-3 text-xs leading-relaxed text-white/80" role="status">
-                <BoardStatus committed={committed} boardEffect={boardEffect} draft={draft} draftDirty={draftDirty} draftChangeCount={draftChangeCount} draftEffect={draftEffect} since={since} tab={tab} displayStaged={displayStaged} displayName={entries[slot].name || "image"} />
-                {draftDirty && draft && committed ? (
-                  <div className="mt-2 flex gap-2">
-                    <Button size="sm" onClick={() => useAppStore.getState().setShowWriteConfirm(true)}>Write to board</Button>
-                    <Button variant="outline" size="sm" onClick={() => discardDraft()}>Discard</Button>
+                {tab === "lighting" ? <LightingPanels /> : Screen ? <Screen /> : null}
+                {error && lowBanner && (
+                  <div className="mx-auto w-full max-w-[600px]">
+                    <ErrorBanner />
                   </div>
-                ) : null}
+                )}
               </div>
             </div>
-          </aside>
-      </Tabs>
+            {wide && (
+              <aside aria-label="Effects" className="min-w-0 min-[1120px]:sticky min-[1120px]:top-[68px] min-[1120px]:max-h-[calc(100vh-84px)] min-[1120px]:overflow-y-auto min-[1120px]:pr-1 min-[1120px]:pt-2">
+                <EffectsPanel />
+              </aside>
+            )}
+          </div>
+        </main>
+      </div>
 
-      <OnboardingWizard />
-      <GlossaryDialog open={glossaryOpen} onClose={() => setGlossaryOpen(false)} />
-      <Toast />
-      <WriteConfirm />
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
-      {/* Mobile: draft Write lives under the picture stack */}
-      {draftDirty && (
-        <div className="fixed bottom-4 left-4 right-4 z-40 flex gap-2 rounded-lg border border-white/10 bg-neutral-900/95 p-3 xl:hidden" role="status">
-          <span className="flex-1 text-xs text-white/80">Draft · {draftChangeCount} — {draftEffect ?? ""} → board {boardEffect} {committed ? `${committed.underglow.brightness}/9` : ""}</span>
-          <Button size="sm" onClick={() => useAppStore.getState().setShowWriteConfirm(true)}>Write to board</Button>
-          <Button variant="outline" size="sm" onClick={() => discardDraft()}>Discard</Button>
-        </div>
+      {tab === "device" && !connected && APP_VERSION && (
+        <span className="readout pointer-events-none fixed bottom-3 left-4 text-[11px] text-[var(--dim)]">v{APP_VERSION}</span>
       )}
-    </div>
+      <HelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} version={APP_VERSION} />
+      <Toast />
     </MotionConfig>
   );
 }

@@ -8,6 +8,7 @@ use gmk87_app::error::{AppError, ErrorKind};
 use gmk87_app::job::{DisplayJob, SlotTarget};
 use gmk87_app::lighting::LightingPatch;
 use gmk87_app::state::DeviceStateDto;
+use gmk87_device::discovery::{select_devices, HidEnumerator, RawHidDevice};
 use gmk87_device::session::CancelToken;
 use tauri::ipc::{InvokeBody, Request};
 use tauri::{AppHandle, Emitter, State};
@@ -88,12 +89,16 @@ pub async fn connect(
         let mut rt = runtime.lock().expect("runtime lock");
         rt.manager = Some(manager);
         rt.path = Some(connect_path);
-        Ok::<_, AppError>(state_dto)
+        rt.connect_seq = rt.connect_seq.wrapping_add(1);
+        let seq = rt.connect_seq;
+        drop(rt);
+        Ok::<_, AppError>((state_dto, seq))
     })
     .await
     .map_err(join_error)??;
+    let (state_dto, seq) = state_dto;
 
-    spawn_reconnect_monitor(app, &state, path);
+    spawn_reconnect_monitor(app, &state, path, seq);
     Ok(state_dto)
 }
 
@@ -259,9 +264,15 @@ pub async fn copy_diagnostics(state: State<'_, AppState>) -> Result<String, AppE
         "device: {}\n",
         path.as_deref().unwrap_or("(none)")
     ));
+    report.push_str(&format!(
+        "platform: {} {}\n",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    ));
     if let Ok(uname) = std::fs::read_to_string("/proc/sys/kernel/osrelease") {
         report.push_str(&format!("kernel: {}\n", uname.trim()));
     }
+    report.push_str(&detected_report().await);
     if let Some(dir) = gmk87_app::snapshot::data_dir() {
         let stored = gmk87_app::display_store::load_store(&dir);
         for (label, record) in [
@@ -285,6 +296,78 @@ pub async fn copy_diagnostics(state: State<'_, AppState>) -> Result<String, AppE
         }
     }
     Ok(report)
+}
+
+/// Enumerates the vendor HID interfaces on a blocking thread and formats them.
+/// An enumeration failure is reported in the text rather than failing the whole
+/// report, since that failure is exactly what the report is for.
+async fn detected_report() -> String {
+    let listed = tauri::async_runtime::spawn_blocking(|| {
+        gmk87_device::discovery::SystemEnumerator.list().map(|raw| {
+            let access: Vec<Option<String>> = raw.iter().map(|d| node_access(&d.path)).collect();
+            (raw, access)
+        })
+    })
+    .await;
+    match listed {
+        Ok(Ok((raw, access))) => format_detected(&raw, &access),
+        Ok(Err(error)) => format!("detected: enumeration failed: {error}\n"),
+        Err(error) => format!("detected: enumeration failed: {error}\n"),
+    }
+}
+
+/// Pure formatter for the `detected:` section of the diagnostics report.
+/// `access[i]` describes how `raw[i]` can be opened (Linux only; `None` elsewhere).
+fn format_detected(raw: &[RawHidDevice], access: &[Option<String>]) -> String {
+    if raw.is_empty() {
+        return "detected: none\n".to_string();
+    }
+    let mut out = String::from("detected:\n");
+    for (i, device) in raw.iter().enumerate() {
+        out.push_str(&format!(
+            "  {} product 0x{:04x} usage page 0x{:04x} interface {}",
+            device.path, device.product_id, device.usage_page, device.interface_number
+        ));
+        if let Some(Some(note)) = access.get(i) {
+            out.push_str(&format!(" [{note}]"));
+        }
+        out.push('\n');
+    }
+    let selected = select_devices(raw);
+    if selected.is_empty() {
+        out.push_str("selected: none\n");
+    } else {
+        for device in &selected {
+            out.push_str(&format!(
+                "selected: {} {} via {}\n",
+                device.label(),
+                if device.has_via { "(VIA)" } else { "(no VIA)" },
+                device.path
+            ));
+        }
+    }
+    out
+}
+
+/// Mode bits and whether the node opens read-write. Opens and closes only.
+#[cfg(target_os = "linux")]
+fn node_access(path: &str) -> Option<String> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(path).ok()?.permissions().mode() & 0o777;
+    let rw = match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+    {
+        Ok(_) => "opens read-write".to_string(),
+        Err(error) => format!("read-write open failed: {error}"),
+    };
+    Some(format!("mode {mode:04o}, {rw}"))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn node_access(_path: &str) -> Option<String> {
+    None
 }
 
 #[tauri::command]
@@ -369,26 +452,97 @@ pub fn cancel_upload(state: State<'_, AppState>) -> Result<(), AppError> {
 
 /// Watches the connected hidraw node and reports when it disappears.
 ///
-/// Called once after a successful connect; the loop ends when the path changes
-/// or the manager is dropped.
-pub fn spawn_reconnect_monitor(app: AppHandle, state: &AppState, path: String) {
+/// Called once after a successful connect. The loop ends when the path changes,
+/// a newer connect supersedes it, or the manager is dropped.
+///
+/// Presence is checked with [`gmk87_device::discovery::device_present`] because
+/// a HID path is only a filesystem node on Linux: on Windows it is an interface
+/// name such as `\\?\hid#…`, for which `Path::exists` is always `false`. That
+/// bug made a healthy Windows connection drop two seconds after connecting, and
+/// every reconnect repeated it.
+pub fn spawn_reconnect_monitor(app: AppHandle, state: &AppState, path: String, seq: u64) {
+    /// Consecutive failed probes before the device is declared gone. Two probes
+    /// are four seconds; a short enumeration hiccup must not end the session.
+    const MISSES_BEFORE_DISCONNECT: u32 = 2;
+
     let runtime = state.runtime.clone();
-    std::thread::spawn(move || loop {
-        std::thread::sleep(std::time::Duration::from_secs(2));
-        // Hold the lock from the check through the mutation so a concurrent
-        // connect() cannot be clobbered in a gap between them.
-        let mut rt = runtime.lock().expect("runtime lock");
-        match rt.path.as_deref() {
-            Some(current) if current == path.as_str() => {}
-            _ => return,
+    std::thread::spawn(move || {
+        let mut misses = 0_u32;
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            // Exit as soon as this watchdog is superseded or the session was
+            // closed; otherwise it would re-enumerate HID forever.
+            {
+                let rt = runtime.lock().expect("runtime lock");
+                if rt.connect_seq != seq || rt.path.as_deref() != Some(path.as_str()) {
+                    return;
+                }
+            }
+            match gmk87_device::discovery::device_present(&path) {
+                // `Err` means the bus could not be enumerated, not that the
+                // keyboard is gone: never tear down on an inconclusive probe.
+                Err(_) => continue,
+                Ok(true) => {
+                    misses = 0;
+                    continue;
+                }
+                Ok(false) => misses += 1,
+            }
+            if misses < MISSES_BEFORE_DISCONNECT {
+                continue;
+            }
+            // Re-check under the lock so a concurrent connect cannot be
+            // clobbered in the gap between probing and mutating.
+            let mut rt = runtime.lock().expect("runtime lock");
+            if rt.connect_seq != seq || rt.path.as_deref() != Some(path.as_str()) {
+                return;
+            }
+            rt.manager = None;
+            rt.path = None;
+            drop(rt);
+            let _ = app.emit("device://disconnected", path.clone());
+            return;
         }
-        if std::path::Path::new(&path).exists() {
-            continue;
-        }
-        rt.manager = None;
-        rt.path = None;
-        drop(rt);
-        let _ = app.emit("device://disconnected", path.clone());
-        return;
     });
+}
+
+#[cfg(test)]
+mod diagnostics_tests {
+    use super::*;
+
+    fn raw(path: &str, pid: u16, page: u16, iface: i32) -> RawHidDevice {
+        RawHidDevice {
+            path: path.into(),
+            vendor_id: 0x320f,
+            product_id: pid,
+            usage_page: page,
+            interface_number: iface,
+        }
+    }
+
+    #[test]
+    fn empty_enumeration_reports_none() {
+        assert_eq!(format_detected(&[], &[]), "detected: none\n");
+    }
+
+    #[test]
+    fn two_devices_list_every_interface_and_the_selection() {
+        let devices = [
+            raw("/dev/hidraw4", 0x5055, 0xff1c, 2),
+            raw("/dev/hidraw3", 0x5055, 0xff60, 1),
+            raw("/dev/hidraw10", 0x5088, 0xff1c, 1),
+        ];
+        let access = [
+            Some("mode 0666, opens read-write".to_string()),
+            None,
+            Some("mode 0600, read-write open failed: denied".to_string()),
+        ];
+        let text = format_detected(&devices, &access);
+        assert!(text.starts_with("detected:\n"));
+        assert!(text.contains("/dev/hidraw4 product 0x5055 usage page 0xff1c interface 2 [mode 0666, opens read-write]"));
+        assert!(text.contains("/dev/hidraw3 product 0x5055 usage page 0xff60 interface 1\n"));
+        assert!(text.contains("read-write open failed: denied"));
+        assert!(text.contains("selected: GMK87 (wired) (VIA) via /dev/hidraw4"));
+        assert!(text.contains("selected: GMK87 (2.4 GHz) (no VIA) via /dev/hidraw10"));
+    }
 }

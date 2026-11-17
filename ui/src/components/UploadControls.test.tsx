@@ -12,7 +12,9 @@ const entry = {
 const state = {
   uploads: 0,
   progress: null,
-  upload: vi.fn(),
+  uploadChanged: vi.fn(),
+  batch: null,
+  lastUploaded: null,
   cancel: vi.fn(),
   connected: true,
   setActiveTab: vi.fn(),
@@ -22,6 +24,7 @@ const state = {
 vi.mock("@/store", () => ({
   useAppStore: (selector: (s: unknown) => unknown) => selector(state),
   selectTotalFrames: () => 40,
+  dirtySlots: () => ["slot0"],
 }));
 
 import { UploadControls } from "./UploadControls";
@@ -29,6 +32,6 @@ import { UploadControls } from "./UploadControls";
 describe("UploadControls", () => {
   it("disables upload when the combined frames exceed the budget", () => {
     render(<UploadControls />);
-    expect(screen.getByRole("button", { name: /write image to board/i })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("button", { name: /write slot 0/i })).toHaveAttribute("aria-disabled", "true");
   });
 });

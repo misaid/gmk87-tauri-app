@@ -25,7 +25,9 @@ vi.mock("@/store", () => ({
   useAppStore: (selector: (s: unknown) => unknown) => selector(mockState),
 }));
 
-import DeviceScreen from "./DeviceScreen";
+vi.mock("@/components/KeyboardPreview", () => ({ KeyboardPreview: ({ overlay }: { overlay?: React.ReactNode }) => <div>{overlay}</div> }));
+
+import DeviceScreen, { DevicePins } from "./DeviceScreen";
 
 describe("DeviceScreen", () => {
   beforeEach(() => {
@@ -76,8 +78,68 @@ describe("DeviceScreen", () => {
     expect(screen.getAllByRole("button", { name: "Connect" })).toHaveLength(1);
   });
 
-  it("shows the VIA notice when the interface is present", () => {
+  it("exposes a labelled, keyboard-reachable pin for each board part", () => {
+    render(<DevicePins />);
+    for (const name of [/^1\. USB connection/, /^2\. Screen and board clock/, /^3\. Windows key lock/]) {
+      expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    }
+  });
+
+  it("shows the board clock once connected", () => {
+    mockState.connected = true;
+    mockState.state = { time: [2026, 1, 1, 4, 12, 30, 5], winLock: false };
     render(<DeviceScreen />);
-    expect(screen.getByText(/remapping/i)).toBeInTheDocument();
+    expect(screen.getByText("Last written")).toBeInTheDocument();
+    expect(screen.getByText("12:30:05")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Disconnect" })).toBeInTheDocument();
+    mockState.connected = false;
+    mockState.state = null;
+  });
+
+  it("explains an empty scan instead of listing devices", () => {
+    mockState.devices = [];
+    render(<DeviceScreen />);
+    expect(screen.getByRole("heading", { name: "Plug in your GMK87" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect" })).not.toBeInTheDocument();
+  });
+
+  it("shows a scan table that agrees with what was found", () => {
+    mockState.devices = [];
+    mockState.lastScanAt = new Date(2026, 0, 1, 2, 31, 7).getTime();
+    const { unmount } = render(<DeviceScreen />);
+    const table = screen.getByRole("list", { name: "Scan results" });
+    expect(table).toHaveTextContent(/USB CABLE\s*SCANNING/);
+    expect(table).toHaveTextContent(/2\.4 GHZ DONGLE\s*NOT FOUND/);
+    expect(table).toHaveTextContent(/LAST SCAN\s*02:31:07/);
+    unmount();
+    mockState.devices = [
+      { path: "/dev/hidraw13", label: "GMK87 (2.4G)", transport: "wireless24g", productId: 0x5088, hasVia: false },
+      ...defaultDevices,
+    ];
+    render(<DeviceScreen />);
+    const found = screen.getByRole("list", { name: "Scan results" });
+    expect(found).toHaveTextContent(/USB CABLE\s*FOUND/);
+    expect(found).toHaveTextContent(/FOUND · CLICK TO CONNECT/);
+    mockState.lastScanAt = null;
+  });
+
+  it("tags the wired row as recommended when a dongle is also present", () => {
+    mockState.devices = [
+      { path: "/dev/hidraw13", label: "GMK87 (2.4G)", transport: "wireless24g", productId: 0x5088, hasVia: false },
+      ...defaultDevices,
+    ];
+    render(<DeviceScreen />);
+    expect(screen.getByText("RECOMMENDED")).toBeInTheDocument();
+    expect(screen.getByText(/switched to 2\.4 GHz/)).toBeInTheDocument();
+  });
+
+  it("shows a VIA badge when the interface is present", () => {
+    render(<DeviceScreen />);
+    expect(screen.getByText("VIA")).toBeInTheDocument();
+  });
+
+  it("offers one big Connect when exactly one device is found", () => {
+    render(<DeviceScreen />);
+    expect(screen.getByRole("button", { name: "Connect" })).toHaveClass("h-11");
   });
 });
