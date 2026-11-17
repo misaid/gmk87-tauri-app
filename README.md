@@ -24,7 +24,7 @@ installed.
 | | |
 |---|---|
 | **What it is** | A cross-platform desktop app (Linux, Windows, macOS) plus a CLI, talking to a keyboard over a reverse-engineered USB HID protocol. |
-| **Stack** | Rust workspace (4 crates) · Tauri v2 · React 19 + TypeScript · Tailwind · zustand · WebGL2 and Canvas rendering. |
+| **Stack** | Rust workspace (4 crates) · Tauri v2 · React 18 + TypeScript · Tailwind · zustand · WebGL2 and Canvas rendering. |
 | **Quality** | 213 front-end tests (vitest), Rust unit and mock-transport tests, clippy `-D warnings`, CI on Linux and Windows, tagged releases with checksums. |
 | **Interesting problems** | A write-only device that cannot be read back, a 1,171-packet-per-frame upload protocol, a real-time per-key lighting preview that matches the hardware, and platform-aware connection monitoring. |
 
